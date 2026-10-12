@@ -14,3 +14,11 @@ test('settings protocol accepts only boolean surface controls',async()=>{
  for(const params of [{orcaPolling:'true'},{path:'/tmp'},{toString:true},null,[]])assert.ok('error' in await dispatchRequest({id:'2',method:'settings',params},c));
  assert.equal(changed,1);
 });
+test('hook setup only accepts fixed provider operations and no filesystem arguments',async()=>{
+ let installs=0;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),hooksStatus:()=>({setupSeen:false}),installHooks:async(provider:string)=>{installs++;return {provider};},dismissHookSetup:()=>({setupSeen:true}),verifyHooks:()=>({verified:true})};
+ assert.deepEqual(await dispatchRequest({id:'h',method:'hooks_status'},c),{id:'h',result:{setupSeen:false}});
+ for(const params of [{provider:'other'},{provider:'claude',path:'/tmp/arbitrary'},{}])assert.ok('error' in await dispatchRequest({id:'h',method:'hooks_install',params},c));
+ assert.equal(installs,0);assert.deepEqual(await dispatchRequest({id:'h',method:'hooks_install',params:{provider:'claude'}},c),{id:'h',result:{provider:'claude'}});
+ assert.deepEqual(await dispatchRequest({id:'h',method:'hooks_dismiss'},c),{id:'h',result:{setupSeen:true}});
+ assert.ok('error' in await dispatchRequest({id:'h',method:'hooks_verify',params:{command:'anything'}},c));
+});

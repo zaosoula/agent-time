@@ -5,6 +5,7 @@ import { Clock3, CalendarDays, Layers3, Activity, Folder, ChevronRight, ChevronL
 import { transport,native,type CaptureStatus } from './transport.ts';
 import CaptureSettingsPage from './CaptureSettings.vue';
 import UsagePage from './UsagePage.vue';
+import HookSetup from './HookSetup.vue';
 import type { CaptureSettings } from '../capture/settings.ts';
 import type { Summary,Session,Interval } from '../capture/events.ts';
 import { unionSeconds } from '../capture/correlate.ts';
@@ -67,6 +68,7 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();clearInterval(timer);wind
 </script>
 <template>
 <TooltipProvider :delay-duration="350">
+<HookSetup mode="onboarding"/>
 <div class="app-shell">
  <aside class="sidebar">
   <div class="titlebar-space" data-tauri-drag-region></div>

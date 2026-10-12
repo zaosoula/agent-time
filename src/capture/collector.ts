@@ -11,6 +11,7 @@ import { normalizeActivity } from './macos.ts';
 import { summarize } from './correlate.ts';
 import { dailyTotals } from './daily.ts';
 import {UsageReader} from '../usage/reader.ts';
+import {HookInstallation,type HookProvider} from './hook-installation.ts';
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private running=false; private timer:ReturnType<typeof setTimeout>|undefined; private deadline:ReturnType<typeof setTimeout>|undefined;
@@ -19,7 +20,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private usageReader:UsageReader;
+  private usageReader:UsageReader;private hookInstallation:HookInstallation;
   private probe?:string; private interval:number; private runId?:string; private reader:typeof callOrca;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca) {
     this.probe=probe;this.interval=interval;this.runId=runId;this.reader=reader;
@@ -31,10 +32,14 @@ export class Collector {
       this.surfaces={...defaultSettings,...validateSettings(known)};
     }
     this.surfaceHistory=this.store.events().filter(e=>e.kind==='capture_settings').sort((a,b)=>a.observedAt-b.observedAt);
-    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);
+    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);
   }
   status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.events().length,macos:this.macos,output:this.output};}
   trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(summarize(this.store.events())),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
+  hooksStatus(){return this.hookInstallation.status();}
+  verifyHooks(){return this.hookInstallation.verify();}
+  installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}
+  dismissHookSetup(){return this.hookInstallation.dismiss();}
   usage(){return this.usageReader.summary();}
   updateSettings(patch:Partial<CaptureSettings>){
     validateSettings(patch);

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { SwitchRoot,SwitchThumb } from 'reka-ui';
+import HookSetup from './HookSetup.vue';
 import { Monitor,Bot,Layers3,ShieldCheck,ArrowUpRight } from '@lucide/vue';
 import type { CaptureStatus } from './transport.ts';
 import { native,openAccessibilitySettings } from './transport.ts';
@@ -25,8 +26,9 @@ async function openPermission(){try{await openAccessibilitySettings();}catch(e){
    <SwitchRoot :id="surface.key" :aria-labelledby="surface.key+'-label'" class="surface-switch" :model-value="status?.surfaces[surface.key]??false" :disabled="busy||!status" @update:model-value="emit('change',{[surface.key]:$event})"><SwitchThumb class="surface-thumb"/></SwitchRoot>
   </div>
  </div>
+ <HookSetup mode="settings"/>
  <div class="permission-card"><ShieldCheck :size="19"/><div><h2>Accessibility permission</h2><strong>{{!status?.surfaces.macosActivity?'Activity capture disabled':!status.macos?'Checking permission…':status.macos.accessibilityTrusted?'Granted':'Not granted · basic activity available'}}</strong><p>Foreground app and idle tracking work without Accessibility. Grant it to read Orca’s focused window context. It does not yet identify the focused agent session.</p><button v-if="native" class="permission-button" @click="openPermission">Open System Settings <ArrowUpRight :size="13"/></button><p v-else>Manage permission in System Settings → Privacy &amp; Security → Accessibility.</p></div></div>
- <div class="settings-footnote"><p>Changes apply immediately and are saved automatically. Existing history is kept. Events received from disabled hooks are discarded.</p><p>These switches control capture; they do not install or remove agent hooks. Closing the window keeps capture running. Quit Agent Time to stop it.</p></div>
+ <div class="settings-footnote"><p>Changes apply immediately and are saved automatically. Existing history is kept. Events received from disabled hooks are discarded.</p><p>The switches control capture. Manage installation in the Agent hook installation pane above. Closing the window keeps capture running. Quit Agent Time to stop it.</p></div>
 </section>
 </template>
 <style scoped>

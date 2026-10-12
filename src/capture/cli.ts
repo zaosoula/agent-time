@@ -8,7 +8,7 @@ import { EventStore } from './store.ts';
 import { summarize } from './correlate.ts';
 import { renderReport } from './report.ts';
 import { dispatchRequest } from './protocol.ts';
-import { prepareConfig, applyConfig, restoreConfig } from './hook-config.ts';
+import { prepareConfig, applyConfig, restoreConfig, hookEvents } from './hook-config.ts';
 const args=process.argv.slice(2),command=args.shift();
 if(command==='hook') {
   try{
@@ -29,7 +29,7 @@ if(command==='hook') {
       if(!values.manifest)throw new Error('--manifest is required');
       if(positionals[0]==='prepare'){
         if(!values.config||!values.provider||!values['hook-command'])throw new Error('--config, --provider and --hook-command are required');
-        const manifest=prepareConfig(resolve(values.config),values.provider,values['hook-command'],['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','Stop','SessionEnd','SubagentStart','SubagentStop']);
+        const manifest=prepareConfig(resolve(values.config),values.provider,values['hook-command'],hookEvents(values.provider));
         writeFileSync(values.manifest,JSON.stringify(manifest,null,2),{mode:0o600});
       }else{const m=JSON.parse(readFileSync(values.manifest,'utf8'));if(positionals[0]==='apply')applyConfig(m);else if(positionals[0]==='restore')restoreConfig(m);else throw new Error('Unknown hook-config operation');}
     }else if(command==='collect'||command==='protocol'){

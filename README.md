@@ -36,6 +36,14 @@ Orca polling supplies inferred intervals between matching fresh observations, sa
 
 ## Hook setup
 
+On first launch, **Connect your agents** offers user-wide Claude and Codex hook installation. Choose providers and click **Install selected hooks**, or **Set up later**. The choice persists for this macOS user. Open **Settings → Agent hook installation** at any time to check status, install, repair or update hooks. Provider-specific targets list the default user configuration, explicit `CLAUDE_CONFIG_DIR`/`CODEX_HOME` when available to the app, and detected Orca account config homes. Claude auth-only account directories are not treated as configuration homes. Newly added account homes are discovered on the next check; use Install / repair to cover them.
+
+Installation uses `~/.claude/settings.json` and `~/.codex/hooks.json` rather than project files. Other tools' settings and hooks are preserved. The installer stores private original backups and command ownership records in `~/Library/Application Support/studio.ezyo.agenttime/hook-installations/`. A versioned Node runtime and hook handler are copied to the same application's `hook-runtime/` directory, so hooks keep working if the checkout or app bundle moves. Configurations are updated atomically and repeated installation replaces owned handlers without adding duplicates. Known project hooks from our earlier reversible installer are removed only after that provider's user-wide installation succeeds; changed or conflicting legacy entries require attention and stay visible.
+
+**Installed** verifies the expected configuration and runtime files. **Check installation** additionally runs the local hook runtime's self-test. Each configuration shows the latest event received from its installed runtime; installation alone does not prove provider trust or end-to-end capture. Start new agent sessions after changes and review Agent Time hooks in Codex's `/hooks` screen. The app does not edit provider trust records. Hook setup does not change the capture toggles.
+
+The CLI below remains available for manual configuration or restoration.
+
 Orca polling works without modifying provider configuration. Exact provider session IDs and native-subagent events require hooks in the account/project where the agent actually runs. Existing sessions may need to restart. Codex requires its normal hook trust review; never bypass that review.
 
 The hook command is:
@@ -73,7 +81,7 @@ cargo test --manifest-path src-tauri/Cargo.toml
 
 Open **Settings** in the sidebar (or press **⌘,**) to enable macOS activity, Claude hooks, Codex hooks, and Orca polling independently. Changes apply immediately and persist in `settings.json` in the capture data directory. Existing history is preserved. Disabled hook events are discarded, including backlog generated while disabled; re-enabling a source never bridges its disabled period. Changing one source does not interrupt unrelated source timing.
 
-Hook switches control ingestion, not installation or provider trust. Install hooks as described above; Codex still requires `/hooks` review. The Accessibility card reports the macOS helper's permission and opens the corresponding System Settings pane. Basic foreground/idle capture works without Accessibility; focused Orca window context needs it, and focused agent attribution remains unverified. External edits to the settings file are loaded on collector restart; use the page to apply changes live.
+Hook switches control ingestion. Use the Agent hook installation pane to manage user-wide installation; Codex still requires `/hooks` review. The Accessibility card reports the macOS helper's permission and opens the corresponding System Settings pane. Basic foreground/idle capture works without Accessibility; focused Orca window context needs it, and focused agent attribution remains unverified. External edits to the settings file are loaded on collector restart; use the page to apply changes live.
 
 CLI data is private and ignored by Git. `--run <id>` scopes a CLI collection to one Run. Desktop discovery enumerates explicit Runs on this Orca host so selecting a coordinator tab cannot silently narrow capture. Remote execution coverage remains unverified. Read [the validation results](docs/capture-validation.md) for observed proof and limits.
 

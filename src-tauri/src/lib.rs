@@ -60,7 +60,8 @@ impl Bridge {
 fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let p=params.as_object().ok_or("Expected object parameters")?;
  match method {
-  "status"|"summary"|"stop"|"tray_status"|"usage" if p.is_empty()=>Ok(()),
+  "status"|"summary"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss" if p.is_empty()=>Ok(()),
+  "hooks_install" if p.len()==1 && p.get("provider").and_then(Value::as_str).map(|v|["claude","codex"].contains(&v)).unwrap_or(false)=>Ok(()),
   "settings" if p.iter().all(|(k,v)|["macosActivity","claudeHooks","codexHooks","orcaPolling","tokenUsage"].contains(&k.as_str())&&v.is_boolean())=>Ok(()),
   "start" if p.len()==1 && p.get("durationSeconds").and_then(Value::as_f64).map(|n|n.is_finite()&&n>=1.0&&n<=86400.0).unwrap_or(false)=>Ok(()),
   _=>Err("Unsupported operation or parameters".into())
@@ -92,7 +93,7 @@ pub fn run(){
  .invoke_handler(tauri::generate_handler![capture_request,open_accessibility_settings]).build(tauri::generate_context!()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
-#[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());}}
+#[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
 
 #[cfg(all(test,unix))]
 mod process_tests {
