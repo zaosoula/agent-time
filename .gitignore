@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.capture/
+.superpowers/
+src-tauri/target/
+src-tauri/gen/
+src-tauri/binaries/
+src-tauri/resources/
+.claude/settings.local.json
+.DS_Store
