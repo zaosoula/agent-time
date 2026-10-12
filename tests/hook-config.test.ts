@@ -1,6 +1,15 @@
 import { test } from 'node:test';import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';import { join } from 'node:path';import { tmpdir } from 'node:os';
 import { prepareConfig, applyConfig, restoreConfig } from '../src/capture/hook-config.ts';
+test('Codex hooks have readable Agent Time labels and restore the original configuration', () => {
+ const root=mkdtempSync(join(tmpdir(),'ade-config-'));const path=join(root,'hooks.json');
+ const original=JSON.stringify({description:'Existing hooks',hooks:{Stop:[{hooks:[{type:'command',command:'existing'}]}]}});writeFileSync(path,original);
+ const m=prepareConfig(path,'codex','ours',['Stop','SessionStart']);applyConfig(m);
+ const config=JSON.parse(readFileSync(path,'utf8'));assert.equal(config.description,'Existing hooks');
+ assert.equal(config.hooks.Stop[1].hooks[0].statusMessage,'Agent Time: Stop');
+ assert.equal(config.hooks.SessionStart[0].hooks[0].statusMessage,'Agent Time: SessionStart');
+ restoreConfig(m);assert.equal(readFileSync(path,'utf8'),original);rmSync(root,{recursive:true});
+});
 test('hook configuration preserves existing and concurrently added hooks on rollback', () => {
  const root=mkdtempSync(join(tmpdir(),'ade-config-'));const path=join(root,'settings.json');
  const original={other:true,hooks:{Stop:[{hooks:[{type:'command',command:'existing'}]}]}};writeFileSync(path,JSON.stringify(original));

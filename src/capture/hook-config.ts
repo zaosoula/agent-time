@@ -13,7 +13,7 @@ export function prepareConfig(path:string, provider:string, command:string, even
   config.hooks ||= {};const entries:Record<string,unknown>={};
   for(const event of events) {
     if(config.hooks[event]!==undefined && !Array.isArray(config.hooks[event]))throw new Error('unsupported matcher layout');
-    const entry={hooks:[{type:'command',command,timeout:2}]};entries[event]=entry;
+    const entry={hooks:[{type:'command',command,timeout:2,...(provider==='codex'?{statusMessage:`Agent Time: ${event}`}:{})}]};entries[event]=entry;
     config.hooks[event]=[...(config.hooks[event]||[]),entry];
   }
   return {path,existed:existsSync(path),original,updated:JSON.stringify(config,null,2)+'\n',entries};

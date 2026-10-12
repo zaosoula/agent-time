@@ -14,7 +14,7 @@ npm run sidecars:build
 npm run tauri dev
 ```
 
-The desktop host starts one collector on launch. Closing its window hides it while collection continues. Use **Agent Time → Show Agent Time** to reopen it and **Quit Agent Time** to stop it. Capture pauses automatically after 24 hours in this validation preview; use Start capture to begin another period. Login autostart and an independent always-running service are not installed.
+The desktop host starts one collector on launch. Closing its window hides it while collection continues. The clock icon in the macOS menu bar shows capture status and today's activity, agent, and Mac time. Its menu offers pause/resume, Open dashboard, Settings, and Quit Agent Time. It remains available when the dashboard is hidden and controls the same collector. Use **Agent Time → Show Agent Time** to reopen the window and **Quit Agent Time** to stop it. Capture pauses automatically after 24 hours in this validation preview; use Start capture to begin another period. Login autostart and an independent always-running service are not installed.
 
 ```sh
 npm run sidecars:build
@@ -71,6 +71,26 @@ npm run typecheck
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
-Orca polling can be disabled for hook-isolation tests by setting `"orcaPolling": false` in `settings.json` inside the capture data directory, then restarting the collector. Hook ingestion and macOS activity continue. The desktop Settings dialog shows the current polling state. Set it back to `true` and restart to compare polling against hooks.
+Open **Settings** in the sidebar (or press **⌘,**) to enable macOS activity, Claude hooks, Codex hooks, and Orca polling independently. Changes apply immediately and persist in `settings.json` in the capture data directory. Existing history is preserved. Disabled hook events are discarded, including backlog generated while disabled; re-enabling a source never bridges its disabled period. Changing one source does not interrupt unrelated source timing.
+
+Hook switches control ingestion, not installation or provider trust. Install hooks as described above; Codex still requires `/hooks` review. The Accessibility card reports the macOS helper's permission and opens the corresponding System Settings pane. Basic foreground/idle capture works without Accessibility; focused Orca window context needs it, and focused agent attribution remains unverified. External edits to the settings file are loaded on collector restart; use the page to apply changes live.
 
 CLI data is private and ignored by Git. `--run <id>` scopes a CLI collection to one Run. Desktop discovery enumerates explicit Runs on this Orca host so selecting a coordinator tab cannot silently narrow capture. Remote execution coverage remains unverified. Read [the validation results](docs/capture-validation.md) for observed proof and limits.
+
+## Tokens and limits
+
+**Tokens & limits** shows today/week/month token totals, daily usage, model breakdown, and estimated API-equivalent USD for captured Claude/Codex sessions and their native subagents. Enable scanning in Settings. Usage is scoped to provider session IDs observed by hooks and starts at their first captured observation; unrelated session history is excluded. Input, output, cache reads and cache writes are separate; reasoning is already part of output.
+
+Local usage is imported incrementally into `usage_events` and `usage_cursors` in the existing SQLite database. Only counters and session/model/workspace metadata are persisted, not transcript contents. Orca supplies shared account limits and reset times; unavailable or stale limits stay labeled. Token scanning runs about once per minute while capture is active.
+
+API-equivalent cost uses a versioned standard short-context/global token pricing baseline, including Claude 1-hour cache-write prices where logged. It is not the subscription bill and excludes tool fees, regional and speed-tier modifiers, and long-context premiums. Models without a verified rate stay unpriced; totals explicitly identify the priced portion. Prices come from the [OpenAI pricing page](https://developers.openai.com/api/docs/pricing) and [Anthropic pricing page](https://platform.claude.com/docs/en/about-claude/pricing).
+
+## Pricing updates
+
+The app downloads the reviewed catalog from this public repository once every 24 hours while token capture is enabled. Downloads include no session or account data. It validates the schema, units, source links and model rates; failed or invalid downloads keep the last valid catalog. SQLite retains downloaded catalogs, update status, and an immutable catalog version per usage record. Existing records are initially bound to the bundled baseline. Rates are assigned at import time; provider effective dates are not inferred. Earlier estimates are not recalculated when prices change. Unknown models remain unpriced under their assigned version.
+
+The dashboard displays the active catalog verification date, errors, and an overdue indicator after 30 days. The bundled catalog keeps fresh installs working offline. Override the download URL with `ADE_PRICING_CATALOG_URL` (HTTPS required); set it to an empty string to disable remote price checks.
+
+The **Check official pricing** GitHub workflow checks the official Markdown pricing pages daily. Changed pages or a weekly verification due date produce a review PR with proposed rates, source hashes, review notes, and immutable catalog files in `pricing/history/`. It never auto-merges. Review cache durations, context tiers, geography, service tiers and footnotes against the linked official pages before merging; merging publishes the catalog at `src/usage/catalog.json`. Unsupported model tiers require manual work and remain unpriced. A parser mismatch fails the workflow rather than publishing guesses. An existing open pricing PR is left for review.
+
+To prepare a proposal manually, run `npm run pricing:check`. This command can modify the catalog and pricing review files locally; review its diff before committing. GitHub Actions must be allowed to create pull requests for scheduled proposals to work. Initial workflow activation requires the repository to have a default branch.

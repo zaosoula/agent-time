@@ -36,7 +36,8 @@
       "binaries/agent-activity"
     ],
     "resources": {
-      "resources/capture/": "capture/"
+      "resources/capture/": "capture/",
+      "resources/usage/": "usage/"
     },
     "icon": [
       "icons/icon.icns",

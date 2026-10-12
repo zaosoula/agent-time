@@ -26,6 +26,21 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
  const toolIdentity=(e:CaptureEvent)=>`${identity(e)}:${e.agentId||'root'}:${String(e.data?.toolId||'anonymous')}`;
  function getSession(key:string,e:CaptureEvent,child=false):Session {
   let s=sessions.get(key);
+  // A hook may precede the first worker snapshot. Promote that provider session
+  // once a bounded terminal observation supplies its Dispatch identity.
+  if(!child&&e.dispatchId&&e.sessionId){
+   const standaloneKey=`session:${e.hostId}:${e.sessionId}`,standalone=sessions.get(standaloneKey);
+   if(standalone){
+    if(!s){s=standalone;s.key=key;sessions.set(key,s);}
+    s.sessionId=e.sessionId;s.cwd ||= standalone.cwd;s.provider ||= standalone.provider;
+    s.runId=e.runId;s.taskId=e.taskId;s.dispatchId=e.dispatchId;s.workspaceId=e.workspaceId||s.workspaceId;
+    s.lastObservedAt=Math.max(s.lastObservedAt,standalone.lastObservedAt);
+    for(const i of intervals)if(!i.child&&!i.dispatchId&&i.hostId===e.hostId&&i.sessionId===e.sessionId){i.dispatchId=e.dispatchId;i.runId=e.runId;i.taskId=e.taskId;i.workspaceId=e.workspaceId;}
+    for(const [id,a] of [...active])if(a.key===standaloneKey){active.delete(id);a.key=key;a.session=s;active.set(key+id.slice(standaloneKey.length),a);}
+    for(const [id,b] of toolBindings)if(!b.dispatchId&&identity(b)===identity(e))toolBindings.set(id,applyBinding(b,e));
+    sessions.delete(standaloneKey);
+   }
+  }
   if(!s){s={key,hostId:e.hostId,workspaceId:e.workspaceId,cwd:e.cwd,runId:e.runId,taskId:e.taskId,dispatchId:e.dispatchId,sessionId:e.sessionId,agentId:e.agentId,provider:e.provider,terminalHandle:e.terminalHandle,title:String(e.data?.title||`${child?(e.data?.childType||e.provider||'Native'):e.provider||'Agent'} ${child?'subagent':'session'}`),state:'unknown',lastObservedAt:e.observedAt,seconds:0,child,proof:'unresolved'};sessions.set(key,s);}
   s.lastObservedAt=Math.max(s.lastObservedAt,e.observedAt);return s;
  }
@@ -60,6 +75,16 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
  for(const original of events) {
   const e=original.source==='hook'?resolve(original):original;
   if(e.kind==='coverage'){coverage.push({reason:String(e.data?.reason||'Missing observations'),source:e.source});continue;}
+  if(e.kind==='capture_settings'){
+   const previous=e.data?.previous as Record<string,boolean>|undefined,next=e.data?.surfaces as Record<string,boolean>|undefined;
+   const changed=(key:string)=>previous?.[key]!==next?.[key];
+   if(changed('macosActivity'))activityPrevious=undefined;
+   if(changed('orcaPolling'))workerPrevious.clear();
+   const affected=(event:CaptureEvent)=>changed(event.provider==='claude'?'claudeHooks':event.provider==='codex'?'codexHooks':'');
+   for(const [id,a] of active)if(affected(a.event)){coverage.push({reason:'Tool timing interrupted by capture setting change',eventId:e.eventId});a.session.state='unknown';active.delete(id);}
+   for(const [key,c] of childLifecycle)if(affected(c)){coverage.push({reason:'Native child timing interrupted by capture setting change',eventId:e.eventId});childLifecycle.delete(key);}
+   continue;
+  }
   if(['sleep','capture_stop','capture_start'].includes(e.kind)){
    activityPrevious=undefined;workerPrevious.clear();
    for(const a of active.values()){coverage.push({reason:'Active tool interrupted by capture/sleep boundary',eventId:e.eventId});a.session.state='unknown';}
@@ -118,6 +143,6 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
  for(const c of childLifecycle.values())unresolved.push({reason:'Native child has no observed end; not extended to now',eventId:c.eventId});
  const running=intervals.filter(i=>i.state==='running'),roots=new Map<string,Array<[number,number]>>(),children=new Map<string,Array<[number,number]>>();
  for(const i of running){const group=i.child?children:roots,key=i.child?`${i.hostId}:${i.sessionId}:${i.agentId}`:i.dispatchId?`${i.hostId}:dispatch:${i.dispatchId}`:`${i.hostId}:session:${i.sessionId}`;const ranges=group.get(key)||[];ranges.push([i.start,i.end]);group.set(key,ranges);}
- for(const s of sessions.values())s.seconds=unionSeconds(running.filter(i=>i.hostId===s.hostId&&(s.child?i.child&&i.sessionId===s.sessionId&&i.agentId===s.agentId:s.dispatchId?i.dispatchId===s.dispatchId&&!i.child:i.sessionId===s.sessionId&&!i.child)).map(i=>[i.start,i.end]));
+ for(const s of sessions.values())s.seconds=unionSeconds(running.filter(i=>i.hostId===s.hostId&&(s.child?i.child&&i.sessionId===s.sessionId&&i.agentId===s.agentId:s.dispatchId?i.dispatchId===s.dispatchId&&!i.child:i.sessionId===s.sessionId&&!i.child&&!i.dispatchId)).map(i=>[i.start,i.end]));
  return {intervals,unresolved,coverage,sessions:[...sessions.values()],humanSeconds:unionSeconds(intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end])),agentSeconds:[...roots.values()].reduce((sum,r)=>sum+unionSeconds(r),0),childAgentSeconds:[...children.values()].reduce((sum,r)=>sum+unionSeconds(r),0),elapsedSeconds:unionSeconds(intervals.filter(i=>i.state!=='waiting').map(i=>[i.start,i.end]))};
 }

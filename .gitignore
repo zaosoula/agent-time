@@ -8,3 +8,6 @@ src-tauri/binaries/
 src-tauri/resources/
 .claude/settings.local.json
 .DS_Store
+
+# Machine-local trusted provider hook configuration
+.codex/

@@ -3,6 +3,24 @@ import { unionSeconds, summarize } from '../src/capture/correlate.ts';
 import type { CaptureEvent } from '../src/capture/events.ts';
 const e=(id:string,time:number,kind:string,fields:Partial<CaptureEvent>={}):CaptureEvent=>({eventId:id,source:'hook',kind,observedAt:time,monotonicAt:time,collectorEpoch:'a',...fields});
 const worker=(id:string,time:number,dispatchId='d1',runId='r1',state='working',outcome='in_progress')=>e(id,time,'worker',{source:'orca',hostId:'local',terminalHandle:'t1',workspaceId:'ws',dispatchId,runId,taskId:'task-'+dispatchId,data:{state,outcome,fresh:true}});
+test('surface settings fence open activity instead of bridging disabled periods',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',provider:'claude'};
+ const s=summarize([e('start',0,'tool_start',root),e('settings',5,'capture_settings',{source:'capture',data:{previous:{claudeHooks:true},surfaces:{claudeHooks:false}}}),e('end',3600,'tool_end',root)]);
+ assert.equal(s.agentSeconds,0);assert.ok(s.coverage.length);
+ const untouched=summarize([e('start',0,'tool_start',root),e('settings',5,'capture_settings',{source:'capture',data:{previous:{orcaPolling:true},surfaces:{orcaPolling:false}}}),e('end',20,'tool_end',root)]);
+ assert.equal(untouched.agentSeconds,20);
+});
+test('hooks preceding the first worker poll promote into one Dispatch and overlapping time counts once',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local'};
+ const events=[e('s',0,'session_start',root),e('early1',1,'tool_start',{...root,data:{toolId:'early'}}),e('early2',2,'tool_end',{...root,data:{toolId:'early'}}),e('p',20,'prompt_submitted',root),e('t1',21,'tool_start',{...root,data:{toolId:'long'}}),worker('w1',25),worker('w2',30),worker('w3',35),e('t2',41,'tool_end',{...root,data:{toolId:'long'}}),e('stop',42,'response_stop',root),worker('done',45,'d1','r1','done','succeeded')];
+ const s=summarize(events);assert.equal(s.sessions.length,1);assert.equal(s.sessions[0]?.dispatchId,'d1');assert.equal(s.sessions[0]?.sessionId,'s1');assert.equal(s.sessions[0]?.seconds,21);assert.equal(s.agentSeconds,21);
+ assert.equal(summarize([...events,worker('idle',3600,'d1','r1','done','succeeded')]).agentSeconds,21);
+});
+test('a tool opened before Dispatch binding closes in the promoted session',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local'};
+ const s=summarize([e('start',0,'tool_start',{...root,data:{toolId:'A'}}),worker('w',20),e('bind',21,'session_start',root),e('end',25,'tool_end',{...root,data:{toolId:'A'}})]);
+ assert.equal(s.sessions.length,1);assert.equal(s.sessions[0]?.seconds,25);assert.equal(s.agentSeconds,25);assert.equal(s.unresolved.length,0);
+});
 test('elapsed union counts overlaps once and rejects reversed intervals',()=>{assert.equal(unionSeconds([[0,60],[20,80]]),80);assert.equal(unionSeconds([[0,60],[60,90]]),90);assert.throws(()=>unionSeconds([[5,1]]));});
 test('a shared cwd cannot identify a session',()=>{const s=summarize([e('1',1,'prompt_submitted',{sessionId:'s1',cwd:'/shared'})]);assert.ok(s.unresolved.length);assert.equal(s.agentSeconds,0);});
 test('same-workspace workers group by Run and Dispatch with explicit terminal binding',()=>{

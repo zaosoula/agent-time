@@ -8,3 +8,9 @@ test('protocol limits methods and parameters and correlates reply IDs',async()=>
  assert.ok('error' in await dispatchRequest({id:'4',method:'start',params:{durationSeconds:10,path:'/arbitrary'}},c));
  await dispatchRequest({id:'5',method:'start',params:{durationSeconds:10}},c);assert.equal(starts,1);
 });
+test('settings protocol accepts only boolean surface controls',async()=>{
+ let changed=0;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),updateSettings:()=>{changed++;return {saved:true};}};
+ assert.deepEqual(await dispatchRequest({id:'1',method:'settings',params:{claudeHooks:false}},c),{id:'1',result:{saved:true}});
+ for(const params of [{orcaPolling:'true'},{path:'/tmp'},{toString:true},null,[]])assert.ok('error' in await dispatchRequest({id:'2',method:'settings',params},c));
+ assert.equal(changed,1);
+});

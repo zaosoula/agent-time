@@ -1,10 +1,15 @@
 import { object } from './orca.ts';
-interface Controller { status():unknown; summary():unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; }
+import { validateSettings, type CaptureSettings } from './settings.ts';
+interface Controller { status():unknown; summary():unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
     if(typeof id!=='string'||id.length>128)throw new Error('Invalid request ID');
     const params=object(request.params);
+    if(request.method==='settings'){
+      if(!controller.updateSettings)throw new Error('Settings unavailable');
+      return {id,result:controller.updateSettings(validateSettings(request.params))};
+    }
     if(request.method==='start') {
       if(Object.keys(params).some(k=>k!=='durationSeconds'))throw new Error('Unsupported parameter');
       const duration=params.durationSeconds;
@@ -14,6 +19,8 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(Object.keys(params).length)throw new Error('Unsupported parameter');
     if(request.method==='status')return {id,result:controller.status()};
     if(request.method==='summary')return {id,result:controller.summary()};
+    if(request.method==='tray_status'&&controller.trayStatus)return {id,result:controller.trayStatus()};
+    if(request.method==='usage'&&controller.usage)return {id,result:controller.usage()};
     if(request.method==='stop')return {id,result:await controller.stop()};
     throw new Error('Unknown method');
   }catch(error){return {id:typeof id==='string'?id:null,error:String(error)};}

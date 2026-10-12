@@ -1,0 +1,49 @@
+name: Check official pricing
+on:
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      force_review:
+        description: Prepare a verification PR even if prices are unchanged
+        type: boolean
+        default: false
+permissions:
+  contents: write
+  pull-requests: write
+concurrency:
+  group: pricing-proposal
+  cancel-in-progress: false
+jobs:
+  propose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Prepare proposal from official pages
+        env:
+          PRICING_FORCE_REVIEW: ${{ inputs.force_review }}
+        run: node scripts/check-pricing.ts
+      - name: Validate pricing behavior
+        run: node --test tests/pricing.test.ts
+      - name: Open a review PR
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          if git diff --quiet -- src/usage/catalog.json pricing/source-checks.json; then
+            exit 0
+          fi
+          if [ -n "$(gh pr list --head automation/pricing --state open --json number --jq '.[0].number // empty')" ]; then
+            echo 'A pricing proposal is already open; leaving it for review.'
+            exit 0
+          fi
+          git switch -C automation/pricing
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add src/usage/catalog.json pricing
+          git commit -m 'chore: propose verified pricing catalog'
+          git push --force-with-lease origin automation/pricing
+          gh pr create --head automation/pricing --title 'Review official API pricing catalog' --body-file pricing/REVIEW.md

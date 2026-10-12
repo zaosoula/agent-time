@@ -33,13 +33,13 @@ export function spoolHook(event: CaptureEvent, directory: string): boolean {
     writeFileSync(path+'.tmp',JSON.stringify(event),{mode:0o600,flag:'wx'});renameSync(path+'.tmp',path+'.json'); return true;
   } catch { return false; }
 }
-export function importSpool(directory: string, store: EventStore): Issue[] {
+export function importSpool(directory: string, store: EventStore, accept:(event:CaptureEvent)=>boolean=()=>true): Issue[] {
   const issues: Issue[]=[];mkdirSync(directory,{recursive:true,mode:0o700});
   for(const file of readdirSync(directory).filter(f=>f.endsWith('.json')).sort()) {
     const path=join(directory,file);
     try {
       const info=lstatSync(path);if(!info.isFile() || info.isSymbolicLink() || info.size>262144) throw new Error('invalid spool file');
-      const event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;validateEvent(event);store.put(event);unlinkSync(path);
+      const event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;validateEvent(event);if(accept(event))store.put(event);unlinkSync(path);
     } catch { issues.push({reason:`Unreadable event record: ${file}`,source:'hook'}); }
   }
   return issues;
