@@ -4,16 +4,16 @@
 
 **Goal:** Prove local capture and correct grouping of human activity, Orca orchestration workers, and provider sessions; display the evidence in a minimal Tauri app and export HTML.
 
-**Architecture:** TypeScript adapters and a Node sidecar own SQLite and deterministic time reduction. A Swift helper supplies macOS signals; a thin Rust/Tauri host manages child processes and restricted IPC. Vue/TypeScript renders summaries without owning capture lifecycle.
+**Architecture:** TypeScript adapters and a Node sidecar own SQLite and deterministic time reduction. A Swift helper supplies macOS signals; a thin Rust/Tauri host manages child processes and restricted IPC. Vue/Reka UI/TypeScript renders summaries without owning capture lifecycle.
 
-**Tech Stack:** Node.js 26.9+, TypeScript, node:sqlite, node:test, Swift/AppKit/CoreGraphics/ApplicationServices, Tauri 2/Rust, Vue 3/Vite. Pin installed dependencies with lockfiles. No Python application code.
+**Tech Stack:** Node.js 26.9+, TypeScript, node:sqlite, node:test, Swift/AppKit/CoreGraphics/ApplicationServices, Tauri 2/Rust, Vue 3/Reka UI/Vite. Pin installed dependencies with lockfiles. No Python application code.
 
 **Spec:** `docs/superpowers/specs/2026-10-12-agent-time-capture-design.md` (updated for Node/Tauri).
 
 ## Global Constraints
 
 - Use TypeScript on Node.js 26.9+ for CLI orchestration, SQLite persistence through node:sqlite, correlation, replay tests, and reporting.
-- Present the validation dashboard using TypeScript, Vue 3, and Vite inside Tauri 2.
+- Present the validation dashboard using TypeScript, Vue 3, Reka UI, and Vite inside Tauri 2.
 - Keep the Rust shell limited to window lifecycle, restricted IPC, and managing the Node/Swift processes.
 - Use a small native Swift helper for macOS foreground, input inactivity, and sleep/wake observations.
 - Poll documented Orca read APIs at a configurable interval, default five seconds.

@@ -9,10 +9,11 @@ export async function callOrca(argv: string[]): Promise<unknown> {
   const { stdout } = await exec(command, argv, { timeout: 12000, maxBuffer: 8*1024*1024 });
   return JSON.parse(stdout);
 }
-export async function readWorkers(call: (argv: string[]) => Promise<unknown> = callOrca, runId?: string): Promise<{ workers: JsonObject[]; coverage: Issue[] }> {
+export async function readWorkers(call: (argv: string[]) => Promise<unknown> = callOrca, runId?: string, canContinue=()=>true): Promise<{ workers: JsonObject[]; coverage: Issue[] }> {
   const workers: JsonObject[] = [], coverage: Issue[] = [], seen = new Set<string>(); let cursor: string | undefined;
   try {
     do {
+      if(!canContinue())throw new Error('Collection cancelled');
       const argv = ['orchestration','worker-list','--limit','100','--json'];
       if (runId) argv.push('--run',runId); if (cursor) argv.push('--cursor',cursor);
       const receipt = object(await call(argv)); if (!receipt.ok) throw new Error('Orca worker read failed');
@@ -41,6 +42,29 @@ export function workerEvent(worker: JsonObject): CaptureEvent {
       takeover: resource.retainedReason === 'user_takeover', parent: p.parent || null,
       liveness: p.liveness?.verdict || 'unverifiable' },
   });
+}
+export async function readFleet(call: (argv:string[])=>Promise<unknown> = callOrca, canContinue=()=>true):Promise<{workers:JsonObject[];coverage:Issue[]}> {
+  // A default worker-list can inherit whichever coordinator is selected in Orca.
+  // Enumerate explicit Runs so switching tabs cannot silently narrow capture.
+  const runs:string[]=[],coverage:Issue[]=[];let cursor:string|undefined;const seen=new Set<string>();
+  try {
+    do {
+      if(!canContinue())throw new Error('Collection cancelled');
+      const argv=['orchestration','run-list','--limit','100','--json'];if(cursor)argv.push('--cursor',cursor);
+      const r=object(await call(argv));if(!r.ok||!Array.isArray(r.result?.runs))throw new Error('Run discovery unavailable');
+      for(const run of r.result.runs)if(typeof run.id==='string')runs.push(run.id);
+      if(r.result.nextCursor===null||r.result.nextCursor===undefined)break;
+      cursor=String(r.result.nextCursor);if(seen.has(cursor))throw new Error('Repeated Run cursor');seen.add(cursor);
+    }while(true);
+  }catch(error){coverage.push({reason:String(error),source:'orca'});}
+  const workers:JsonObject[]=[];
+  for(let offset=0;offset<runs.length;offset+=4){
+    if(!canContinue())break;
+    const batch=await Promise.all(runs.slice(offset,offset+4).map(run=>readWorkers(call,run,canContinue)));
+    for(const r of batch){workers.push(...r.workers);coverage.push(...r.coverage);}
+  }
+  coverage.push({reason:'Only this Orca host is observed; remote execution has not been verified',source:'orca'});
+  return {workers,coverage};
 }
 export async function terminalEvents(call = callOrca): Promise<CaptureEvent[]> {
   const receipt = object(await call(['terminal','list','--limit','1000','--json']));

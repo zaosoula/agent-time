@@ -34,3 +34,13 @@ test('corrupt and partial spool files preserve valid events and replays', () => 
   const issues=importSpool(root,store);assert.equal(store.events().length,1);assert.equal(issues.length,1);
   spoolHook(event,root);importSpool(root,store);assert.equal(store.events().length,1);store.close();rmSync(root,{recursive:true});
 });
+test('fleet discovery enumerates explicit Runs rather than inheriting coordinator binding',async()=>{
+ const {readFleet}=await import('../src/capture/orca.ts');
+ const calls:string[][]=[];const r=await readFleet(async argv=>{calls.push(argv);return argv[1]==='run-list'?{ok:true,result:{runs:[{id:'r1'},{id:'r2'}],nextCursor:null}}:{ok:true,result:{workers:[{dispatchId:argv[argv.indexOf('--run')+1]}],page:{hasMore:false}}};});
+ assert.equal(r.workers.length,2);assert.ok(calls.slice(1).every(argv=>argv.includes('--run')));
+});
+test('cancelling a fleet read prevents further pages and Run batches',async()=>{
+ const {readFleet}=await import('../src/capture/orca.ts');let active=true;let calls=0;
+ const r=await readFleet(async argv=>{calls++;if(argv[1]==='run-list')return {ok:true,result:{runs:[{id:'r1'},{id:'r2'},{id:'r3'},{id:'r4'},{id:'r5'}],nextCursor:null}};active=false;return {ok:true,result:{workers:[],page:{hasMore:true,nextCursor:'next'}}};},()=>active);
+ assert.ok(calls<=5);assert.ok(r.coverage.some(x=>x.reason.includes('cancelled')));
+});

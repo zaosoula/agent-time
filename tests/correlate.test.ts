@@ -31,3 +31,25 @@ test('human time is a bounded foreground estimate and idle is excluded',()=>{
  const activity=(id:string,time:number,idle:number)=>e(id,time,'activity',{source:'macos',data:{foregroundBundleId:'test',idleSeconds:idle}});
  const s=summarize([activity('1',0,0),activity('2',5,0),activity('3',10,400),activity('4',15,400)]);assert.equal(s.humanSeconds,5);assert.equal(s.agentSeconds,0);
 });
+test('native child lifecycle is inclusive detail and late session-end does not create a duplicate root',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',workspaceId:'ws'};
+ const s=summarize([worker('w1',0),e('h1',1,'tool_start',root),e('h2',4,'tool_end',root),e('c1',1,'child_start',{...root,agentId:'child'}),e('c2',4,'child_stop',{...root,agentId:'child'}),worker('w2',5,'d1','r1','unknown','succeeded'),e('h3',6,'session_end',root)]);
+ assert.equal(s.sessions.filter(x=>!x.child).length,1);assert.equal(s.sessions.find(x=>!x.child)?.state,'completed');assert.equal(s.childAgentSeconds,3);
+});
+test('parallel tools close only their own IDs; an unmatched old tool cannot bridge a gap',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',workspaceId:'ws'};
+ const s=summarize([e('a1',0,'tool_start',{...root,data:{toolId:'A'}}),e('b1',1,'tool_start',{...root,data:{toolId:'B'}}),e('a2',2,'tool_end',{...root,data:{toolId:'A'}}),e('b2',10,'tool_end',{...root,data:{toolId:'B'}})]);
+ assert.equal(s.agentSeconds,10);
+ const g=summarize([e('1',0,'tool_start',{...root,data:{toolId:'old'}}),e('2',3600,'tool_start',{...root,data:{toolId:'new'}}),e('3',3605,'tool_end',{...root,data:{toolId:'new'}})]);assert.equal(g.agentSeconds,5);assert.ok(g.unresolved.length||g.coverage.length);
+});
+test('sleep fences native child lifetime; late events never steal a reused terminal',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',workspaceId:'ws'};
+ const c=summarize([e('1',0,'child_start',{...root,agentId:'child'}),e('2',5,'sleep',{source:'macos'}),e('3',3600,'child_stop',{...root,agentId:'child'})]);assert.equal(c.childAgentSeconds,0);assert.ok(c.coverage.length);
+ const s=summarize([worker('w1',0),e('1',1,'tool_start',root),e('2',2,'tool_end',root),worker('w2',10,'d1','r1','unknown','succeeded'),worker('w3',11,'d2','r1'),e('3',11.5,'tool_start',{...root,sessionId:'s2'}),e('4',12,'session_end',root),e('5',15,'tool_end',{...root,sessionId:'s2'})]);
+ assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.sessionId,'s2');assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.seconds,3.5);
+});
+test('late old-session closure cannot shorten the next Dispatch tool',()=>{
+ const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',workspaceId:'ws'};
+ const s=summarize([worker('w1',0),e('1',1,'tool_start',root),e('2',2,'tool_end',root),worker('w2',10,'d1','r1','unknown','succeeded'),worker('w3',11,'d2','r1'),e('3',11.5,'tool_start',{...root,sessionId:'s2'}),e('4',12,'session_end',root),e('5',15,'tool_end',{...root,sessionId:'s2'})]);
+ assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.sessionId,'s2');assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.seconds,3.5);
+});

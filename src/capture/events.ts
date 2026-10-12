@@ -10,12 +10,12 @@ export interface CaptureEvent {
 }
 export interface Interval {
   start: number; end: number; state: 'running' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
-  sourceEventIds: string[]; workspaceId?: string; sessionId?: string; agentId?: string;
+  sourceEventIds: string[]; hostId?: string; workspaceId?: string; sessionId?: string; agentId?: string;
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
 }
 export interface Issue { reason: string; eventId?: string; source?: string; }
 export interface Session {
-  key: string; workspaceId?: string; cwd?: string; runId?: string; taskId?: string; dispatchId?: string;
+  key: string; hostId?: string; workspaceId?: string; cwd?: string; runId?: string; taskId?: string; dispatchId?: string;
   sessionId?: string; agentId?: string; provider?: string; title: string; state: string;
   terminalHandle?: string; lastObservedAt: number; seconds: number; child: boolean; proof: string;
 }
