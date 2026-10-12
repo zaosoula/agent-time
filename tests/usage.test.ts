@@ -26,3 +26,18 @@ test('usage import persists cursors, retries partial lines, and ignores duplicat
   assert.ok(!JSON.stringify(reader.summary()).includes('private content'));
  }finally{await reader.close();rmSync(root,{recursive:true});}
 });
+test('provider usage switches skip disabled logs while retaining previously imported totals',async()=>{
+ const {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {setTimeout:sleep}=await import('node:timers/promises');const {DatabaseSync}=await import('node:sqlite');const {UsageReader}=await import('../src/usage/reader.ts');
+ const root=mkdtempSync(join(tmpdir(),'ade-usage-provider-'));mkdirSync(join(root,'claude'));mkdirSync(join(root,'codex'));const timestamp=new Date().toISOString();
+ writeFileSync(join(root,'claude/a.jsonl'),JSON.stringify({type:'assistant',timestamp,sessionId:'a',message:{id:'m',model:'claude-opus-5-5',usage:{input_tokens:10,output_tokens:20}}})+'\n');
+ const counter=(n:number)=>({type:'event_msg',timestamp,payload:{type:'token_count',info:{total_token_usage:{input_tokens:n,output_tokens:0}}}});
+ writeFileSync(join(root,'codex/b.jsonl'),[{type:'session_meta',timestamp,payload:{id:'b'}},{type:'turn_context',timestamp,payload:{model:'gpt-6.1-sol'}},counter(100)].map(e=>JSON.stringify(e)).join('\n')+'\n');
+ const path=join(root,'usage.sqlite'),db=new DatabaseSync(path);db.exec('CREATE TABLE events(observed_at REAL,payload TEXT)');for(const [provider,sessionId] of [['claude','a'],['codex','b']])db.prepare('INSERT INTO events VALUES(?,?)').run(Date.now()/1000-10,JSON.stringify({source:'hook',provider,sessionId}));db.close();
+ const reader=new UsageReader(path,[{provider:'claude',accountId:'a',path:join(root,'claude')},{provider:'codex',accountId:'b',path:join(root,'codex')}],async()=>({ok:true,result:{rateLimits:{},claude:{},codex:{}}}),'');
+ try{
+  reader.configureProviders({claude:false,codex:true});reader.start();for(let i=0;i<100&&reader.summary().scanning;i++)await sleep(10);
+  assert.equal(reader.summary().days.find(d=>d.provider==='codex')?.tokens,100);assert.equal(reader.summary().days.find(d=>d.provider==='claude'),undefined);assert.equal(reader.summary().limits.some(l=>l.provider==='claude'),false);
+  reader.configureProviders({claude:true,codex:false});appendFileSync(join(root,'codex/b.jsonl'),JSON.stringify(counter(200))+'\n');await reader.refresh();
+  assert.equal(reader.summary().days.find(d=>d.provider==='claude')?.tokens,30);assert.equal(reader.summary().days.find(d=>d.provider==='codex')?.tokens,100);
+ }finally{await reader.close();rmSync(root,{recursive:true});}
+});

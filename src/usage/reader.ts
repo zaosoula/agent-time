@@ -8,7 +8,7 @@ const day=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padSta
 const emptyCounts=():Counts=>({input:0,output:0,cacheRead:0,cacheWrite:0,cacheWrite1h:0,reasoning:0});
 const periodStart=()=>{const month=new Date();month.setDate(1);month.setHours(0,0,0,0);const week=new Date();week.setDate(week.getDate()-(week.getDay()+6)%7);week.setHours(0,0,0,0);return new Date(Math.min(month.getTime(),week.getTime()));};
 export class UsageReader{
- private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
+ private providers:Record<string,boolean>={claude:true,codex:true};private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
  private limits:UsageSummary['limits']=[];private lastScan:number|null=null;private filesScanned=0;private error:string|null=null;
  private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;
  constructor(database:string,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string){
@@ -16,6 +16,7 @@ export class UsageReader{
   this.db=new DatabaseSync(database);this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }
+ configureProviders(providers:{claude:boolean;codex:boolean}){this.providers={...providers};}
  start(){if(this.enabled)return;this.enabled=true;void this.refresh();}
  async stop(){this.enabled=false;clearTimeout(this.timer);await this.job;}
  async close(){await this.stop();this.db.close();}
@@ -45,17 +46,18 @@ export class UsageReader{
   await this.pricing.refresh();if(!this.enabled)return;
   try{
    const receipt=object(await this.orca(['account','list','--json']));if(!receipt.ok)throw new Error('Orca account usage unavailable');
-   const r=object(receipt.result),limits=object(r.rateLimits);this.limits=[];
+   const r=object(receipt.result),limits=object(r.rateLimits);this.limits=this.limits.filter(l=>!this.providers[l.provider]);
    const window=(v:any)=>v&&typeof v.usedPercent==='number'?{usedPercent:Math.max(0,Math.min(100,v.usedPercent)),resetsAt:typeof v.resetsAt==='number'?v.resetsAt:null,windowMinutes:typeof v.windowMinutes==='number'?v.windowMinutes:null}:null;
    for(const provider of ['claude','codex']){
+    if(!this.providers[provider])continue;
     const candidates=[{...object(limits[provider]),accountId:r[provider]?.activeAccountId||'default'},...(Array.isArray(limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts'])?limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts']:[])];
     for(const v of candidates)this.limits.push({provider,accountId:String(v.accountId||'unknown'),status:String(v.status||'unknown'),updatedAt:typeof v.updatedAt==='number'?v.updatedAt:null,session:window(v.session),weekly:window(v.weekly)});
    }
   }catch{this.error='Account limits unavailable; local token history can still be read';}
   const month=periodStart();const cutoff=month.getTime()/1000;const seen=new Set<string>();
   const captured=this.capturedSessions();
-  for(const root of await this.discoverRoots())for await(const file of this.files(root.path)){
-   if(!this.enabled)return;const canonical=await realpath(file).catch(()=>file);if(seen.has(canonical))continue;seen.add(canonical);
+  for(const root of (await this.discoverRoots()).filter(r=>this.providers[r.provider]))for await(const file of this.files(root.path)){
+   if(!this.enabled)return;if(!this.providers[root.provider])continue;const canonical=await realpath(file).catch(()=>file);if(seen.has(canonical))continue;seen.add(canonical);
    if(![...captured.keys()].some(key=>key.startsWith(root.provider+':')&&canonical.includes(key.slice(root.provider.length+1))))continue;
    const info=await stat(canonical).catch(()=>null);if(!info||!info.size||info.mtimeMs<month.getTime())continue;
    const cursor=this.db.prepare('SELECT offset,state FROM usage_cursors WHERE path=?').get(canonical) as {offset:number;state:string}|undefined;
@@ -63,7 +65,7 @@ export class UsageReader{
    let offset=cursor&&cursor.offset<=info.size?cursor.offset:0;const state:ParserState&{skipping?:boolean}=offset&&cursor?JSON.parse(cursor.state):{};
    const stream=createReadStream(canonical,{start:offset,end:info.size-1,highWaterMark:65536});let pending=Buffer.alloc(0),skipping=state.skipping===true;
    try{for await(const chunk of stream){
-    if(!this.enabled)break;pending=Buffer.concat([pending,chunk as Buffer]);let at:number;
+    if(!this.enabled||!this.providers[root.provider])break;pending=Buffer.concat([pending,chunk as Buffer]);let at:number;
     while((at=pending.indexOf(10))>=0){
      const line=pending.subarray(0,at);offset+=at+1;pending=pending.subarray(at+1);
      if(skipping){skipping=false;continue;}

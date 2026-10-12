@@ -62,7 +62,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  match method {
   "status"|"summary"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss" if p.is_empty()=>Ok(()),
   "hooks_install" if p.len()==1 && p.get("provider").and_then(Value::as_str).map(|v|["claude","codex"].contains(&v)).unwrap_or(false)=>Ok(()),
-  "settings" if p.iter().all(|(k,v)|["macosActivity","claudeHooks","codexHooks","orcaPolling","tokenUsage"].contains(&k.as_str())&&v.is_boolean())=>Ok(()),
+  "settings" if p.iter().all(|(k,v)|["macosActivity","claudeHooks","codexHooks","orcaPolling","tokenUsage","claudeTokenUsage","codexTokenUsage"].contains(&k.as_str())&&v.is_boolean())=>Ok(()),
   "start" if p.len()==1 && p.get("durationSeconds").and_then(Value::as_f64).map(|n|n.is_finite()&&n>=1.0&&n<=86400.0).unwrap_or(false)=>Ok(()),
   _=>Err("Unsupported operation or parameters".into())
  }

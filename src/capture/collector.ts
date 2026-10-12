@@ -32,8 +32,9 @@ export class Collector {
       this.surfaces={...defaultSettings,...validateSettings(known)};
     }
     this.surfaceHistory=this.store.events().filter(e=>e.kind==='capture_settings').sort((a,b)=>a.observedAt-b.observedAt);
-    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);
+    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
   }
+  private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders({claude:s.claudeTokenUsage,codex:s.codexTokenUsage});if(this.running&&s.tokenUsage&&(s.claudeTokenUsage||s.codexTokenUsage))this.usageReader.start();else void this.usageReader.stop();}
   status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.events().length,macos:this.macos,output:this.output};}
   trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(summarize(this.store.events())),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
   hooksStatus(){return this.hookInstallation.status();}
@@ -54,7 +55,7 @@ export class Collector {
     this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;
     if(!next.macosActivity){const helper=this.helper;this.helper=undefined;helper?.kill('SIGTERM');this.macos=null;}
     else if(this.running&&!this.helper)this.startHelper();
-    if(next.tokenUsage&&this.running)this.usageReader.start();else void this.usageReader.stop();
+    this.syncUsage();
     if(this.running&&!this.inFlight){clearTimeout(this.timer);void this.tick();}
     return this.status();
   }
@@ -96,7 +97,7 @@ export class Collector {
     writeFileSync(lock,String(process.pid),{mode:0o600,flag:'wx'});this.lockOwned=true;this.running=true;this.lastError=null;
     this.store.put(makeEvent('capture','capture_start'));
     this.startHelper();
-    if(this.surfaces.tokenUsage)this.usageReader.start();
+    this.syncUsage();
     this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
     await this.tick();return this.status();
   }

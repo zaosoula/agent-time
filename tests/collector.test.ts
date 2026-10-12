@@ -58,3 +58,11 @@ test('persisted polling disable skips Orca reads while importing hook events',as
  try{await c.start(5);assert.equal(calls,0);assert.equal(c.status().orcaPolling,false);assert.ok(c.store.events().some(e=>e.source==='hook'&&e.sessionId==='test-session'));assert.ok(!c.store.events().some(e=>e.source==='orca'));}
  finally{await c.close();rmSync(path,{recursive:true});}
 });
+test('existing shared usage settings migrate to per-agent controls and retain independent preferences',async()=>{
+ const {writeFileSync}=await import('node:fs');const path=mkdtempSync(join(tmpdir(),'ade-provider-settings-'));writeFileSync(join(path,'settings.json'),JSON.stringify({tokenUsage:true}));let c=new Collector(path);
+ try{
+  assert.equal(c.status().surfaces.claudeTokenUsage,true);assert.equal(c.status().surfaces.codexTokenUsage,true);
+  c.updateSettings({claudeTokenUsage:false,codexTokenUsage:true,claudeHooks:false,codexHooks:false});assert.equal(c.status().surfaces.macosActivity,true);assert.equal(c.status().surfaces.orcaPolling,true);
+  await c.close();c=new Collector(path);assert.equal(c.status().surfaces.claudeTokenUsage,false);assert.equal(c.status().surfaces.codexTokenUsage,true);assert.equal(c.status().surfaces.tokenUsage,true);
+ }finally{await c.close();rmSync(path,{recursive:true});}
+});
