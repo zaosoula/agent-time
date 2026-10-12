@@ -71,4 +71,6 @@ npm run typecheck
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+Orca polling can be disabled for hook-isolation tests by setting `"orcaPolling": false` in `settings.json` inside the capture data directory, then restarting the collector. Hook ingestion and macOS activity continue. The desktop Settings dialog shows the current polling state. Set it back to `true` and restart to compare polling against hooks.
+
 CLI data is private and ignored by Git. `--run <id>` scopes a CLI collection to one Run. Desktop discovery enumerates explicit Runs on this Orca host so selecting a coordinator tab cannot silently narrow capture. Remote execution coverage remains unverified. Read [the validation results](docs/capture-validation.md) for observed proof and limits.

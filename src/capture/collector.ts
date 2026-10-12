@@ -14,12 +14,19 @@ export class Collector {
   private helper:ChildProcess|undefined; private inFlight:Promise<void>|undefined; private lastPoll:number|null=null;
   private lastError:string|null=null; private macos:Record<string,unknown>|null=null; private lockOwned=false;
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
+  private orcaPolling=true;
   private probe?:string; private interval:number; private runId?:string; private reader:typeof callOrca;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca) {
     this.probe=probe;this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
+    const settings=join(output,'settings.json');
+    if(existsSync(settings)) {
+      const config=JSON.parse(readFileSync(settings,'utf8'));
+      if(config.orcaPolling!==undefined&&typeof config.orcaPolling!=='boolean')throw new Error('Invalid Orca polling setting');
+      this.orcaPolling=config.orcaPolling??true;
+    }
   }
-  status(){return {running:this.running,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.events().length,macos:this.macos,output:this.output};}
+  status(){return {running:this.running,orcaPolling:this.orcaPolling,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.events().length,macos:this.macos,output:this.output};}
   summary():Summary {
     const events=this.store.events(),summary=summarize(events);
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
@@ -56,12 +63,16 @@ export class Collector {
   }
   private async poll() {
     try{
-      const {workers,coverage}=this.runId?await readWorkers(this.reader,this.runId,()=>this.running):await readFleet(this.reader,()=>this.running);
-      for(const w of workers)this.store.put(workerEvent(w));
-      for(const issue of coverage)this.store.put(makeEvent('orca','coverage',{data:{reason:issue.reason}}));
-      if(this.running)try{for(const e of await terminalEvents(this.reader))this.store.put(e);}catch(error){this.store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
+      let pollingError:string|null=null;
+      if(this.orcaPolling){
+        const {workers,coverage}=this.runId?await readWorkers(this.reader,this.runId,()=>this.running):await readFleet(this.reader,()=>this.running);
+        for(const w of workers)this.store.put(workerEvent(w));
+        for(const issue of coverage)this.store.put(makeEvent('orca','coverage',{data:{reason:issue.reason}}));
+        if(this.running)try{for(const e of await terminalEvents(this.reader))this.store.put(e);}catch(error){this.store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
+        pollingError=coverage.find(i=>!i.reason.startsWith('Only this Orca host'))?.reason||null;
+      }
       for(const issue of importSpool(join(this.output,'spool'),this.store))this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
-      this.lastPoll=Date.now()/1000;this.lastError=coverage.find(i=>!i.reason.startsWith('Only this Orca host'))?.reason||null;
+      this.lastPoll=Date.now()/1000;this.lastError=pollingError;
     }catch(error){this.lastError=String(error);this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}
   }
   stop():Promise<ReturnType<Collector['status']>> {

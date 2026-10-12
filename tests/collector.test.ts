@@ -15,3 +15,11 @@ test('stop kills its native helper while a metadata read is pending and cancels 
  }
  assert.equal(calls,1);
 });
+test('persisted polling disable skips Orca reads while importing hook events',async()=>{
+ const {writeFileSync}=await import('node:fs');const {spoolHook,normalizeHook}=await import('../src/capture/hooks.ts');
+ const path=mkdtempSync(join(tmpdir(),'ade-hook-only-'));writeFileSync(join(path,'settings.json'),JSON.stringify({orcaPolling:false}));
+ let calls=0;const c=new Collector(path,undefined,1,undefined,async()=>{calls++;throw new Error('Orca must not be called');});
+ spoolHook(normalizeHook('claude',{hook_event_name:'SessionStart',session_id:'test-session'},{}),join(path,'spool'));
+ try{await c.start(5);assert.equal(calls,0);assert.equal(c.status().orcaPolling,false);assert.ok(c.store.events().some(e=>e.source==='hook'&&e.sessionId==='test-session'));assert.ok(!c.store.events().some(e=>e.source==='orca'));}
+ finally{await c.close();rmSync(path,{recursive:true});}
+});

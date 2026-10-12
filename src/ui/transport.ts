@@ -1,5 +1,5 @@
 import type { Summary } from '../capture/events.ts';
-export interface CaptureStatus { running:boolean;lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:Record<string,unknown>|null; }
+export interface CaptureStatus { running:boolean;orcaPolling:boolean;lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:Record<string,unknown>|null; }
 export const native=Boolean('__TAURI_INTERNALS__' in window);
 export async function request<T>(method:string,params:Record<string,unknown>={}):Promise<T>{
  if(native){const {invoke}=await import('@tauri-apps/api/core');return invoke<T>('capture_request',{method,params});}
