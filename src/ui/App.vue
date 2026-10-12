@@ -10,7 +10,9 @@ import type { CaptureSettings } from '../capture/settings.ts';
 import type { Summary,Session,Interval } from '../capture/events.ts';
 import { unionSeconds } from '../capture/correlate.ts';
 const empty:Summary={intervals:[],unresolved:[],coverage:[],sessions:[],humanSeconds:0,agentSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
-const summary=ref<Summary>(empty),status=ref<CaptureStatus|null>(null),error=ref(''),busy=ref(false),project=ref('all'),search=ref(''),selected=ref<Session|null>(null),view=ref('timeline'),page=ref('today');
+const summary=ref<Summary>(empty),status=ref<CaptureStatus|null>(null),error=ref(''),captureBusy=ref(false),settingsBusy=ref(false),project=ref('all'),search=ref(''),selected=ref<Session|null>(null),view=ref('timeline'),page=ref('today');
+const busy=computed(()=>captureBusy.value||settingsBusy.value);
+let refreshJob:Promise<void>|undefined,refreshRevision=0;
 const dateString=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const selectedDate=ref(dateString(new Date()));
 const dayStart=computed(()=>new Date(selectedDate.value+'T00:00:00').getTime()/1000);
@@ -57,9 +59,12 @@ let timer:ReturnType<typeof setInterval>|undefined;
 let unlistenNavigation:(()=>void)|undefined;
 let unmounted=false;
 async function listenNavigation(){if(native){const {listen}=await import('@tauri-apps/api/event');const dispose=await listen<string>('navigate',event=>{if(event.payload==='settings'||event.payload==='today'||event.payload==='usage'){page.value=event.payload;selected.value=null;project.value='all';}});if(unmounted)dispose();else unlistenNavigation=dispose;}}
-async function refresh(){try{const [s,meta]=await Promise.all([transport.summary(),transport.status()]);summary.value=s;status.value=meta;error.value='';}catch(e){error.value=String(e);}}
-async function toggleCapture(){busy.value=true;try{status.value=status.value?.running?await transport.stop():await transport.start();await refresh();}catch(e){error.value=String(e);}finally{busy.value=false;}}
-async function updateSettings(settings:Partial<CaptureSettings>){busy.value=true;try{status.value=await transport.settings(settings);await refresh();}catch(e){error.value=String(e);}finally{busy.value=false;}}
+function refresh():Promise<void>{
+ if(refreshJob)return refreshJob;const revision=refreshRevision;
+ refreshJob=(async()=>{try{const [s,meta]=await Promise.all([transport.summary(),transport.status()]);if(unmounted||revision!==refreshRevision)return;summary.value=s;status.value=meta;error.value='';}catch(e){if(!unmounted&&revision===refreshRevision)error.value=String(e);}})().finally(()=>{refreshJob=undefined;});return refreshJob;
+}
+async function toggleCapture(){captureBusy.value=true;refreshRevision++;try{status.value=status.value?.running?await transport.stop():await transport.start();error.value='';}catch(e){error.value=String(e);}finally{captureBusy.value=false;void refresh();}}
+async function updateSettings(settings:Partial<CaptureSettings>){settingsBusy.value=true;refreshRevision++;try{status.value=await transport.settings(settings);error.value='';}catch(e){error.value=String(e);}finally{settingsBusy.value=false;void refresh();}}
 function changeDay(amount:number){const date=new Date(selectedDate.value+'T12:00:00');date.setDate(date.getDate()+amount);selectedDate.value=dateString(date);selected.value=null;}
 function exportCsv(){const headers=['Project','Session','Run','Task','Agent seconds','State','Proof'];const rows=visibleSessions.value.map(s=>[projectName(s),s.title,s.runId||'',s.taskId||'',String(Math.round(s.seconds)),s.state,s.proof]);const csv=[headers,...rows].map(row=>row.map(v=>'"'+v.replaceAll('"','""')+'"').join(',')).join('\r\n');const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`agent-time-${selectedDate.value}.csv`;a.click();URL.revokeObjectURL(url);}
 function openSettings(e:KeyboardEvent){if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();page.value='settings';selected.value=null;}}
@@ -80,7 +85,7 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();clearInterval(timer);wind
   <div class="sidebar-footer"><div class="collector-line"><span :class="['status-dot',{live:status?.running}]"></span><span>{{status?.running?'Tracking activity':'Capture paused'}}</span></div><div class="footer-line"><span>Stored on this Mac</span><button class="icon-button" aria-label="Settings" @click="page='settings';selected=null"><Settings2 :size="15"/></button></div></div>
  </aside>
  <main class="main-pane">
-  <header class="toolbar" data-tauri-drag-region><div class="breadcrumbs"><span>{{project==='all'?'All projects':project}}</span><ChevronRight :size="12"/><strong>{{page==='usage'?'Tokens & limits':page==='settings'?'Capture settings':page==='health'?'Capture health':page==='sessions'?'Agent sessions':'My day'}}</strong></div><div class="toolbar-actions"><TooltipRoot><TooltipTrigger as-child><button class="icon-button" aria-label="Export timesheet as CSV" @click="exportCsv"><Download :size="17"/></button></TooltipTrigger><TooltipPortal><TooltipContent class="tooltip">Export timesheet</TooltipContent></TooltipPortal></TooltipRoot><button class="capture-button" :disabled="busy" @click="toggleCapture"><Pause v-if="status?.running" :size="12"/><Play v-else :size="12"/>{{busy?'Connecting…':status?.running?'Pause capture':'Start capture'}}</button></div></header>
+  <header class="toolbar" data-tauri-drag-region><div class="breadcrumbs"><span>{{project==='all'?'All projects':project}}</span><ChevronRight :size="12"/><strong>{{page==='usage'?'Tokens & limits':page==='settings'?'Capture settings':page==='health'?'Capture health':page==='sessions'?'Agent sessions':'My day'}}</strong></div><div class="toolbar-actions"><TooltipRoot><TooltipTrigger as-child><button class="icon-button" aria-label="Export timesheet as CSV" @click="exportCsv"><Download :size="17"/></button></TooltipTrigger><TooltipPortal><TooltipContent class="tooltip">Export timesheet</TooltipContent></TooltipPortal></TooltipRoot><button class="capture-button" :disabled="busy" @click="toggleCapture"><Pause v-if="status?.running" :size="12"/><Play v-else :size="12"/>{{settingsBusy?'Saving…':captureBusy?'Updating capture…':status?.running?'Pause capture':'Start capture'}}</button></div></header>
   <div v-if="error||status?.lastError" class="error-banner"><CircleHelp :size="16"/><span>{{error||status?.lastError}}</span><button @click="refresh">Retry</button></div>
   <UsagePage v-if="page==='usage'" :status="status"/>
   <CaptureSettingsPage v-else-if="page==='settings'" :status="status" :busy="busy" @change="updateSettings" @error="error=$event"/>

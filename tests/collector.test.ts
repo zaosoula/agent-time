@@ -66,3 +66,13 @@ test('existing shared usage settings migrate to per-agent controls and retain in
   await c.close();c=new Collector(path);assert.equal(c.status().surfaces.claudeTokenUsage,false);assert.equal(c.status().surfaces.codexTokenUsage,true);assert.equal(c.status().surfaces.tokenUsage,true);
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
+test('status avoids history replay and dashboard/menu reuse a summary until an event changes',async()=>{
+ const {makeEvent}=await import('../src/capture/events.ts');const {DatabaseSync}=await import('node:sqlite');const path=mkdtempSync(join(tmpdir(),'ade-summary-cache-'));const c=new Collector(path);
+ const read=c.store.events.bind(c.store);let reads=0;c.store.events=()=>{reads++;return read();};
+ try{
+  c.status();assert.equal(reads,0);const first=c.summary();c.summary();c.trayStatus();assert.equal(reads,1);
+  const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local'});c.store.put(e);assert.notDeepEqual(c.summary(),first);c.trayStatus();assert.equal(reads,2);
+  c.store.put(e);c.summary();assert.equal(reads,2);
+  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,3);
+ }finally{await c.close();rmSync(path,{recursive:true});}
+});

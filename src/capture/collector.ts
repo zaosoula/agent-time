@@ -20,7 +20,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private usageReader:UsageReader;private hookInstallation:HookInstallation;
+  private summaryCache:{revision:string;value:Summary}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
   private probe?:string; private interval:number; private runId?:string; private reader:typeof callOrca;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca) {
     this.probe=probe;this.interval=interval;this.runId=runId;this.reader=reader;
@@ -35,8 +35,8 @@ export class Collector {
     this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders({claude:s.claudeTokenUsage,codex:s.codexTokenUsage});if(this.running&&s.tokenUsage&&(s.claudeTokenUsage||s.codexTokenUsage))this.usageReader.start();else void this.usageReader.stop();}
-  status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.events().length,macos:this.macos,output:this.output};}
-  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(summarize(this.store.events())),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
+  status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
+  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary()),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
   hooksStatus(){return this.hookInstallation.status();}
   verifyHooks(){return this.hookInstallation.verify();}
   installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}
@@ -78,10 +78,11 @@ export class Collector {
     } else this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}}));
   }
   summary():Summary {
+    const revision=this.store.revision();if(this.summaryCache?.revision===revision)return this.summaryCache.value;
     const events=this.store.events(),summary=summarize(events);
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
     for(const s of summary.sessions){const t=terminals.get(s.terminalHandle);if(t&&!s.child){s.title=String(t.data?.title||s.title).replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◐◓◑◒]\s*/, '');s.cwd=t.cwd||s.cwd;}}
-    return summary;
+    this.summaryCache={revision,value:summary};return summary;
   }
   async start(durationSeconds=3600) {
     if(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds>86400)throw new Error('Duration must be 1–86400 seconds');
