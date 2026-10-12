@@ -1,6 +1,6 @@
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
-interface Controller { status():unknown; summary():unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:'claude'|'codex'):Promise<unknown>;dismissHookSetup?():unknown; }
+interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary():unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:'claude'|'codex'):Promise<unknown>;dismissHookSetup?():unknown; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -9,6 +9,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='settings'){
       if(!controller.updateSettings)throw new Error('Settings unavailable');
       return {id,result:controller.updateSettings(validateSettings(request.params))};
+    }
+    if(request.method==='tracking_cleanup'){
+      if(!controller.cleanupTracking||Object.keys(params).length!==1||params.confirmed!==true)throw new Error('Cleanup requires explicit confirmation');
+      return {id,result:controller.cleanupTracking()};
     }
     if(request.method==='hooks_install'){
       if(!controller.installHooks||!request.params||Object.keys(params).length!==1||!['claude','codex'].includes(params.provider))throw new Error('Invalid hook installation request');
@@ -21,6 +25,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:await controller.start(duration)};
     }
     if(Object.keys(params).length)throw new Error('Unsupported parameter');
+    if(request.method==='tracking_cleanup_preview'&&controller.cleanupPreview)return {id,result:controller.cleanupPreview()};
     if(request.method==='hooks_status'&&controller.hooksStatus)return {id,result:controller.hooksStatus()};
     if(request.method==='hooks_verify'&&controller.verifyHooks)return {id,result:controller.verifyHooks()};
     if(request.method==='hooks_dismiss'&&controller.dismissHookSetup)return {id,result:controller.dismissHookSetup()};

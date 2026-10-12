@@ -2,7 +2,7 @@
 import {ref,onMounted,onUnmounted,computed} from 'vue';
 import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDescription} from 'reka-ui';
 import {Bot,Check,RefreshCw} from '@lucide/vue';
-import {transport} from './transport.ts';
+import {transport,relaunchHookSetup} from './transport.ts';
 import type {HookInstallationStatus,HookProvider} from '../capture/hook-installation.ts';
 const props=defineProps<{mode:'onboarding'|'settings'}>();
 const state=ref<HookInstallationStatus|null>(null),open=ref(false),busy=ref(false),error=ref(''),message=ref('');
@@ -18,7 +18,8 @@ async function refresh(){if(busy.value)return;try{const next=await transport.hoo
 async function install(list:HookProvider[]){busy.value=true;error.value='';message.value='';try{for(const provider of list)state.value=await transport.installHooks(provider);message.value=list.some(p=>!installed(p))||state.value?.migrationError?'Some configurations need attention. Check the details below.':'Hooks installed. Start a new session to receive events.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function verify(){busy.value=true;error.value='';try{state.value=await transport.verifyHooks();message.value='Installation checked.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function dismiss(){if(busy.value)return;try{state.value=await transport.dismissHookSetup();open.value=false;}catch(e){error.value=String(e);}}
-onMounted(()=>{void refresh();timer=setInterval(()=>{void refresh();},5000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);});
+function reopen(){if(props.mode!=='onboarding')return;error.value='';message.value='';open.value=true;void refresh();}
+onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refresh();timer=setInterval(()=>{void refresh();},5000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);window.removeEventListener('agent-time:hook-setup',reopen);});
 </script>
 <template>
 <DialogRoot v-if="mode==='onboarding'" :open="open" @update:open="!$event&&dismiss()"><DialogPortal><DialogOverlay class="hook-overlay"/><DialogContent class="hook-dialog" @escape-key-down="busy&&$event.preventDefault()" @pointer-down-outside="busy&&$event.preventDefault()">
@@ -37,7 +38,7 @@ onMounted(()=>{void refresh();timer=setInterval(()=>{void refresh();},5000);});o
  <slot name="global-controls"/>
  <div class="hook-settings"><div class="hook-section-heading"><div><h3>Hook overview</h3><p>User-wide installation across all projects.</p></div></div>
   <div class="hook-overview"><div v-for="p in providers" :key="p"><strong>{{p==='claude'?'Claude Code':'Codex'}}</strong><span v-if="state">{{targets(p).filter(t=>t.state==='installed').length}} of {{targets(p).length}} configurations installed</span><span v-else>Checking installation…</span></div></div>
-  <div class="hook-global-actions"><button class="hook-check" :disabled="busy||!state" @click="verify"><RefreshCw :size="13"/> Check all hooks</button><button class="hook-action" :disabled="busy||!state" @click="install(providers)">{{busy?'Working…':'Install / update all hooks'}}</button></div>
+  <div class="hook-global-actions"><button class="hook-check" :disabled="busy" @click="relaunchHookSetup">Relaunch hook setup</button><button class="hook-check" :disabled="busy||!state" @click="verify"><RefreshCw :size="13"/> Check all hooks</button><button class="hook-action" :disabled="busy||!state" @click="install(providers)">{{busy?'Working…':'Install / update all hooks'}}</button></div>
   <p v-if="error" class="hook-error" role="alert">{{error}}</p><p v-if="message" class="hook-message" role="status">{{message}}</p>
   <p v-if="state?.migrationError" class="hook-error">Project migration needs attention: {{state.migrationError}}</p><p v-else-if="state?.legacyPaths.length" class="hook-description">Installing here also moves your earlier Agent Time project hooks to user scope.</p>
  </div>

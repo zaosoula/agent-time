@@ -54,3 +54,21 @@ test('moving the capture data directory updates the owned command instead of ins
   await moved.install('claude');const config=JSON.parse(readFileSync(join(f.home,'.claude/settings.json'),'utf8'));assert.equal(config.hooks.Stop.length,1);assert.ok(config.hooks.Stop[0].hooks[0].command.includes('new-data/spool'));
  }finally{f.close();}
 });
+test('cleanup previews and removes only owned hooks including inactive custom homes, keeping history and foreign handlers',async()=>{
+ const f=fixture();try{
+  const custom=join(f.home,'custom'),m=new HookInstallation(f.output,{home:f.home,env:{CODEX_HOME:custom}});await m.install('codex');
+  const path=join(custom,'hooks.json'),config=JSON.parse(readFileSync(path,'utf8'));config.theme='dark';config.hooks.Stop[0].hooks.push({command:'foreign',type:'command'});writeFileSync(path,JSON.stringify(config));
+  const before=readFileSync(join(f.output,'events.sqlite'));const preview=f.manager.cleanupPreview();assert.ok(preview.configurations.includes(path));assert.ok(preview.helpers.length);assert.equal(readFileSync(path,'utf8'),JSON.stringify(config));
+  const result=f.manager.cleanup();assert.deepEqual(result.errors,[]);const after=JSON.parse(readFileSync(path,'utf8'));assert.equal(after.theme,'dark');assert.deepEqual(after.hooks.Stop[0].hooks,[{command:'foreign',type:'command'}]);assert.equal(after.hooks.SessionStart,undefined);assert.deepEqual(readFileSync(join(f.output,'events.sqlite')),before);assert.equal(f.manager.status().runtimeReady,false);assert.deepEqual(f.manager.cleanup().errors,[]);await m.install('codex');assert.equal(m.status().targets.filter(t=>t.provider==='codex').every(t=>t.state==='installed'),true);
+ }finally{f.close();}
+});
+test('cleanup retains runtimes when an owned configuration cannot safely be edited',async()=>{
+ const f=fixture();try{await f.manager.install('claude');const path=join(f.home,'.claude/settings.json');writeFileSync(path,'malformed');assert.ok(f.manager.cleanupPreview().errors.length);const result=f.manager.cleanup();assert.ok(result.errors.length);assert.equal(readFileSync(path,'utf8'),'malformed');assert.equal(f.manager.status().runtimeReady,true);}finally{f.close();}
+});
+test('cleanup handles merged legacy project hooks and retains unexpected runtime files',async()=>{
+ const f=fixture();try{
+  const {prepareConfig,applyConfig}=await import('../src/capture/hook-config.ts');const path=join(f.home,'project/.claude/settings.local.json');const manifest=prepareConfig(path,'claude','legacy-agent-time',['Stop']);applyConfig(manifest);writeFileSync(join(f.output,'claude-hook-manifest.json'),JSON.stringify(manifest));const config=JSON.parse(readFileSync(path,'utf8'));config.hooks.Stop[0].hooks.push({command:'foreign'});writeFileSync(path,JSON.stringify(config));
+  assert.deepEqual(f.manager.cleanupPreview().configurations,[path]);assert.deepEqual(f.manager.cleanup().errors,[]);assert.deepEqual(JSON.parse(readFileSync(path,'utf8')).hooks.Stop[0].hooks,[{command:'foreign'}]);assert.deepEqual(f.manager.cleanup().removedConfigurations,[]);
+  await f.manager.install('codex');const runtime=f.manager.cleanupPreview().helpers[0];writeFileSync(join(runtime,'keep.txt'),'user file');assert.ok(f.manager.cleanup().errors.length);assert.equal(readFileSync(join(runtime,'keep.txt'),'utf8'),'user file');assert.equal(f.manager.status().runtimeReady,true);
+ }finally{f.close();}
+});

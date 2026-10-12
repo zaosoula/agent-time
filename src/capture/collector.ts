@@ -37,6 +37,8 @@ export class Collector {
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders({claude:s.claudeTokenUsage,codex:s.codexTokenUsage});if(this.running&&s.tokenUsage&&(s.claudeTokenUsage||s.codexTokenUsage))this.usageReader.start();else void this.usageReader.stop();}
   status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
   trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary()),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
+  cleanupPreview(){return this.hookInstallation.cleanupPreview();}
+  cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}
   verifyHooks(){return this.hookInstallation.verify();}
   installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}

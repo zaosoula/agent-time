@@ -22,3 +22,9 @@ test('hook setup only accepts fixed provider operations and no filesystem argume
  assert.deepEqual(await dispatchRequest({id:'h',method:'hooks_dismiss'},c),{id:'h',result:{setupSeen:true}});
  assert.ok('error' in await dispatchRequest({id:'h',method:'hooks_verify',params:{command:'anything'}},c));
 });
+test('tracking cleanup requires explicit confirmation and rejects arbitrary paths',async()=>{
+ let removed=0;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),cleanupPreview:()=>({configurations:[]}),cleanupTracking:()=>{removed++;return {removed:true};}};
+ assert.ok('result' in await dispatchRequest({id:'p',method:'tracking_cleanup_preview'},c));assert.equal(removed,0);
+ for(const params of [{},{confirmed:false},{confirmed:true,path:'/tmp'},{confirmed:'true'}])assert.ok('error' in await dispatchRequest({id:'c',method:'tracking_cleanup',params},c));
+ assert.equal(removed,0);assert.ok('result' in await dispatchRequest({id:'c',method:'tracking_cleanup',params:{confirmed:true}},c));assert.equal(removed,1);
+});
