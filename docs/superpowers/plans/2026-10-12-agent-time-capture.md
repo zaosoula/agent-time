@@ -2,17 +2,19 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Prove local capture and correct grouping of human activity, Orca orchestration workers, and provider sessions, then deliver an HTML evidence report.
+**Goal:** Prove local capture and correct grouping of human activity, Orca orchestration workers, and provider sessions; display the evidence in a minimal Tauri app and export HTML.
 
-**Architecture:** Python adapters persist minimal source events in SQLite; a deterministic reducer produces time-bounded associations and intervals. A Swift helper supplies macOS observations. A controlled Orca Run proves live joins while replay tests cover arithmetic and failure cases.
+**Architecture:** TypeScript adapters and a Node sidecar own SQLite and deterministic time reduction. A Swift helper supplies macOS signals; a thin Rust/Tauri host manages child processes and restricted IPC. Vue/TypeScript renders summaries without owning capture lifecycle.
 
-**Tech Stack:** Python 3.11+ standard library (`sqlite3`, `unittest`, `subprocess`, `argparse`, `html`), native Swift/AppKit/CoreGraphics/ApplicationServices. No third-party runtime dependency.
+**Tech Stack:** Node.js 26.9+, TypeScript, node:sqlite, node:test, Swift/AppKit/CoreGraphics/ApplicationServices, Tauri 2/Rust, Vue 3/Vite. Pin installed dependencies with lockfiles. No Python application code.
 
-**Spec:** `docs/superpowers/specs/2026-10-12-agent-time-capture-design.md`
+**Spec:** `docs/superpowers/specs/2026-10-12-agent-time-capture-design.md` (updated for Node/Tauri).
 
 ## Global Constraints
 
-- Use Python 3.11+ and its standard library for CLI orchestration, SQLite persistence, correlation, replay tests, and HTML reporting.
+- Use TypeScript on Node.js 26.9+ for CLI orchestration, SQLite persistence through node:sqlite, correlation, replay tests, and reporting.
+- Present the validation dashboard using TypeScript, Vue 3, and Vite inside Tauri 2.
+- Keep the Rust shell limited to window lifecycle, restricted IPC, and managing the Node/Swift processes.
 - Use a small native Swift helper for macOS foreground, input inactivity, and sleep/wake observations.
 - Poll documented Orca read APIs at a configurable interval, default five seconds.
 - Use a configurable idle threshold, initially five minutes, retaining underlying observations so later correction is possible.
@@ -20,194 +22,162 @@
 - Collection failure must not block, interrupt, or add context to an agent.
 - Hook installation is explicit and reversible; preserve existing configurations and resolve the actual configuration root for each Orca account before modifying it.
 - Folder workspaces are supported without Git.
-- Missing final events, stale observations, sleep, collector downtime, and remote contact loss do not imply continued activity or process exit.
 - Every derived interval carries observed, inferred, or unresolved proof status and its source evidence.
 - Store generated evidence and databases outside tracked source paths and keep transcript/prompt content out of fixtures.
+- Closing the window hides it while the app process continues collection; explicitly quitting flushes and stops its owned collector/helper.
+- Signing/notarization and distribution are outside this phase.
 - Defer billing, cloud sync, full application tracking, screenshots/OCR, AI summaries, pricing calculations, and polished dashboard UI.
 
 ## Review Focus
 
-1. Multiple workers sharing a directory must remain unresolved unless an explicit session/terminal binding proves the join (Task 3).
-2. Wall-clock rollback must not create negative intervals or silently reorder causal observations (Tasks 1 and 3).
-3. Truncated pages, remote omissions, and missing workers must remain coverage uncertainty rather than completion (Task 2).
-4. Partial/corrupt spool files and simultaneous hooks must not block agents or lose other valid events (Tasks 1 and 2).
-5. Titles and error messages containing HTML must render as text; omitted capabilities must remain visible (Task 5).
+1. Several sessions in one directory must remain unresolved without verified terminal/session bindings (Task 3).
+2. Clock rollback, collector restarts, and missing observations must never inflate duration (Tasks 1 and 3).
+3. Partial pages and remote omissions must be coverage uncertainty, not completion (Task 2).
+4. Corrupt/concurrent spool records and configuration rollback must preserve agent execution and unrelated hooks (Task 2).
+5. Dashboard reload, window close, and packaged launch must not duplicate collectors or depend silently on development runtimes (Task 5).
 
-## File map and shared contracts
+## File structure and contracts
 
-Create `ade_capture/` with `__init__.py`, `events.py`, `store.py`, `orca.py`, `hooks.py`, `hook_config.py`, `correlate.py`, `macos.py`, `report.py`, and `__main__.py`. Tests mirror these modules under `tests/`, using `unittest`; `tests/__init__.py` enables module-scoped invocations. Create `native/ActivityProbe.swift`, `README.md`, and `docs/capture-validation.md`. Add `.gitignore` entries for `.capture/`, `__pycache__/`, `*.pyc`, and native build artifacts. Local generated data goes into ignored `.capture/`, created with mode 0700; spool/database files use mode 0600.
+Create `src/capture/{events,store,orca,hooks,hook-config,correlate,macos,report,protocol,cli}.ts`, corresponding tests in `tests/`, `native/ActivityProbe.swift`, `src/ui/{App.vue,main.ts,transport.ts}`, `src-tauri/{Cargo.toml,tauri.conf.json,src/main.rs,src/lib.rs}`, `scripts/package-sidecars.mjs`, `package.json`, `tsconfig.json`, `vite.config.ts`, `index.html`, `.gitignore`, `README.md`, and `docs/capture-validation.md`. Keep generated data/build outputs in ignored `.capture/`, `dist/`, `src-tauri/target/`, and generated sidecar directories. Do not commit bundled Node binaries.
 
-An Event is a JSON-compatible dictionary with required `event_id: str`, `source: str`, `kind: str`, `observed_at: float` (UTC seconds), `monotonic_at: float`, and `collector_epoch: str`. Optional fields: `source_at`, `host_id`, `runtime_id`, `workspace_id`, `cwd`, `terminal_handle`, `terminal_incarnation`, `provider`, `session_id`, `turn_id`, `agent_id`, `parent_agent_id`, `run_id`, `task_id`, `dispatch_id`, and `data` (allowlisted object). Missing fields are absent or null, never guessed. Validate finite timestamps; collector epochs distinguish incomparable monotonic clocks.
+Use ESM with NodeNext resolution, strict TypeScript, erasable type syntax, and `.ts` imports for capture code running directly in the pinned Node runtime. Scripts: `typecheck` runs `tsc --noEmit`; `test` runs `node --test tests/*.test.ts`; `capture` runs `node src/capture/cli.ts`; `dev` runs Vite; `tauri` runs the Tauri CLI. TypeScript, Node typings, Vue/Vite, Tauri frontend API and CLI are pinned dependencies; capture imports only Node built-ins. Vite bundles the frontend separately.
 
-An Interval dictionary contains `start`, `end`, `state`, `proof`, `source_event_ids`, and identity/grouping fields. Summary dictionary contains `intervals`, `unresolved`, `coverage`, `human_seconds`, `agent_seconds`, `elapsed_seconds`, and `child_agent_seconds`. Root-inclusive and child durations remain separate. A validation verdict has `scenario`, `mode` (`live` or `simulated`), `status` (`pass`, `fail`, `unsupported`, `unverified`), and `evidence`.
+Define `CaptureEvent` with required `eventId`, `source`, `kind`, `observedAt` (UTC seconds), `monotonicAt`, `collectorEpoch`, and optional `sourceAt`, `hostId`, `runtimeId`, `workspaceId`, `cwd`, `terminalHandle`, `terminalIncarnation`, `provider`, `sessionId`, `turnId`, `agentId`, `parentAgentId`, `runId`, `taskId`, `dispatchId`, `data`. Payloads are explicitly allowlisted. Require finite timestamps and nonempty IDs; absent identity is never fabricated.
 
-## Task 1: Private, idempotent event persistence
+Define `Interval` with `start`, `end`, `state`, `proof`, `sourceEventIds`, and optional grouping identities. Define `Summary` with `intervals`, `unresolved`, `coverage`, `humanSeconds`, `agentSeconds`, `elapsedSeconds`, `childAgentSeconds`. Root inclusive time and child detail remain separate. Define `Verdict` with `scenario`, `mode` (live/simulated), `status` (pass/fail/unsupported/unverified), and `evidence`.
 
-**Files:** `ade_capture/__init__.py`, `ade_capture/events.py`, `ade_capture/store.py`, `tests/__init__.py`, `tests/test_store.py`, `.gitignore`.
+## Task 1: Event storage and replay
 
-**Interfaces:** `make_event(source: str, kind: str, **fields) -> dict`; `Store(path: Path)` with `put(event: dict) -> bool`, `events() -> list[dict]`, `close() -> None`. Store validates events, stores serialized minimal payloads, and uses `event_id` as the unique key. `put` returns False on identical replay and rejects conflicting contents for the same ID.
+**Files:** events/store modules, `tests/store.test.ts`, package/TS configuration, `.gitignore`.
 
-- [ ] **Write failing persistence tests.** Use temporary directories for all test data. Include this test and companion cases for conflicting duplicates, invalid/nonfinite timestamps, permission modes, and preserved clock rollback:
+**Interfaces:** `makeEvent(source: string, kind: string, fields: Partial<CaptureEvent>): CaptureEvent`; `EventStore(path: string)` with `put(event): boolean`, `events(): CaptureEvent[]`, `close(): void`.
 
-```python
-from pathlib import Path
-from tempfile import TemporaryDirectory
-from unittest import TestCase
-from ade_capture.store import Store
+- [ ] Write failing tests for idempotent persistence, conflicting IDs, invalid timestamps, private file modes, and monotonic ordering across epochs. Include:
 
-class StoreTests(TestCase):
-    def test_replay_does_not_duplicate(self):
-        with TemporaryDirectory() as root:
-            store = Store(Path(root) / 'events.sqlite')
-            event = dict(event_id='e1', source='test', kind='running',
-                         observed_at=10.0, monotonic_at=1.0,
-                         collector_epoch='boot-a')
-            self.assertTrue(store.put(event))
-            self.assertFalse(store.put(event))
-            self.assertEqual(store.events(), [event])
-            store.close()
+```typescript
+import { test } from 'node:test';
+import assert from 'node:assert/strict';
+import { EventStore } from '../src/capture/store.ts';
+test('event replay is idempotent', () => {
+  const store = new EventStore(':memory:');
+  const event = { eventId: 'e1', source: 'test', kind: 'running',
+    observedAt: 10, monotonicAt: 1, collectorEpoch: 'a' };
+  assert.equal(store.put(event), true);
+  assert.equal(store.put(event), false);
+  assert.deepEqual(store.events(), [event]);
+  store.close();
+});
 ```
 
-- [ ] **Run red:** `python3 -m unittest tests.test_store -v`; expect an import failure before implementation.
-- [ ] **Implement schema and transactions.** Use the following storage kernel, with validation and conflict comparison before writes:
+- [ ] Run red with `node --test tests/store.test.ts`; expect missing module before implementation.
+- [ ] Implement validation and SQLite transactions using `DatabaseSync` from `node:sqlite`, a primary key on `event_id`, and prepared parameterized statements. Compare duplicate payloads before returning false. Preserve timestamps rather than rewriting clock rollback. Create private directories before the SQLite file; expose deterministic replay ordering.
 
-```python
-connection.execute('PRAGMA journal_mode=WAL')
-connection.execute('CREATE TABLE IF NOT EXISTS events '
-                   '(event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, '
-                   'payload TEXT NOT NULL)')
-with connection:
-    connection.execute('INSERT INTO events VALUES (?, ?, ?)',
-                       (event['event_id'], event['observed_at'], payload))
+```typescript
+const db = new DatabaseSync(path);
+db.exec('PRAGMA journal_mode=WAL');
+db.exec('CREATE TABLE IF NOT EXISTS events '
+  + '(event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL)');
+const insert = db.prepare('INSERT INTO events VALUES (?, ?, ?)');
+insert.run(event.eventId, event.observedAt, JSON.stringify(event));
 ```
 
-Do not interpolate SQL or store source transcripts. Order replay deterministically by collector epoch, monotonic observation, then event ID; expose source timestamps separately. Reject malformed events without deleting valid earlier records. Create directories/files with restrictive modes before opening SQLite.
-- [ ] **Run green:** `python3 -m unittest tests.test_store -v` and `git diff --check`.
-- [ ] **Commit only Task 1 paths:** `git add ade_capture/__init__.py ade_capture/events.py ade_capture/store.py tests/__init__.py tests/test_store.py .gitignore`, then commit `feat: persist capture events idempotently`.
+- [ ] Run green: `node --test tests/store.test.ts`, `npm run typecheck`, `git diff --check`.
+- [ ] Commit only Task 1 paths as `feat: persist capture events idempotently`.
 
-## Task 2: Orca snapshots and provider hook ingestion
+## Task 2: Orca and hook ingestion
 
-**Files:** `ade_capture/orca.py`, `ade_capture/hooks.py`, `ade_capture/hook_config.py`, `tests/test_ingestion.py`, `tests/test_hook_config.py`.
+**Files:** orca/hooks/hook-config modules, `tests/ingestion.test.ts`, `tests/hook-config.test.ts`.
 
-**Interfaces:** `read_workers(call: Callable[[list[str]], dict], run_id: str | None = None) -> tuple[list[dict], list[dict]]` returns worker rows and coverage issues; `normalize_hook(provider: str, payload: dict, context: dict) -> dict`; `spool_hook(event: dict, directory: Path) -> bool`; `import_spool(directory: Path, store: Store) -> list[dict]` returns ingestion issues; `prepare_config(path: Path, provider: str, command: str, events: list[str]) -> dict` returns a reversible patch manifest; `restore_config(manifest: dict) -> None` removes only our additions after verifying contents. `call` executes only validated read commands via argv, with timeout and JSON receipt validation.
+**Interfaces:** `readWorkers(call: (argv: string[]) => Promise<unknown>, runId?: string): Promise<{workers: unknown[]; coverage: unknown[]}>`; `normalizeHook(provider: string, payload: unknown, context: Partial<CaptureEvent>): CaptureEvent`; `spoolHook(event: CaptureEvent, directory: string): boolean`; `importSpool(directory: string, store: EventStore): unknown[]`; `prepareConfig(path: string, provider: string, command: string, events: string[]): object`; `restoreConfig(manifest: object): void`. Define and validate typed receipt/config manifests inside the owning modules, narrowing unknown before use.
 
-- [ ] **Write failing tests for pagination and ambiguous coverage.** Include:
+- [ ] Write failing pagination, receipt validation, corrupt spool, privacy and rollback tests. Include:
 
-```python
-from unittest import TestCase
-from ade_capture.orca import read_workers
-
-class IngestionTests(TestCase):
-    def test_reads_every_page(self):
-        replies = iter([
-            {'ok': True, 'result': {'workers': [{'dispatchId': 'd1'}],
-             'page': {'hasMore': True, 'nextCursor': 'page-2'}}},
-            {'ok': True, 'result': {'workers': [{'dispatchId': 'd2'}],
-             'page': {'hasMore': False}}},
-        ])
-        calls = []
-        def call(argv):
-            calls.append(argv)
-            return next(replies)
-        rows, issues = read_workers(call, run_id='r1')
-        self.assertEqual([w['dispatchId'] for w in rows], ['d1', 'd2'])
-        self.assertIn('page-2', calls[1])
-        self.assertEqual(issues, [])
+```typescript
+const pages = [
+  { ok: true, result: { workers: [{ dispatchId: 'd1' }],
+    page: { hasMore: true, nextCursor: 'page-2' } } },
+  { ok: true, result: { workers: [{ dispatchId: 'd2' }],
+    page: { hasMore: false } } },
+];
+const calls: string[][] = [];
+const result = await readWorkers(async argv => {
+  calls.push(argv); return pages.shift();
+}, 'r1');
+assert.equal(result.workers.length, 2);
+assert.ok(calls[1].includes('page-2'));
+assert.deepEqual(result.coverage, []);
 ```
 
-Add cases for repeated cursor (stop with coverage issue), timeout after the first page (preserve collected rows), omitted host coverage, missing optional provider fields, and non-OK receipt. Hook tests cover concurrent separate records, incomplete files, oversized input, invalid JSON, identical replay, prompt/tool-output removal, session/subagent IDs, and no stdout/stderr on hook failure. Configuration tests prove exact original restoration and preservation of unrelated hooks added after installation; conflicts must refuse destructive restoration.
-- [ ] **Run red:** `python3 -m unittest tests.test_ingestion tests.test_hook_config -v`.
-- [ ] **Implement documented reads and minimal hooks.** Start with these command forms, confirmed against installed help at execution time:
+Test repeated/missing cursor, timeout after a page, omitted hosts, vanished workers, invalid receipts, missing optional provider data, incomplete files, concurrent unique record writes, oversized input, prompt/output removal, and exact duplicate imports. Test hook failures return 0 with empty output. Test config rollback preserves unrelated concurrent additions and refuses destructive conflicts/symlinks.
+- [ ] Run red with `node --test tests/ingestion.test.ts tests/hook-config.test.ts`.
+- [ ] Implement read-only argv execution through `spawn`/`execFile` with bounded timeout and output; validate installed command help before relying on flags. Fully traverse worker pagination and preserve runtime/host evidence.
 
-```python
-argv = ['orca', 'orchestration', 'worker-list', '--limit', '100', '--json']
-if run_id:
-    argv += ['--run', run_id]
-if cursor:
-    argv += ['--cursor', cursor]
+```typescript
+const argv = ['orchestration', 'worker-list', '--limit', '100', '--json'];
+if (runId) argv.push('--run', runId);
+if (cursor) argv.push('--cursor', cursor);
 ```
 
-Normalize Run/Task/Dispatch/terminal/incarnation/workspace/host and fresh/stale evidence from worker records; read terminal metadata for non-orchestrated sessions. Capture receipt runtime IDs. Polling never calls `check`, `send`, or lifecycle mutations.
+Normalize worker/terminal identities, fresh/stale state and settled outcomes. Never consume inboxes or execute projected next actions. Hooks accept at most 256 KiB, write a UUID-named atomic spool record, and exit silently with success on capture failure. Import final records only; remove them only after committed storage. No network or Orca calls from hook scripts.
 
-Provider hooks accept at most 256 KiB, discard prompt/tool text, and record session/turn/subagent IDs plus verified environment context. Write one UUID-named spool file per invocation via exclusive creation and atomic rename; import only final files and archive/remove only after the SQLite transaction succeeds. Catch all ordinary capture failures and exit 0 silently; hook code does not call Orca. Bound hook work to a local write, with no network calls.
+Fetch current official hook docs during execution; discover actual provider executable/account config roots without exposing secrets. Add supported lifecycle hooks using reversible manifests; preserve existing hooks and require the provider's normal trust flow, never a bypass. Inspect only allowlisted identity variables/process ancestry to prove terminal/session joins. Unsupported events become capability verdicts. Native subagent IDs remain distinct even when a root session ID is shared.
+- [ ] Run green for these tests plus typecheck; commit Task 2 paths as `feat: ingest Orca metadata and agent hooks`.
 
-Before implementing config patches, fetch current official provider hook documentation, check actual Orca-managed executables and configuration roots, and inspect only hook settings (never credentials). Claude uses its documented JSON settings hook layout. For Codex prefer a separate `hooks.json` beside its active config, preserving the existing file. Handle trust through the supported provider flow; never bypass it. Preview patch manifests before applying them as part of the approved controlled test. Refuse symlink targets and unsupported settings shapes.
+## Task 3: Session grouping and bounded time
 
-Register the supported equivalents of SessionStart, UserPromptSubmit, tool boundaries, Stop, Interrupt, SessionEnd, SubagentStart, and SubagentStop; unsupported events get capability verdicts. Store mapping of provider-specific names explicitly. Record hook process ancestry and any verified Orca terminal identity to enable joins. Read only allowlisted identity variables; never dump environment variables or account credentials. An absent binding stays unresolved.
-- [ ] **Run green:** `python3 -m unittest tests.test_ingestion tests.test_hook_config -v`.
-- [ ] **Commit Task 2 paths** with `feat: ingest Orca metadata and agent hooks`.
+**Files:** correlate module and `tests/correlate.test.ts`.
 
-## Task 3: Time-bounded grouping and interval arithmetic
+**Interfaces:** `unionSeconds(intervals: Array<[number, number]>): number`; `summarize(events: CaptureEvent[], options?: {idleThreshold?: number; maxGap?: number}): Summary`, defaults 300/15 seconds. Explicit verified binding events have session, host, terminal/incarnation, and validity boundaries in data.
 
-**Files:** `ade_capture/correlate.py`, `tests/test_correlate.py`.
+- [ ] Write failing tests including:
 
-**Interfaces:** `union_seconds(intervals: list[tuple[float, float]]) -> float`; `summarize(events: list[dict], *, idle_threshold: float = 300, max_gap: float = 15) -> dict`. Input is the Event contract. Output is the Summary contract. Verified bindings are `kind='binding'` events with session and terminal/incarnation/host plus `data.valid_from` and optional `data.valid_until`; sources must demonstrate how the binding was established.
-
-- [ ] **Write failing arithmetic and relationship tests.** Include:
-
-```python
-from unittest import TestCase
-from ade_capture.correlate import union_seconds, summarize
-
-class CorrelationTests(TestCase):
-    def test_union_counts_overlap_once(self):
-        self.assertEqual(union_seconds([(0, 60), (20, 80)]), 80)
-        self.assertEqual(union_seconds([(0, 60), (60, 90)]), 90)
-
-    def test_same_cwd_is_not_a_verified_join(self):
-        event = dict(event_id='h1', source='hook', kind='prompt_submitted',
-                     observed_at=10.0, monotonic_at=1.0,
-                     collector_epoch='a', session_id='s1', cwd='/shared')
-        result = summarize([event])
-        self.assertTrue(result['unresolved'])
-        self.assertEqual(result['agent_seconds'], 0)
+```typescript
+assert.equal(unionSeconds([[0, 60], [20, 80]]), 80);
+assert.equal(unionSeconds([[0, 60], [60, 90]]), 90);
+const result = summarize([{ eventId: 'h1', source: 'hook',
+  kind: 'prompt_submitted', observedAt: 10, monotonicAt: 1,
+  collectorEpoch: 'a', sessionId: 's1', cwd: '/shared' }]);
+assert.ok(result.unresolved.length > 0);
+assert.equal(result.agentSeconds, 0);
 ```
 
-Add independently meaningful fixtures for two Runs in one directory; follow-up Dispatch with reused terminal; completed retained terminal; user takeover; interrupted and missing final events; explicit known wait/resume; native child sharing root session ID; simultaneous root agents; duplicate/reordered events; backwards source time; collector epoch change; disappeared workers; sleep; polling gaps; and idle/reading intervals. Root plus child must not inflate combined agent duration. Empty input yields zero totals and explicit missing coverage.
-- [ ] **Run red:** `python3 -m unittest tests.test_correlate -v`.
-- [ ] **Implement the union algorithm and conservative reducer.** The arithmetic kernel is:
+Add fixtures covering two Runs sharing a workspace; follow-up/retry in reused terminal; completed retained worker; user takeover; missing stop; known wait/resume; root/child overlap; parallel independent roots; duplicate/out-of-order events; backwards clock; collector restart; sleep; observation gaps; foreground overlap and reading/idle estimates. Every synthetic fixture is labeled simulated.
+- [ ] Run red with `node --test tests/correlate.test.ts`.
+- [ ] Implement overlap merging:
 
-```python
-merged = []
-for start, end in sorted(intervals):
-    if end < start:
-        raise ValueError('negative interval')
-    if merged and start <= merged[-1][1]:
-        merged[-1] = (merged[-1][0], max(merged[-1][1], end))
-    else:
-        merged.append((start, end))
-return sum(end - start for start, end in merged)
+```typescript
+const merged: Array<[number, number]> = [];
+for (const [start, end] of [...intervals].sort((a,b) => a[0]-b[0])) {
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start)
+    throw new Error('invalid interval');
+  const last = merged.at(-1);
+  if (last && start <= last[1]) last[1] = Math.max(last[1], end);
+  else merged.push([start, end]);
+}
+return merged.reduce((sum, [start,end]) => sum + end-start, 0);
 ```
 
-Maintain per-session/agent/turn state. Submission opens pending state, not execution. Tool boundaries or a fresh Orca working observation prove activity only to their precision. A provider response stop closes its observed turn segment, while accepted settlement closes attempt ownership. Subsequent continuation creates another segment. Bound inferred intervals to adjacent observations within `max_gap`; a gap does not extend activity to now. Poll transitions display their uncertainty bounds. Reject associations crossing host/incarnation or explicit binding validity boundaries. Keep root/native-child and Orca-worker relationships distinct. Human totals use interval union; idle classification uses the configured threshold and remains estimated. Preserve source IDs for every interval.
-- [ ] **Run green:** `python3 -m unittest tests.test_correlate -v` and inspect expected arithmetic values in fixtures.
-- [ ] **Commit Task 3 paths** with `feat: group sessions and calculate bounded time`.
+Keep Run/Task/Dispatch ownership time-bounded. Directory alone cannot join a session; unmatched evidence remains unresolved. Submission means pending, not execution; fresh activity/tool evidence opens bounded segments. Response Stop closes a turn segment, accepted settlement closes attempt ownership, and continuation opens another segment. Gaps, stale status, remote loss and retained terminal lifetime never extend duration indefinitely. Preserve timing uncertainty/source IDs. Sum independent roots but keep native children separate from inclusive parent totals. Count human/project elapsed overlaps once.
+- [ ] Run green and typecheck; commit Task 3 paths as `feat: group sessions and calculate bounded time`.
 
-## Task 4: Native human-activity observations
+## Task 4: macOS activity helper
 
-**Files:** `native/ActivityProbe.swift`, `ade_capture/macos.py`, `tests/test_macos.py`.
+**Files:** Swift helper, macos module, `tests/macos.test.ts`.
 
-**Interfaces:** native helper emits JSON lines with foreground bundle ID, wall/monotonic timestamps, all-event idle seconds, Accessibility capability, and sleep/wake observations. Python `normalize_activity(payload: dict, context: dict) -> dict` produces Event contract; `probe_capabilities(executable: Path) -> dict` records actual helper permissions. Context supplies collector epoch; no macOS API is invoked from unit tests.
+**Interfaces:** helper emits JSON lines for foreground, idle, capabilities and sleep/wake; `normalizeActivity(payload: unknown, context: Partial<CaptureEvent>): CaptureEvent`; `probeCapabilities(executable: string): Promise<object>`.
 
-- [ ] **Write failing normalization tests.** Include:
+- [ ] Write failing tests: negative/nonfinite or uptime-exceeding idle becomes unknown; missing permission does not break app-level capture; sleep/wake breaks continuity; focused app without session identity stays unassigned. Include:
 
-```python
-from unittest import TestCase
-from ade_capture.macos import normalize_activity
-
-class MacOSTests(TestCase):
-    def test_bad_idle_is_unknown(self):
-        event = normalize_activity(
-            {'foreground_bundle_id': 'test.app', 'idle_seconds': -1,
-             'observed_at': 10.0, 'monotonic_at': 1.0},
-            {'collector_epoch': 'a', 'host_id': 'local'})
-        self.assertIsNone(event['data']['idle_seconds'])
-        self.assertEqual(event['data']['idle_status'], 'unknown')
+```typescript
+const event = normalizeActivity({ foregroundBundleId: 'test.app',
+  idleSeconds: -1, observedAt: 10, monotonicAt: 1 },
+  { collectorEpoch: 'a', hostId: 'local' });
+assert.equal(event.data?.idleSeconds, null);
+assert.equal(event.data?.idleStatus, 'unknown');
 ```
 
-Add finite validation, missing permission, sleep/wake discontinuity, extreme idle exceeding uptime, and focused app without focused-session identity. Permission absence must reduce capability without breaking app-level capture.
-- [ ] **Run red:** `python3 -m unittest tests.test_macos -v`.
-- [ ] **Implement native signals using these API anchors:**
+- [ ] Run red with `node --test tests/macos.test.ts`.
+- [ ] Implement native API anchors and notification observers:
 
 ```swift
 let app = NSWorkspace.shared.frontmostApplication
@@ -217,65 +187,53 @@ let idle = CGEventSource.secondsSinceLastEventType(
 let trusted = AXIsProcessTrusted()
 ```
 
-Observe NSWorkspace activation and sleep/wake notifications, plus periodic input-idle sampling. Emit newline-delimited JSON with `JSONSerialization`; flush output. Use uptime/monotonic clocks to detect invalid inactivity. Accessibility inspection reads only focused-window and selected workspace/tab identifiers where available; never collect text-entry contents or complete UI trees. Missing/ambiguous session context remains absent. Do not prompt for new OS permission silently. A currently trusted probe does not establish helper trust.
-- [ ] **Build and exercise:** `mkdir -p .capture/bin` then `swiftc native/ActivityProbe.swift -o .capture/bin/activity-probe`. Run a bounded sample, compare observed foreground and all-event inactivity, and record actual Accessibility capability. Record focused-session detection as pass or unverified according to observation, not API availability.
-- [ ] **Run green:** `python3 -m unittest tests.test_macos -v`.
-- [ ] **Commit Task 4 paths** with `feat: capture macOS foreground and idle signals`.
+Emit flushed JSON lines, validate against uptime, observe foreground/sleep/wake, and inspect only focused-window/selected workspace identifiers if Accessibility is available. Do not dump full UI trees, capture typed text, or silently request permission. Check trust for the actual helper, not a previous Swift process.
+- [ ] Build with `swiftc native/ActivityProbe.swift -o .capture/bin/activity-probe` after creating the output directory. Run a bounded foreground/idle sample and record permission and focused-session capability honestly.
+- [ ] Run green/typecheck; commit Task 4 paths as `feat: capture macOS foreground and idle signals`.
 
-## Task 5: Runnable harness, local report, and live orchestration proof
+## Task 5: Tauri validation dashboard and live proof
 
-**Files:** `ade_capture/__main__.py`, `ade_capture/report.py`, `tests/test_report.py`, `tests/test_cli.py`, `README.md`, `docs/capture-validation.md`.
+**Files:** CLI/protocol/report modules, UI/Tauri/package-sidecar files, `tests/protocol.test.ts`, `tests/report.test.ts`, `tests/cli.test.ts`, README and validation document.
 
-**Interfaces:** `render_report(summary: dict, verdicts: list[dict]) -> str`; CLI subcommands `hook --provider --spool`, `collect --output --duration --interval --run`, `report --database --output`, and `hook-config prepare|apply|restore` with explicit target/manifest. Defaults: output `.capture/`, interval 5 seconds; no permanent service. Hook command always returns 0 without output; other commands return nonzero for actual failures. Report accepts an empty store and shows missing evidence.
+**Interfaces:** `renderReport(summary: Summary, verdicts: Verdict[]): string`; UI `CaptureTransport` offers `status(): Promise<object>`, `summary(): Promise<Summary>`, `start(durationSeconds: number): Promise<object>`, `stop(): Promise<object>`. JSON-lines requests have `id`, allowlisted `method`, and typed params; replies have matching `id`, `result` or `error`. Rust custom commands expose only these methods, with finite bounds validation and request deadlines. One host-owned collector, one helper, one SQLite writer.
 
-- [ ] **Write failing reporting and CLI tests.** Include:
+- [ ] Write failing tests for protocol readiness/timeouts/crashes, unknown methods, arbitrary executable/path rejection, collector reuse, report escaping, simulated/live evidence separation, and silent hook failure. Include:
 
-```python
-from unittest import TestCase
-from ade_capture.report import render_report
-
-class ReportTests(TestCase):
-    def test_titles_are_escaped_and_uncertainty_visible(self):
-        summary = dict(intervals=[], unresolved=[], coverage=[],
-                       human_seconds=0, agent_seconds=0, elapsed_seconds=0,
-                       child_agent_seconds=0)
-        verdict = dict(scenario='<script>alert(1)</script>', mode='live',
-                       status='unverified', evidence='no verified binding')
-        result = render_report(summary, [verdict])
-        self.assertNotIn('<script>alert(1)</script>', result)
-        self.assertIn('&lt;script&gt;', result)
-        self.assertIn('unverified', result)
+```typescript
+const summary: Summary = { intervals: [], unresolved: [], coverage: [],
+  humanSeconds: 0, agentSeconds: 0, elapsedSeconds: 0, childAgentSeconds: 0 };
+const rendered = renderReport(summary, [{ scenario: '<script>alert(1)</script>',
+  mode: 'live', status: 'unverified', evidence: 'no verified binding' }]);
+assert.ok(!rendered.includes('<script>alert(1)</script>'));
+assert.ok(rendered.includes('&lt;script&gt;'));
+assert.ok(rendered.includes('unverified'));
 ```
 
-CLI tests run bounded collection with injected fake readers, assert hook failure is silent/successful, validate finite positive duration/interval, and verify no generated data is written outside the chosen output directory. Report tests require separate live/simulated verdicts, overlap-aware totals, child detail, unresolved joins, and host coverage omissions.
-- [ ] **Run red:** `python3 -m unittest tests.test_report tests.test_cli -v`.
-- [ ] **Implement orchestration of existing interfaces:**
+- [ ] Run red for protocol/report/CLI tests.
+- [ ] Implement bounded CLI capture, spool imports, report export, config manifest operations and protocol dispatcher. Separate stdout protocol from stderr diagnostics. Shutdown flushes and terminates only owned children; failures preserve collected events. Use the existing storage/reducer contracts:
 
-```python
-store = Store(output / 'events.sqlite')
-# The bounded collector persists normalized snapshots, hook imports,
-# native observations, and coverage issues without mutating source runs.
-summary = summarize(store.events(), idle_threshold=300, max_gap=15)
-report_path.write_text(render_report(summary, verdicts), encoding='utf-8')
-store.close()
+```typescript
+const store = new EventStore(databasePath);
+const summary = summarize(store.events(), { idleThreshold: 300, maxGap: 15 });
+writeFileSync(reportPath, renderReport(summary, verdicts), 'utf8');
+store.close();
 ```
 
-Use `html.escape` for all external values; embed no transcript HTML. Show navigable workspace/Run/task/session groups, labeled human/agent/elapsed metrics, intervals, and the ten-scenario verdict matrix. Ensure collector cleanup in `finally`, terminate only its own native helper, and preserve committed events on interruption. Document setup, commands, metrics, uncertainty, account-specific hook installation, and rollback.
-- [ ] **Run green:** `python3 -m unittest discover -s tests -v`; `git diff --check`.
-- [ ] **Perform bounded live test after loading the current Orca guides.** Resolve active provider executable/account root, prepare/install hook changes and follow the provider trust flow. Read `orca skills get orchestration --json` and supported placement/coordinator references before lifecycle work. Record a manifest of original configuration and every owned test resource. Create one dedicated Run and launch two read-only worker tasks in this workspace through `worker-start --spec`. Use self-contained prompts: target the capture validation; inspect only own hook identity and local metadata; modify no repository files; report acceptance and settle following the injected contract. Start both workers before waiting, and start capture before their work. Use waits of at most 60 seconds with progress updates. No worker duplication on timeout.
-
-Correlate launch receipts with captured session identities and time-bounded terminal bindings. Where no explicit identity is available, inspect verified process ancestry/env in the test worker; never join by cwd alone. Observe a native subagent only through a provider that supports it and explicitly instruct that test worker to create one read-only child; keep its parent/child evidence separate from Orca worker grouping. Add a second dedicated Run only if needed to prove same-workspace Run isolation; maintain all created Run/Dispatch IDs in the manifest.
-
-Coordinator operations may process their own test Run's messages; the passive collector may not. Settle and release each owned worker using the lifecycle contract. If blocked or unverifiable, preserve authority, record the exact state, and report required recovery rather than force-closing. Restore only test-owned hook additions; verify unrelated configuration survives. Never touch unrelated runs or workers.
-- [ ] **Record every scenario verdict** in `.capture/validation.json`, separating live and simulated evidence. Record actual tool versions, coverage, duration uncertainty, config restoration result, and resources remaining. Provider trust requiring user interaction is a concrete external requirement, not permission to bypass trust. Unsupported remote restart/session detection stays unverified.
-- [ ] **Render and inspect HTML:** `python3 -m ade_capture report --database .capture/events.sqlite --output .capture/report.html`; use Orca's embedded browser after its browser guide to verify readability, escaping, navigation, and visibility of uncertainty. Publish nothing.
-- [ ] **Accept only on core live proof:** same-workspace worker grouping end to end, at least one real hook-to-session join, verified macOS foreground/idle readings, and passing deterministic tests. If the core join fails, record that failure and revise the design instead of beginning dashboard work. Document outcomes in `docs/capture-validation.md` without private transcript content.
-- [ ] **Commit Task 5 source/tests/docs only** with `feat: report agent time capture validation`; inspect committed paths and final worktree status. Never stage `.capture/` or hook files outside the repository.
+- [ ] Add minimal Vue report window: workspace/Run/task/session tree, human/agent/elapsed totals, native child detail, interval evidence, ten-scenario verdict table, status and bounded capture controls. Use Vue text interpolation, never untrusted `v-html`. Plain readable layout; no billing or polished product scope.
+- [ ] Implement thin Rust host: spawn approved bundled executables with fixed argv; multiplex request IDs; apply deadlines; expose only narrow commands; reject arbitrary commands/paths. No frontend shell permissions. Readiness/reload/second-window reuses the existing process. Close hides the window; explicit Quit shuts children down. A browser preview uses a labeled test transport, not fake live proof.
+- [ ] Bundle pinned Node runtime plus capture resources and compiled Swift helper using Tauri resource/external binary configuration. Generate correct target-triple filenames at build time; keep binary output ignored. Development can use an explicitly resolved Node path. The unsigned bundle smoke must work without Homebrew/system Node on PATH. Verify packaged SQLite, subprocess resolution, resources, runtime logs and actual helper permissions. Signing/distribution remain outside scope.
+- [ ] Run deterministic checks: `npm test`, `npm run typecheck`, frontend production build, `cargo test --manifest-path src-tauri/Cargo.toml`, and `git diff --check`.
+- [ ] Load current Orca guides; record baseline bound Run and owned resources. Discover provider/account roots, install reversible hook changes, complete supported trust review and start capture. Create a dedicated test Run, launch two read-only same-workspace workers with self-contained tasks and observable acceptance, and observe both before waiting. Keep all created IDs/receipts in private `.capture/` evidence. Never mutate unrelated Runs.
+- [ ] Correlate actual hook session IDs against dispatch launch receipts and verified terminal/process bindings. If a directory is the only link, mark failure rather than claiming success. Test native subagent ancestry through an explicitly requested read-only provider child where supported. Use a second test Run only to prove cross-Run isolation. Handle coordinator asks/settlement through the correct test Run; the passive collector never consumes mail. Wait at most 60 seconds per call with progress updates.
+- [ ] Accept worker settlements and release each owned terminal using Orca's contract. Preserve unverifiable resources and exact recovery status; never force-close on absence. Restore only test hook additions and verify unrelated config remains. Restore prior coordinator Run binding if one existed. Record remaining resources and config restoration.
+- [ ] Record all ten scenario verdicts with live/simulated mode, source evidence and actual versions. Remote restart or unavailable focused-session detection stays unverified. Generate standalone `.capture/report.html`, inspect native Tauri window through Computer Use, and verify grouping, escaping, metrics, close/reopen behavior, Quit and packaged launch. Native observation is required for native claims.
+- [ ] Accept only with passing deterministic tests, live same-workspace grouping, one real hook/session join, and verified foreground/idle signals. A failed core join requires architecture revision before a production dashboard. Update `docs/capture-validation.md` with proof limits, without transcripts/private IDs.
+- [ ] Commit only Task 5 source/tests/docs and lockfiles as `feat: validate capture in a Tauri dashboard`; inspect committed paths and clean status.
 
 ## Final review and stop condition
 
-Review implementation against all ten spec scenarios and the five Review Focus cases. Test results are fixture proof unless labeled live. The report must distinguish a turn completion, accepted task settlement, process exit, and unknown contact state. Run the complete unittest suite once after final edits; repeat only for new failures or changes. A passing harness and local report completes this phase; a production dashboard, billing readiness, and background-service installation remain separate work.
+Check all ten spec scenarios and five Review Focus cases. Keep observed turn completion, accepted task settlement, process exit and unknown contact state distinct. Independent review checks grouping, hook rollback, sidecar lifecycle and packaging. After final edits run the full relevant checks once; broaden only for new failures. Completion means a validated capture harness and a minimal local Tauri report, not a production timesheet UI, persistent service or signed distribution.
 
 ## Execution recommendation
 
-Implement inline with `superpowers:executing-plans`, followed by an independent code review. The five tasks share event contracts and the live exercise changes account-specific configuration, so one implementer should keep ownership of correlation and cleanup. Live Orca workers are test subjects, not implementation delegates. If the user prefers subagent-driven implementation, preserve these contracts and stage boundaries and use the corresponding skill.
+Implement inline with `superpowers:executing-plans`, then independent review. A single implementer owns event contracts, account configuration and live-test cleanup. Orca workers are test subjects, not implementation delegates. Subagent-driven implementation is an alternative only if selected by the user.

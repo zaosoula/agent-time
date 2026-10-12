@@ -4,7 +4,7 @@
 
 Replace Timing with an independent local timesheet application. The user's primary work happens in Orca, with multiple agents in the same workspace, Orca CLI orchestration, and agent-native subagents. Capture must distinguish human time, agent execution intervals, and elapsed project activity.
 
-The first deliverable is a runnable capture validation harness and an easy-to-read local evidence report. This phase proves ingestion and attribution before building the production dashboard. It does not install a persistent background service or change existing orchestration runs.
+The first deliverable is a runnable capture validation harness and an easy-to-read local evidence report, also viewable in a minimal Tauri desktop window. This phase proves ingestion and attribution before building the production dashboard. It does not install a persistent background service or change existing orchestration runs.
 
 ## Observed baseline, 2026-10-12
 
@@ -20,19 +20,25 @@ A read-only Swift probe returned a foreground app and Accessibility trust for th
 
 ## Scope
 
-Implement one narrow path: observe Orca metadata, receive minimal provider hook events, observe local foreground/idle signals, correlate these into bounded intervals, and render a local HTML report with proof status. Include deterministic replay tests and a small controlled live orchestration exercise.
+Implement one narrow path: observe Orca metadata, receive minimal provider hook events, observe local foreground/idle signals, correlate these into bounded intervals, and render a local evidence dashboard in Tauri with proof status and standalone HTML export. Include deterministic replay tests and a small controlled live orchestration exercise.
 
 Defer billing, cloud sync, full application tracking, screenshots/OCR, AI summaries, pricing calculations, and polished dashboard UI. Retain manual attribution as a future product requirement; ambiguous intervals in the harness remain unresolved.
 
 ## Architecture
 
-Use Python 3.11+ and its standard library for CLI orchestration, SQLite persistence, correlation, replay tests, and HTML reporting. Use a small native Swift helper for macOS foreground, input inactivity, and sleep/wake observations. This avoids framework dependencies in the validation phase. A native collector is required because a web dashboard alone cannot supply OS activity signals.
+Use TypeScript on Node.js 26.9+ for CLI orchestration, SQLite persistence through node:sqlite, correlation, replay tests, and reporting. Use a small native Swift helper for macOS foreground, input inactivity, and sleep/wake observations. Present the validation dashboard using TypeScript, Vue 3, and Vite inside Tauri 2. Keep the Rust shell limited to window lifecycle, restricted IPC, and managing the Node/Swift processes. Tauri uses a native webview and does not supply a Node runtime; bundle the collector runtime and helper for a packaged app. A native collector is required because a web dashboard alone cannot supply OS activity signals.
 
 Provider hooks append minimal events to a private local spool and immediately return success without model-facing output. The collector imports spool records into SQLite with deduplication. Collection failure must not block, interrupt, or add context to an agent. Hook installation is explicit and reversible; preserve existing configurations and resolve the actual configuration root for each Orca account before modifying it.
 
 Poll documented Orca read APIs at a configurable interval, default five seconds. Fully traverse worker pagination; preserve host-scope omissions and collection failures. A sampled status transition has a bounded timing uncertainty, not an exact transition timestamp. The collector never consumes or acknowledges an orchestration inbox and never executes suggested next actions.
 
 Transcript ingestion is a recovery adapter only where schemas and paths have been verified. Original transcript contents are not copied into the evidence store.
+
+The desktop window is a consumer of the capture core, never its event source. Closing the window hides it while the app process continues collection; explicitly quitting flushes and stops its owned collector/helper. Hooks can keep spooling while the application is quit; continuous macOS tracking while quit requires a future separately installed service and is outside this phase. Reopening the dashboard must not start another collector.
+
+Use a fixed JSON-lines protocol over managed child-process stdin/stdout. The Rust bridge exposes only capture status, a summary query, and bounded capture controls; frontend callers cannot supply executable paths, shell commands, or arbitrary database paths. Runtime logs go to stderr. The SQLite writer is owned by the collector. Keep a frontend transport interface so the dashboard can later support a browser deployment, but do not expose a browser HTTP server in this phase.
+
+A development run using installed Node is not evidence that a packaged app is self-contained. Verify an unsigned local app bundle with its own Node runtime and Swift helper separately; signing/notarization and distribution are outside this phase. Record the identity/permissions of the actual helper in that bundle.
 
 ## Identity and grouping
 
@@ -89,3 +95,7 @@ Accept this phase only when deterministic grouping/duration tests pass, live sam
 - Apple foreground notification: https://developer.apple.com/documentation/appkit/nsworkspace/didactivateapplicationnotification
 - Apple inactivity API: https://developer.apple.com/documentation/coregraphics/cgeventsource/secondssincelasteventtype(_:eventtype:)
 - Apple Accessibility API: https://developer.apple.com/documentation/applicationservices/axuielement
+
+- Tauri architecture: https://v2.tauri.app/concept/architecture/
+- Tauri sidecars: https://v2.tauri.app/develop/sidecar/
+- Node SQLite: https://nodejs.org/api/sqlite.html
