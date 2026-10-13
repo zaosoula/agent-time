@@ -1,5 +1,5 @@
 import {DatabaseSync} from 'node:sqlite';
-import {existsSync,lstatSync,mkdirSync,statSync,unlinkSync} from 'node:fs';
+import {chmodSync,existsSync,lstatSync,mkdirSync,statSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {summarize} from '../src/capture/correlate.ts';
 import {retainedObservationRows} from '../src/capture/observation-retention.ts';
@@ -15,6 +15,7 @@ let copy;
 try{
  const original=new DatabaseSync(source,{readOnly:true});
  try{original.prepare('VACUUM INTO ?').run(target);}finally{original.close();}
+ chmodSync(target,0o600);
  copy=new DatabaseSync(target);
  const rows=copy.prepare('SELECT rowid,payload FROM events ORDER BY rowid').all().map(r=>({rowid:Number(r.rowid),event:JSON.parse(String(r.payload))}));
  const before=summarize(rows.map(r=>r.event));
