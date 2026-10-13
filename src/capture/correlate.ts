@@ -21,7 +21,12 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
  const workerPrevious=new Map<string,CaptureEvent>(),childLifecycle=new Map<string,CaptureEvent>();
  const active=new Map<string,{event:CaptureEvent;state:'running'|'waiting';session:Session;key:string}>();
  const bindings=new Map<string,CaptureEvent>(),toolBindings=new Map<string,CaptureEvent>();
- const workerSnapshots=events.filter(e=>e.kind==='worker');let activityPrevious:CaptureEvent|undefined;
+ const workerSnapshots=new Map<string,CaptureEvent[]>();let activityPrevious:CaptureEvent|undefined;
+ const workerKey=(e:CaptureEvent)=>JSON.stringify([typeof e.hostId,e.hostId,typeof e.terminalHandle,e.terminalHandle]);
+ for(const e of events)if(e.kind==='worker'){
+  const key=workerKey(e),group=workerSnapshots.get(key)||[];group.push(e);workerSnapshots.set(key,group);
+ }
+ for(const group of workerSnapshots.values())group.sort((a,b)=>a.observedAt-b.observedAt);
  const identity=(e:CaptureEvent)=>`${e.hostId}:${e.sessionId}:${e.terminalHandle}`;
  const toolIdentity=(e:CaptureEvent)=>`${identity(e)}:${e.agentId||'root'}:${String(e.data?.toolId||'anonymous')}`;
  function getSession(key:string,e:CaptureEvent,child=false):Session {
@@ -65,9 +70,13 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
   const known=bindings.get(identity(e));
   // Late closures remain with their original session, even after the terminal hosts another Dispatch.
   if(known&&(!['session_start','prompt_submitted'].includes(e.kind)||closing))return applyBinding(e,known);
-  const candidates=workerSnapshots.filter(w=>w.terminalHandle===e.terminalHandle&&w.hostId===e.hostId&&Math.abs(w.observedAt-e.observedAt)<=maxGap);
-  const before=candidates.filter(w=>w.observedAt<=e.observedAt).sort((a,b)=>b.observedAt-a.observedAt);
-  const match=before[0]||candidates.sort((a,b)=>a.observedAt-b.observedAt)[0];
+  const candidates=workerSnapshots.get(workerKey(e))||[];
+  let low=0,high=candidates.length;
+  while(low<high){const mid=(low+high)>>>1;if(candidates[mid].observedAt<=e.observedAt)low=mid+1;else high=mid;}
+  let beforeIndex=low-1;
+  while(beforeIndex>0&&candidates[beforeIndex-1].observedAt===candidates[beforeIndex].observedAt)beforeIndex--;
+  const before=candidates[beforeIndex],after=candidates[low];
+  const match=before&&e.observedAt-before.observedAt<=maxGap?before:after&&after.observedAt-e.observedAt<=maxGap?after:undefined;
   if(!match||match.data?.takeover||settled(match)||closing)return e;
   if(e.terminalIncarnation&&match.terminalIncarnation&&e.terminalIncarnation!==match.terminalIncarnation)return e;
   const result=applyBinding(e,match);bindings.set(identity(e),result);return result;
@@ -107,7 +116,13 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
    const prev=activityPrevious;
    if(prev&&prev.collectorEpoch===e.collectorEpoch&&e.observedAt-prev.observedAt>=0&&e.observedAt-prev.observedAt<=maxGap){
     const a=prev.data?.idleSeconds,b=e.data?.idleSeconds;
-    if(typeof a==='number'&&typeof b==='number'&&a<idle&&b<idle)add(prev,e,'human',undefined,'inferred');
+    if(typeof a==='number'&&typeof b==='number'&&a<idle&&b<idle){
+     add(prev,e,'human',undefined,'inferred');
+     const tabId=prev.data?.tabId;
+     if(typeof tabId==='string'&&tabId===e.data?.tabId&&prev.workspaceId===e.workspaceId&&prev.terminalHandle===e.terminalHandle){
+      const interval=intervals.at(-1)!;interval.workspaceId=prev.workspaceId;interval.tabId=tabId;interval.terminalHandle=prev.terminalHandle;interval.tabTitle=String(e.data?.tabTitle||prev.data?.tabTitle||'Orca tab');
+     }
+    }
    }
    activityPrevious=e;continue;
   }
@@ -143,6 +158,11 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ma
  for(const c of childLifecycle.values())unresolved.push({reason:'Native child has no observed end; not extended to now',eventId:c.eventId});
  const running=intervals.filter(i=>i.state==='running'),roots=new Map<string,Array<[number,number]>>(),children=new Map<string,Array<[number,number]>>();
  for(const i of running){const group=i.child?children:roots,key=i.child?`${i.hostId}:${i.sessionId}:${i.agentId}`:i.dispatchId?`${i.hostId}:dispatch:${i.dispatchId}`:`${i.hostId}:session:${i.sessionId}`;const ranges=group.get(key)||[];ranges.push([i.start,i.end]);group.set(key,ranges);}
- for(const s of sessions.values())s.seconds=unionSeconds(running.filter(i=>i.hostId===s.hostId&&(s.child?i.child&&i.sessionId===s.sessionId&&i.agentId===s.agentId:s.dispatchId?i.dispatchId===s.dispatchId&&!i.child:i.sessionId===s.sessionId&&!i.child&&!i.dispatchId)).map(i=>[i.start,i.end]));
+ const rootSeconds=new Map([...roots].map(([key,ranges])=>[key,unionSeconds(ranges)]));
+ const childSeconds=new Map([...children].map(([key,ranges])=>[key,unionSeconds(ranges)]));
+ for(const s of sessions.values()){
+  const key=s.child?`${s.hostId}:${s.sessionId}:${s.agentId}`:s.dispatchId?`${s.hostId}:dispatch:${s.dispatchId}`:`${s.hostId}:session:${s.sessionId}`;
+  s.seconds=(s.child?childSeconds:rootSeconds).get(key)||0;
+ }
  return {intervals,unresolved,coverage,sessions:[...sessions.values()],humanSeconds:unionSeconds(intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end])),agentSeconds:[...roots.values()].reduce((sum,r)=>sum+unionSeconds(r),0),childAgentSeconds:[...children.values()].reduce((sum,r)=>sum+unionSeconds(r),0),elapsedSeconds:unionSeconds(intervals.filter(i=>i.state!=='waiting').map(i=>[i.start,i.end]))};
 }

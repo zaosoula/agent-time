@@ -8,6 +8,7 @@ import { defaultSettings, validateSettings, type CaptureSettings } from './setti
 import { readWorkers, readFleet, workerEvent, terminalEvents, callOrca } from './orca.ts';
 import { importSpool } from './hooks.ts';
 import { normalizeActivity } from './macos.ts';
+import {resolveOrcaTab,tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
 import { dailyTotals } from './daily.ts';
 import {UsageReader} from '../usage/reader.ts';
@@ -20,8 +21,10 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private summaryCache:{revision:string;value:Summary}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
+  private summaryCache:{revision:string;at:number;value:Summary}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
   private probe?:string; private interval:number; private runId?:string; private reader:typeof callOrca;
+  private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
+  private focusRefresh:Promise<void>|undefined;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca) {
     this.probe=probe;this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
@@ -36,7 +39,7 @@ export class Collector {
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders({claude:s.claudeTokenUsage,codex:s.codexTokenUsage});if(this.running&&s.tokenUsage&&(s.claudeTokenUsage||s.codexTokenUsage))this.usageReader.start();else void this.usageReader.stop();}
   status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
-  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary()),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
+  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary(15000)),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}
@@ -54,8 +57,8 @@ export class Collector {
     const path=join(this.output,'settings.json'),existing=existsSync(path)?JSON.parse(readFileSync(path,'utf8')):{};
     writeFileSync(path+'.tmp',JSON.stringify({...existing,...next},null,2)+'\n',{mode:0o600});renameSync(path+'.tmp',path);
     const change=makeEvent('capture','capture_settings',{data:{previous:{...this.surfaces},surfaces:next}});
-    this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;
-    if(!next.macosActivity){const helper=this.helper;this.helper=undefined;helper?.kill('SIGTERM');this.macos=null;}
+    this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;this.summaryCache=undefined;
+    if(!next.macosActivity){const helper=this.helper;this.helper=undefined;helper?.kill('SIGTERM');this.macos=null;this.focusedTabs=[];this.focusedTabsAt=0;}
     else if(this.running&&!this.helper)this.startHelper();
     this.syncUsage();
     if(this.running&&!this.inFlight){clearTimeout(this.timer);void this.tick();}
@@ -74,17 +77,22 @@ export class Collector {
     if(this.probe&&existsSync(this.probe)) {
       const helper=spawn(this.probe,[],{stdio:['ignore','pipe','pipe']});this.helper=helper;
       const lines=createInterface({input:helper.stdout!});
-      lines.on('line',line=>{if(!this.running||this.helper!==helper||!this.surfaces.macosActivity)return;try{const payload=JSON.parse(line);this.macos=payload;this.store.put(normalizeActivity(payload,{hostId:'local'}));}catch{this.lastError='Invalid macOS observation';}});
+      lines.on('line',line=>{if(!this.running||this.helper!==helper||!this.surfaces.macosActivity)return;try{
+        const payload=JSON.parse(line),event=normalizeActivity(payload,{hostId:'local'});
+        const focused=payload.foregroundBundleId==='com.stablyai.orca'&&Date.now()-this.focusedTabsAt<15000?resolveOrcaTab(payload.orcaSelectedTabTitle,this.focusedTabs):null;
+        if(focused){event.workspaceId=focused.workspaceId;event.terminalHandle=focused.terminalHandle;event.data={...event.data,tabId:focused.tabId,tabTitle:focused.title,leafId:focused.leafId};}
+        this.macos={...payload,orcaAttribution:focused?{workspaceId:focused.workspaceId,tabId:focused.tabId,title:focused.title}:null};this.store.put(event);
+      }catch{this.lastError='Invalid macOS observation';}});
       helper.on('error',()=>{if(this.helper===helper)this.lastError='macOS activity helper unavailable';});
       helper.on('exit',()=>{if(this.running&&this.helper===helper){this.helper=undefined;this.lastError='macOS helper exited';this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper exited'}}));}});
     } else this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}}));
   }
-  summary():Summary {
-    const revision=this.store.revision();if(this.summaryCache?.revision===revision)return this.summaryCache.value;
+  summary(maxAgeMs=0):Summary {
+    const revision=this.store.revision();if(this.summaryCache&&(this.summaryCache.revision===revision||maxAgeMs>0&&Date.now()-this.summaryCache.at<maxAgeMs))return this.summaryCache.value;
     const events=this.store.events(),summary=summarize(events);
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
     for(const s of summary.sessions){const t=terminals.get(s.terminalHandle);if(t&&!s.child){s.title=String(t.data?.title||s.title).replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◐◓◑◒]\s*/, '');s.cwd=t.cwd||s.cwd;}}
-    this.summaryCache={revision,value:summary};return summary;
+    this.summaryCache={revision,at:Date.now(),value:summary};return summary;
   }
   async start(durationSeconds=3600) {
     if(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds>86400)throw new Error('Duration must be 1–86400 seconds');
@@ -109,9 +117,17 @@ export class Collector {
     this.inFlight=this.poll();await this.inFlight;this.inFlight=undefined;
     if(this.running)this.timer=setTimeout(()=>{void this.tick();},this.interval*1000);
   }
+  private refreshFocusedTabs(){
+    if(this.focusRefresh||!this.running||!this.surfaces.macosActivity)return;
+    this.focusRefresh=(async()=>{
+      try{const receipt=await this.reader(['terminal','list','--include-visual-layouts','--limit','1000','--json']);if(this.running&&this.surfaces.macosActivity){this.focusedTabs=tabIndexFromTerminalList(receipt);this.focusedTabsAt=Date.now();}}
+      catch{this.focusedTabs=[];this.focusedTabsAt=0;}
+    })().finally(()=>{this.focusRefresh=undefined;});
+  }
   private async poll() {
     try{
       let pollingError:string|null=null;
+      this.refreshFocusedTabs();
       if(this.surfaces.orcaPolling){
         const revision=this.revision,valid=()=>this.running&&this.surfaces.orcaPolling&&this.revision===revision;
         const {workers,coverage}=this.runId?await readWorkers(this.reader,this.runId,valid):await readFleet(this.reader,valid);
@@ -133,6 +149,7 @@ export class Collector {
   }
   private async stopOwned() {
     this.running=false;clearTimeout(this.timer);clearTimeout(this.deadline);
+    this.focusedTabs=[];this.focusedTabsAt=0;
     // Kill the helper immediately; slow fleet reads cannot orphan it during shutdown.
     if(this.helper){this.helper.kill('SIGTERM');this.helper=undefined;}
     await this.usageReader.stop();

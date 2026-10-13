@@ -71,3 +71,8 @@ test('late old-session closure cannot shorten the next Dispatch tool',()=>{
  const s=summarize([worker('w1',0),e('1',1,'tool_start',root),e('2',2,'tool_end',root),worker('w2',10,'d1','r1','unknown','succeeded'),worker('w3',11,'d2','r1'),e('3',11.5,'tool_start',{...root,sessionId:'s2'}),e('4',12,'session_end',root),e('5',15,'tool_end',{...root,sessionId:'s2'})]);
  assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.sessionId,'s2');assert.equal(s.sessions.find(x=>x.dispatchId==='d2')?.seconds,3.5);
 });
+test('human intervals attach to one stable Orca tab and leave switches unassigned',()=>{
+ const activity=(id:string,time:number,tabId:string,workspaceId:string)=>e(id,time,'activity',{source:'macos',workspaceId,terminalHandle:'term-'+tabId,data:{foregroundBundleId:'com.stablyai.orca',idleSeconds:0,tabId,tabTitle:'Tab '+tabId}});
+ const s=summarize([activity('a',0,'a','w'),activity('b',2,'a','w'),activity('c',4,'b','w'),activity('d',6,'b','w')]);
+ assert.equal(s.humanSeconds,6);const intervals=s.intervals.filter(i=>i.state==='human');assert.equal(intervals[0].tabId,'a');assert.equal(intervals[1].tabId,undefined);assert.equal(intervals[2].tabId,'b');
+});

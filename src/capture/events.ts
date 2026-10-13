@@ -12,6 +12,7 @@ export interface Interval {
   start: number; end: number; state: 'running' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
   sourceEventIds: string[]; hostId?: string; workspaceId?: string; sessionId?: string; agentId?: string;
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
+  tabId?: string; terminalHandle?: string; tabTitle?: string;
 }
 export interface Issue { reason: string; eventId?: string; source?: string; }
 export interface Session {

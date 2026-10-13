@@ -1,6 +1,6 @@
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
-interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary():unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:'claude'|'codex'):Promise<unknown>;dismissHookSetup?():unknown; }
+interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; start(duration:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:'claude'|'codex'):Promise<unknown>;dismissHookSetup?():unknown; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -30,7 +30,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='hooks_verify'&&controller.verifyHooks)return {id,result:controller.verifyHooks()};
     if(request.method==='hooks_dismiss'&&controller.dismissHookSetup)return {id,result:controller.dismissHookSetup()};
     if(request.method==='status')return {id,result:controller.status()};
-    if(request.method==='summary')return {id,result:controller.summary()};
+    if(request.method==='summary')return {id,result:controller.summary(15000)};
     if(request.method==='tray_status'&&controller.trayStatus)return {id,result:controller.trayStatus()};
     if(request.method==='usage'&&controller.usage)return {id,result:controller.usage()};
     if(request.method==='stop')return {id,result:await controller.stop()};

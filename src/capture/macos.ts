@@ -11,7 +11,8 @@ export function normalizeActivity(payload: unknown, context: Partial<CaptureEven
       foregroundName:typeof p.foregroundName==='string'?p.foregroundName:'Unknown app',
       idleSeconds:good?p.idleSeconds:null,idleStatus:good?'observed':'unknown',
       accessibilityTrusted:p.accessibilityTrusted===true,
-      orcaWindowTitle:typeof p.orcaWindowTitle==='string'?p.orcaWindowTitle.slice(0,180):undefined},
+      orcaWindowTitle:typeof p.orcaWindowTitle==='string'?p.orcaWindowTitle.slice(0,180):undefined,
+      orcaSelectedTabTitle:typeof p.orcaSelectedTabTitle==='string'?p.orcaSelectedTabTitle.slice(0,180):undefined},
   });
 }
 export async function probeCapabilities(executable:string):Promise<Record<string,unknown>> {

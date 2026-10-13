@@ -2,7 +2,7 @@ import type { Summary } from '../capture/events.ts';
 import type { CaptureSettings } from '../capture/settings.ts';
 import type {HookInstallationStatus,HookProvider,TrackingCleanupPreview,TrackingCleanupResult} from '../capture/hook-installation.ts';
 import type {UsageSummary} from '../usage/reader.ts';
-export interface CaptureStatus { running:boolean;orcaPolling:boolean;surfaces:CaptureSettings;lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:Record<string,unknown>|null; }
+export interface CaptureStatus { running:boolean;orcaPolling:boolean;surfaces:CaptureSettings;lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:({orcaAttribution?:{workspaceId:string;tabId:string;title:string}|null}&Record<string,unknown>)|null; }
 export const native=Boolean('__TAURI_INTERNALS__' in window);
 export async function request<T>(method:string,params:Record<string,unknown>={}):Promise<T>{
  if(native){const {invoke}=await import('@tauri-apps/api/core');return invoke<T>('capture_request',{method,params});}
