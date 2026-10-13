@@ -132,9 +132,9 @@ export class Collector {
         const revision=this.revision,valid=()=>this.running&&this.surfaces.orcaPolling&&this.revision===revision;
         const {workers,coverage}=this.runId?await readWorkers(this.reader,this.runId,valid):await readFleet(this.reader,valid);
         if(valid()){
-          for(const w of workers)this.store.put(workerEvent(w));
+          this.store.putObservations(workers.map(workerEvent));
           for(const issue of coverage)this.store.put(makeEvent('orca','coverage',{data:{reason:issue.reason}}));
-          try{const terminals=await terminalEvents(this.reader);if(valid())for(const e of terminals)this.store.put(e);}catch(error){if(valid())this.store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
+          try{const terminals=await terminalEvents(this.reader);if(valid())this.store.putObservations(terminals);}catch(error){if(valid())this.store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
           pollingError=coverage.find(i=>!i.reason.startsWith('Only this Orca host'))?.reason||null;
         }
       }

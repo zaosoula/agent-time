@@ -81,6 +81,14 @@ npm run typecheck
 cargo test --manifest-path src-tauri/Cargo.toml
 ```
 
+Orca polling stores active worker samples for timing, but stores settled workers and terminal metadata only when their state changes. Existing databases remain readable. To measure historical compaction safely, create a separate SQLite copy:
+
+```sh
+node scripts/compact-capture-copy.mjs .capture/live/events.sqlite .capture/review-compact.sqlite
+```
+
+The command leaves the source untouched. It retains the first and last observation in each unchanged state, checks the full capture summary for equality, validates SQLite integrity, and reports the copy's size. It does not install the compacted copy or remove historical rows from the live database.
+
 Open **Settings** in the sidebar (or press **⌘,**). Its section sidebar scrolls to **Agents**, **Claude**, **Codex**, **ADE / IDE**, **Orca**, and **System**, and follows manual scrolling. Agents provides shared capture/usage controls and hook actions for both providers. Claude and Codex each have independent hook capture, token/usage scanning and installation controls. Orca manages session discovery; System contains macOS activity tracking and Accessibility permission. Changes apply immediately and persist in `settings.json` in the capture data directory. Existing history is preserved. Disabled hook events are discarded, including backlog generated while disabled; re-enabling a source never bridges its disabled period. Changing one source does not interrupt unrelated source timing.
 
 Hook switches control ingestion. Use the Agents, Claude and Codex sections to manage user-wide installation; Codex still requires `/hooks` review. The Accessibility card reports the macOS helper's permission and opens the corresponding System Settings pane. Basic foreground/idle capture works without Accessibility. With permission, the macOS helper samples Orca’s selected tab about every two seconds. The collector matches its label against Orca CLI tab and active pane IDs even when worker polling is disabled. A unique terminal match assigns human time to its workspace and tab; unmatched, duplicate, browser, or ambiguous split tabs remain unassigned. Tab switches leave the transition gap unassigned. Today shows an Orca-tab breakdown, project filters include attributed human time, and CSV export includes both agent and human rows. External edits to the settings file are loaded on collector restart; use the page to apply changes live.

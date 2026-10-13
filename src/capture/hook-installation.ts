@@ -10,7 +10,7 @@ export interface TrackingCleanupResult {removedConfigurations:string[];removedHe
 interface Options {home?:string;env?:NodeJS.ProcessEnv;}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,16);
 const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
-const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','orca.ts'];
+const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','observation-retention.ts','orca.ts'];
 const source=dirname(fileURLToPath(import.meta.url));
 const runtimeVersion=hash(process.version+files.map(f=>readFileSync(join(source,f),'utf8')).join('\n'));
 function privateWrite(path:string,text:string){mkdirSync(dirname(path),{recursive:true,mode:0o700});if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('symlink state refused');const temp=path+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,path);}

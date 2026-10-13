@@ -103,3 +103,23 @@ test('display summaries can lag briefly while an exact summary sees new capture'
   assert.ok(c.summary().sessions.some(s=>s.sessionId==='fresh'));
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
+test('repeated Orca polls retain one settled worker and one unchanged terminal',async()=>{
+ const {setTimeout:sleep}=await import('node:timers/promises');
+ const path=mkdtempSync(join(tmpdir(),'ade-orca-retention-'));
+ const worker={runId:'run',taskId:'task',dispatchId:'dispatch',agentTerminalHandle:'term',resource:{worktreeId:'workspace',terminalHandle:'term'},projection:{host:{id:'host'},workspace:{id:'workspace'},stage:{activity:'unknown'},evidence:{liveStatus:'stale'},outcome:'succeeded'}};
+ const terminal={executionHostId:'host',worktreeId:'workspace',worktreePath:'/tmp/workspace',handle:'term',incarnationId:'incarnation',agentIdentity:'claude',title:'Agent',connected:true};
+ let terminalReads=0;
+ const reader=async(args:string[])=>{
+  if(args[0]==='terminal'){terminalReads++;return {ok:true,result:{terminals:[terminal]}};}
+  if(args[1]==='run-list')return {ok:true,result:{runs:[{id:'run'}],nextCursor:null}};
+  return {ok:true,result:{workers:[worker],page:{hasMore:false}}};
+ };
+ const c=new Collector(path,undefined,1,undefined,reader);c.updateSettings({macosActivity:false});
+ try{
+  await c.start(5);
+  for(let i=0;i<40&&terminalReads<2;i++)await sleep(50);
+  assert.ok(terminalReads>=2);
+  assert.equal(c.store.events().filter(e=>e.kind==='worker').length,1);
+  assert.equal(c.store.events().filter(e=>e.kind==='terminal').length,1);
+ }finally{await c.close();rmSync(path,{recursive:true});}
+});
