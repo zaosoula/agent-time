@@ -86,9 +86,10 @@ export class WebsiteResolver {
  private rulesPath:string;private savedRules:WebsiteRule[]=[];
  private remoteIndex:{at:number;paths:string;bySlug:Map<string,string[]>}|null=null;
  private cloneIndex:{at:number;paths:string[]}|null=null;
- private run:Runner;
- constructor(output:string,run:Runner=defaultRunner){
+ private run:Runner;private dockerOverride?:string;
+ constructor(output:string,run:Runner=defaultRunner,options:{dockerBinary?:string}={}){
   this.run=run;
+  this.dockerOverride=options.dockerBinary;
   this.rulesPath=join(output,'website-rules.json');
   if(existsSync(this.rulesPath)){
    try{const parsed:unknown=JSON.parse(readFileSync(this.rulesPath,'utf8'));if(Array.isArray(parsed))this.savedRules=parsed.filter((r):r is WebsiteRule=>Boolean(r&&typeof r==='object'&&typeof r.pattern==='string'&&typeof r.projectPath==='string')).map(r=>({pattern:normalizeRulePattern(r.pattern),projectPath:projectPathFromWorktree(r.projectPath)}));}catch{/* Invalid rules are ignored, not overwritten. */}
@@ -167,7 +168,7 @@ export class WebsiteResolver {
   return {listeners,suggestions};
  }
  private async dockerPort(port:number,known:KnownWorkspace[]):Promise<{match?:Pick<WebsiteResolution,'projectPath'|'workspaceId'|'source'|'detail'>;suggestions:WebsiteSuggestion[]}>{
-  const docker=dockerBinary();if(!docker)return {suggestions:[]};
+  const docker=this.dockerOverride||dockerBinary();if(!docker)return {suggestions:[]};
   // A remote Docker context publishes ports on its host, not on this Mac.
   const endpoint=await this.run(docker,['context','inspect','--format','{{ (index .Endpoints "docker").Host }}'],1200);
   if(!endpoint?.trim().startsWith('unix://'))return {suggestions:[]};

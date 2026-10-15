@@ -74,11 +74,11 @@ test('Docker bind mounts can resolve a published port; declarations and context 
   return null;
  };
  try{
-  const resolver=new WebsiteResolver(output,run);
+  const resolver=new WebsiteResolver(output,run,{dockerBinary:'docker'});
   assert.equal((await resolver.resolve('http://localhost:8080',known))?.source,'docker');
-  const broadMount=new WebsiteResolver(output,async(file,args)=>file.endsWith('docker')&&args.includes('context')?'unix:///tmp/docker.sock':file.endsWith('docker')&&args.includes('ps')?'container1':file.endsWith('docker')&&args.includes('inspect')?JSON.stringify([{NetworkSettings:{Ports:{'80/tcp':[{HostPort:'8080'}]}},Mounts:[{Type:'bind',Source:output}],Config:{Labels:{}}}]):null);
+  const broadMount=new WebsiteResolver(output,async(file,args)=>file.endsWith('docker')&&args.includes('context')?'unix:///tmp/docker.sock':file.endsWith('docker')&&args.includes('ps')?'container1':file.endsWith('docker')&&args.includes('inspect')?JSON.stringify([{NetworkSettings:{Ports:{'80/tcp':[{HostPort:'8080'}]}},Mounts:[{Type:'bind',Source:output}],Config:{Labels:{}}}]):null,{dockerBinary:'docker'});
   assert.equal((await broadMount.resolve('http://localhost:8080',known))?.projectPath,undefined);
-  const remote=new WebsiteResolver(output,async(file,args)=>file.endsWith('docker')&&args.includes('context')?'ssh://remote-host':file.endsWith('docker')&&args.includes('ps')?'container1':null);
+  const remote=new WebsiteResolver(output,async(file,args)=>file.endsWith('docker')&&args.includes('context')?'ssh://remote-host':file.endsWith('docker')&&args.includes('ps')?'container1':null,{dockerBinary:'docker'});
   assert.equal((await remote.resolve('http://localhost:8080',known))?.projectPath,undefined);
   writeFileSync(join(project,'vite.config.ts'),'export default { server: { port: 5173 } }');
   const unresolved=await resolver.resolve('http://localhost:5173',known,{workspaceId:'host::'+project,observedAt:Date.now()/1000});
@@ -109,7 +109,7 @@ test('a container port forwarder cannot attribute a site from its unrelated cwd'
   return null;
  };
  try{
-  const result=await new WebsiteResolver(output,run).resolve('http://localhost:14210',known);
+  const result=await new WebsiteResolver(output,run,{dockerBinary:'docker'}).resolve('http://localhost:14210',known);
   assert.equal(result?.projectPath,right);
   assert.equal(result?.source,'docker');
   assert.equal(result?.detail,'Docker published port and bind mount');
