@@ -1,6 +1,7 @@
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
-interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown; captureHealth?():unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:'claude'|'codex'):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
+import {agentById} from './sources/agent-registry.ts';
+interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown; captureHealth?():unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -37,7 +38,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:controller.cleanupTracking()};
     }
     if(request.method==='hooks_install'){
-      if(!controller.installHooks||!request.params||Object.keys(params).length!==1||!['claude','codex'].includes(params.provider))throw new Error('Invalid hook installation request');
+      if(!controller.installHooks||!request.params||Object.keys(params).length!==1||typeof params.provider!=='string'||!agentById.has(params.provider))throw new Error('Invalid hook installation request');
       return {id,result:await controller.installHooks(params.provider)};
     }
     if(request.method==='start') {

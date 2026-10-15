@@ -113,7 +113,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    const changed=(key:string)=>previous?.[key]!==next?.[key];
    if(changed('macosActivity'))activityPrevious=undefined;
    if(changed('orcaPolling'))workerPrevious.clear();
-   const affected=(event:CaptureEvent)=>changed(event.provider==='claude'?'claudeHooks':event.provider==='codex'?'codexHooks':'');
+   const affected=(event:CaptureEvent)=>changed(event.provider?`${event.provider}Hooks`:'');
    for(const [id,a] of active)if(affected(a.event)){coverage.push({reason:'Tool timing interrupted by capture setting change',eventId:e.eventId});if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});a.session.state='unknown';active.delete(id);}
    for(const [key,c] of childLifecycle)if(affected(c)){coverage.push({reason:'Native child timing interrupted by capture setting change',eventId:e.eventId});childLifecycle.delete(key);}
    for(const [key,start] of turnStarts)if(affected(start)){coverage.push({reason:'Turn timing interrupted by capture setting change',eventId:e.eventId});turnStarts.delete(key);}

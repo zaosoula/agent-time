@@ -3,12 +3,13 @@ import {readdir,stat,realpath} from 'node:fs/promises';import {createReadStream}
 import {parseUsage,tokenTotal,type ParserState,type UsageRecord,type Counts} from './parser.ts';
 import {CatalogStore,type PricingStatus} from './catalog-store.ts';
 import {callOrca,object} from '../capture/orca.ts';
+import {agents,agentById} from '../capture/sources/agent-registry.ts';
 export interface UsageSummary{days:Array<{date:string;provider:string;tokens:number;usd:number;unpriced:number;counts:Counts}>;models:Array<{model:string;provider:string;tokens:number;usd:number;unpriced:number}>;limits:Array<{provider:string;accountId:string;status:string;updatedAt:number|null;session:any;weekly:any}>;scanning:boolean;lastScan:number|null;filesScanned:number;error:string|null;pricingCheckedAt:string;pricingSources:string[];pricing:PricingStatus;}
 const day=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const emptyCounts=():Counts=>({input:0,output:0,cacheRead:0,cacheWrite:0,cacheWrite1h:0,reasoning:0});
 const periodStart=()=>{const month=new Date();month.setDate(1);month.setHours(0,0,0,0);const week=new Date();week.setDate(week.getDate()-(week.getDay()+6)%7);week.setHours(0,0,0,0);return new Date(Math.min(month.getTime(),week.getTime()));};
 export class UsageReader{
- private providers:Record<string,boolean>={claude:true,codex:true};private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
+ private providers:Record<string,boolean>=Object.fromEntries(agents.map(agent=>[agent.id,true]));private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
  private limits:UsageSummary['limits']=[];private lastScan:number|null=null;private filesScanned=0;private error:string|null=null;
  private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;
  constructor(database:string,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string){
@@ -16,17 +17,16 @@ export class UsageReader{
   this.db=new DatabaseSync(database);this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }
- configureProviders(providers:{claude:boolean;codex:boolean}){this.providers={...providers};}
+ configureProviders(providers:Record<string,boolean>){this.providers={...providers};}
  start(){if(this.enabled)return;this.enabled=true;void this.refresh();}
  async stop(){this.enabled=false;clearTimeout(this.timer);await this.job;}
  async close(){await this.stop();this.db.close();}
  private async discoverRoots(){
   if(this.roots)return this.roots;
-  const base=join(homedir(),'Library/Application Support/orca'),roots=[{provider:'claude',accountId:'default',path:join(homedir(),'.claude/projects')},{provider:'codex',accountId:'default',path:join(homedir(),'.codex/sessions')}];
-  for(const provider of ['claude','codex']){
-   const folder=join(base,provider+'-accounts');for(const entry of await readdir(folder,{withFileTypes:true}).catch(()=>[]))if(entry.isDirectory()){
-    if(provider==='codex')roots.push({provider,accountId:entry.name,path:join(folder,entry.name,'home/sessions')});
-    else for(const suffix of ['projects','home/projects'])roots.push({provider,accountId:entry.name,path:join(folder,entry.name,suffix)});
+  const base=join(homedir(),'Library/Application Support/orca'),roots=agents.map(agent=>({provider:agent.id,accountId:'default',path:join(homedir(),agent.defaultUsagePath)}));
+  for(const agent of agents){
+   const folder=join(base,agent.id+'-accounts');for(const entry of await readdir(folder,{withFileTypes:true}).catch(()=>[]))if(entry.isDirectory()){
+    for(const suffix of agent.usagePaths)roots.push({provider:agent.id,accountId:entry.name,path:join(folder,entry.name,suffix)});
    }
   }return roots;
  }
@@ -48,8 +48,8 @@ export class UsageReader{
    const receipt=object(await this.orca(['account','list','--json']));if(!receipt.ok)throw new Error('Orca account usage unavailable');
    const r=object(receipt.result),limits=object(r.rateLimits);this.limits=this.limits.filter(l=>!this.providers[l.provider]);
    const window=(v:any)=>v&&typeof v.usedPercent==='number'?{usedPercent:Math.max(0,Math.min(100,v.usedPercent)),resetsAt:typeof v.resetsAt==='number'?v.resetsAt:null,windowMinutes:typeof v.windowMinutes==='number'?v.windowMinutes:null}:null;
-   for(const provider of ['claude','codex']){
-    if(!this.providers[provider])continue;
+   for(const agent of agents.filter(agent=>agent.orcaLimits)){
+    const provider=agent.id;if(!this.providers[provider])continue;
     const candidates=[{...object(limits[provider]),accountId:r[provider]?.activeAccountId||'default'},...(Array.isArray(limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts'])?limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts']:[])];
     for(const v of candidates)this.limits.push({provider,accountId:String(v.accountId||'unknown'),status:String(v.status||'unknown'),updatedAt:typeof v.updatedAt==='number'?v.updatedAt:null,session:window(v.session),weekly:window(v.weekly)});
    }
@@ -81,12 +81,12 @@ export class UsageReader{
  private capturedSessions(){
   const result=new Map<string,number>();
   for(const r of this.db.prepare("SELECT json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') sessionId,MIN(observed_at) first FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.sessionId') IS NOT NULL GROUP BY 1,2").all() as Array<{provider:string;sessionId:string;first:number}>)result.set(r.provider+':'+r.sessionId,r.first);
-  for(const r of this.db.prepare("SELECT json_extract(payload,'$.agentId') sessionId,MIN(observed_at) first FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')='codex' AND json_extract(payload,'$.kind')='child_start' AND json_extract(payload,'$.agentId') IS NOT NULL GROUP BY 1").all() as Array<{sessionId:string;first:number}>)result.set('codex:'+r.sessionId,r.first);
+  for(const agent of agents.filter(agent=>agent.childSessionIds))for(const r of this.db.prepare("SELECT json_extract(payload,'$.agentId') sessionId,MIN(observed_at) first FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.kind')='child_start' AND json_extract(payload,'$.agentId') IS NOT NULL GROUP BY 1").all(agent.id) as Array<{sessionId:string;first:number}>)result.set(agent.id+':'+r.sessionId,r.first);
   return result;
  }
  private put(record:UsageRecord){
   const existing=this.db.prepare('SELECT payload FROM usage_events WHERE id=?').get(record.id) as {payload:string}|undefined;
-  if(existing&&record.provider==='codex')return;
+  if(existing&&agentById.get(record.provider)?.dedupe==='first')return;
   if(existing){const previous=JSON.parse(existing.payload);for(const key of Object.keys(emptyCounts()) as Array<keyof Counts>)record[key]=Math.max(record[key],previous[key]||0);record.timestamp=Math.min(record.timestamp,previous.timestamp);}
   this.db.exec('BEGIN');
   try{this.db.prepare('INSERT INTO usage_events VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,timestamp=excluded.timestamp').run(record.id,record.timestamp,JSON.stringify(record));this.pricing.bind(record.id);this.db.exec('COMMIT');}catch(e){this.db.exec('ROLLBACK');throw e;}

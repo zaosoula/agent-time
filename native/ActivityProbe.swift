@@ -129,9 +129,20 @@ private let browserFlags = [
     "com.google.Chrome": "--browser-chrome",
     "com.brave.Browser": "--browser-brave"
 ]
+private let browserArguments = CommandLine.arguments
+private let browserBundles = Set(browserArguments.compactMap { $0.hasPrefix("--browser-bundle=") ? String($0.dropFirst("--browser-bundle=".count)) : nil })
+private let browserSuffixes = browserArguments.compactMap { argument -> (String, String)? in
+    guard argument.hasPrefix("--browser-suffix="),
+          let separator = argument.dropFirst("--browser-suffix=".count).firstIndex(of: "|") else { return nil }
+    let value = argument.dropFirst("--browser-suffix=".count)
+    return (String(value[..<separator]), String(value[value.index(after: separator)...]))
+}.reduce(into: [String: String]()) { result, pair in result[pair.0] = pair.1 }
+private func browserEnabled(_ bundle: String) -> Bool {
+    browserBundles.contains(bundle) || browserFlags[bundle].map { browserArguments.contains($0) || browserArguments.contains("--browser-tracking") } == true
+}
 
 private func browserPage(_ app: NSRunningApplication) -> [String: String]? {
-    guard let bundle = app.bundleIdentifier, browserFlags[bundle] != nil else { return nil }
+    guard let bundle = app.bundleIdentifier, browserEnabled(bundle) else { return nil }
     let root = AXUIElementCreateApplication(app.processIdentifier)
     guard let rawWindow = attribute(root, kAXFocusedWindowAttribute),
           CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else { return nil }
@@ -145,7 +156,7 @@ private func browserPage(_ app: NSRunningApplication) -> [String: String]? {
         var result = ["domain": host.hasPrefix("www.") ? String(host.dropFirst(4)) : host,
                       "url": url.string ?? value]
         if let title = title as? String, !title.isEmpty {
-            let suffix = bundle == "com.brave.Browser" ? " - Brave" : bundle == "com.google.Chrome" ? " - Google Chrome" : ""
+            let suffix = browserSuffixes[bundle] ?? (bundle == "com.brave.Browser" ? " - Brave" : bundle == "com.google.Chrome" ? " - Google Chrome" : "")
             let clean = suffix.isEmpty ? title : title.range(of: suffix, options: .backwards).map { String(title[..<$0.lowerBound]) } ?? title
             result["title"] = String(clean.prefix(180))
         }
@@ -197,8 +208,7 @@ func emit(_ kind: String = "activity") {
         }
     }
     if trusted, let app, let bundle = app.bundleIdentifier,
-       let flag = browserFlags[bundle],
-       (CommandLine.arguments.contains(flag) || CommandLine.arguments.contains("--browser-tracking")),
+       browserEnabled(bundle),
        let page = browserPage(app) {
         record["browserDomain"] = page["domain"]
         record["browserUrl"] = page["url"]

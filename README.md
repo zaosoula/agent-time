@@ -70,6 +70,16 @@ For Codex, target its documented `hooks.json` in the active trusted config layer
 
 Hooks record only provider/session/subagent IDs, working directory, tool identity/name, event type, and allowlisted Orca workspace/terminal IDs. They never invoke Orca or send data over the network, return no output, and succeed silently if capture fails. Each hook uses a private atomic spool record.
 
+## Adding a tracked source
+
+The built-in sources live in [`src/capture/sources/`](src/capture/sources/). Each source is one file, discovered by its suffix. The settings, health view, and source lists read the source metadata; there is no central list to edit.
+
+- Add `<id>.browser.ts` for a browser whose active page URL is exposed through the generic macOS Accessibility document reader. Use `safari.browser.ts` as the shape. Give it a unique bundle ID and a `browser<Name>` setting. The Swift probe receives the bundle ID at launch; the collector validates the observed URL against its domain before storing it. Set `defaultEnabled:false` if page capture should require opt-in.
+- Add `<id>.agent.ts` for an agent with the supported JSON hook configuration layout and local JSONL token logs. Use `claude.agent.ts` or `codex.agent.ts` as the shape. The file owns its hook events, normalization, account discovery, token parser, and duplicate policy. Its settings are `<id>Hooks` and `<id>TokenUsage`. The installer copies agent files into its versioned hook runtime and records ownership before changing a configuration.
+- Add `<id>.poller.ts` for a metadata poller using the shared collector lock and event store. Use `orca.poller.ts` as the shape. The poller owns its reads and cancellation checks. A new event format also needs correlation rules before it can count time in the timeline.
+
+The one-file path applies when the new source fits one of these existing capture capabilities. A browser without an accessible document URL or an agent with a different hook configuration protocol needs a new capability implementation. Run `npm test`, `npm run build`, and `cargo test --manifest-path src-tauri/Cargo.toml` after adding a source. `tests/source-registry.test.ts` exercises discovery and generated settings with one-file browser and agent fixtures.
+
 ## CLI capture and evidence
 
 ```sh

@@ -11,13 +11,14 @@ import { renderReport } from './report.ts';
 import { dispatchRequest } from './protocol.ts';
 import { defaultSettings, storedSettings } from './settings.ts';
 import { prepareConfig, applyConfig, restoreConfig, hookEvents } from './hook-config.ts';
+import {agentById} from './sources/agent-registry.ts';
 const args=process.argv.slice(2),command=args.shift();
 if(command==='hook') {
   try{
     const {values}=parseArgs({args,options:{provider:{type:'string'},spool:{type:'string'}},strict:true});
     const chunks:Buffer[]=[];let bytes=0;
     for await(const chunk of process.stdin){bytes+=chunk.length;if(bytes>262144)break;chunks.push(chunk);}
-    if(bytes<=262144&&values.provider&&values.spool)spoolHook(normalizeHook(values.provider,JSON.parse(Buffer.concat(chunks).toString()),hookContext()),values.spool);
+    if(bytes<=262144&&values.provider&&agentById.has(values.provider)&&values.spool)spoolHook(normalizeHook(values.provider,JSON.parse(Buffer.concat(chunks).toString()),hookContext()),values.spool);
   }catch{} // A telemetry hook never blocks or injects context into its agent.
 }else{
   try{

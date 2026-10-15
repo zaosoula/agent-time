@@ -1,24 +1,13 @@
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync, unlinkSync, lstatSync } from 'node:fs';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { makeEvent, validateEvent, type CaptureEvent, type Issue } from './events.ts';
+import { validateEvent, type CaptureEvent, type Issue } from './events.ts';
 import { EventStore } from './store.ts';
-import { object } from './orca.ts';
-const kinds: Record<string,string> = {
-  SessionStart:'session_start', SessionEnd:'session_end', UserPromptSubmit:'prompt_submitted',
-  PreToolUse:'tool_start', PostToolUse:'tool_end', PostToolUseFailure:'tool_end',
-  Stop:'response_stop', StopFailure:'interrupted', Interrupt:'interrupted',
-  SubagentStart:'child_start', SubagentStop:'child_stop', PermissionRequest:'waiting',
-};
+import {agentById} from './sources/agent-registry.ts';
 export function normalizeHook(provider: string, payload: unknown, context: Partial<CaptureEvent>): CaptureEvent {
-  const p=object(payload); const name=String(p.hook_event_name || 'unknown');
-  const text = (value: unknown) => typeof value === 'string' ? value.slice(0,512) : undefined;
-  return makeEvent('hook', kinds[name] || 'unknown',{
-    ...context, provider, sessionId:text(p.session_id), turnId:text(p.turn_id), agentId:text(p.agent_id),
-    cwd:text(p.cwd) || context.cwd,
-    data: { hook: name, toolId: text(p.tool_use_id), toolName: text(p.tool_name),
-      source: text(p.source), childType: text(p.agent_type), stopBlocked: p.stop_hook_active === true },
-  });
+  const agent=agentById.get(provider);
+  if(!agent)throw new Error('Unsupported hook provider');
+  return agent.normalizeHook(payload,context);
 }
 export function hookContext(): Partial<CaptureEvent> {
   // Only allowlisted identifiers; never capture the environment or hook endpoint credentials.

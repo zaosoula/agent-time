@@ -2,16 +2,17 @@ import {existsSync,readFileSync,writeFileSync,mkdirSync,readdirSync,lstatSync,co
 import {homedir} from 'node:os';import {join,dirname,resolve,basename} from 'node:path';import {fileURLToPath} from 'node:url';import {createHash,randomUUID} from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
 import {prepareConfig,applyConfig,restoreConfig,hookEvents,type Manifest} from './hook-config.ts';
-export type HookProvider='claude'|'codex';
+import {agents,agentById} from './sources/agent-registry.ts';
+export type HookProvider=string;
 export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;}
-export interface HookInstallationStatus {setupSeen:boolean;runtimeVersion:string;runtimeReady:boolean;targets:HookTarget[];legacyPaths:string[];migrationError:string|null;}
+export interface HookInstallationStatus {setupSeen:boolean;runtimeVersion:string;runtimeReady:boolean;agents:Array<{id:string;name:string;setting:string;usageSetting:string;trustNote?:string}>;targets:HookTarget[];legacyPaths:string[];migrationError:string|null;}
 export interface TrackingCleanupPreview {configurations:string[];helpers:string[];errors:string[];}
 export interface TrackingCleanupResult {removedConfigurations:string[];removedHelpers:string[];errors:string[];}
 interface Options {home?:string;env?:NodeJS.ProcessEnv;}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,16);
 const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
-const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','observation-retention.ts','orca.ts'];
 const source=dirname(fileURLToPath(import.meta.url));
+const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','observation-retention.ts','orca.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
 const runtimeVersion=hash(process.version+files.map(f=>readFileSync(join(source,f),'utf8')).join('\n'));
 const launcher=`#!/bin/sh
 root=\${0%/*}
@@ -38,17 +39,14 @@ export class HookInstallation{
  }
  private targets(){
   const targets:Array<{provider:HookProvider;label:string;path:string}>=[],seen=new Set<string>();
-  const add=(provider:HookProvider,label:string,folder:string)=>{const path=join(resolve(folder),provider==='claude'?'settings.json':'hooks.json');if(!seen.has(path)){seen.add(path);targets.push({provider,label,path});}};
-  add('claude','Claude · user',join(this.home,'.claude'));add('codex','Codex · user',join(this.home,'.codex'));
-  if(this.env.CLAUDE_CONFIG_DIR)add('claude','Claude · active config',this.env.CLAUDE_CONFIG_DIR);
-  if(this.env.CODEX_HOME)add('codex','Codex · active config',this.env.CODEX_HOME);
+  const add=(provider:HookProvider,label:string,folder:string)=>{const agent=agentById.get(provider);if(!agent)return;const path=join(resolve(folder),agent.configFile);if(!seen.has(path)){seen.add(path);targets.push({provider,label,path});}};
+  for(const agent of agents){add(agent.id,`${agent.name} · user`,join(this.home,agent.configDirectory));if(this.env[agent.configEnv])add(agent.id,`${agent.name} · active config`,this.env[agent.configEnv]!);}
   const base=join(this.home,'Library/Application Support/orca');
-  for(const provider of ['claude','codex'] as const){
-   const folder=join(base,provider+'-accounts');let index=0;
+  for(const agent of agents){
+   const folder=join(base,agent.id+'-accounts');let index=0;
    for(const entry of existsSync(folder)?readdirSync(folder,{withFileTypes:true}):[]){if(!entry.isDirectory())continue;
     const root=join(folder,entry.name);index++;
-    if(provider==='codex'){if(existsSync(join(root,'home')))add(provider,`Codex · Orca account ${index}`,join(root,'home'));}
-    else for(const config of [root,join(root,'home')])if(existsSync(join(config,'settings.json'))||existsSync(join(config,'projects')))add(provider,`Claude · Orca account ${index}`,config);
+    for(const config of agent.discoverAccount(root))add(agent.id,`${agent.name} · Orca account ${index}`,config);
    }
   }
   return targets.map(t=>({...t,id:hash(t.path)}));
@@ -63,7 +61,7 @@ export class HookInstallation{
   if(!bundleReady()){
    const temp=join(parent,'.'+runtimeVersion+'-'+randomUUID());mkdirSync(temp,{mode:0o700});
    copyFileSync(process.execPath,join(temp,'node'));chmodSync(join(temp,'node'),0o700);
-   for(const f of files)copyFileSync(join(source,f),join(temp,f));writeFileSync(join(temp,'package.json'),'{"type":"module"}\n',{mode:0o600});
+   mkdirSync(join(temp,'sources'),{mode:0o700});for(const f of files)copyFileSync(join(source,f),join(temp,f));writeFileSync(join(temp,'package.json'),'{"type":"module"}\n',{mode:0o600});
    if(existsSync(this.runtime))renameSync(this.runtime,this.runtime+'-replaced-'+randomUUID());renameSync(temp,this.runtime);
   }
   const check=JSON.parse(execFileSync(join(this.runtime,'node'),[join(this.runtime,'hook-runner.ts'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Hook runtime verification failed');
@@ -79,10 +77,10 @@ export class HookInstallation{
  }
  private legacy(provider?:HookProvider){
   const found:Array<{path:string;manifest:Manifest;file:string}>=[];
-  for(const p of ['claude','codex'] as const){if(provider&&provider!==p)continue;const file=join(this.output,`${p}-hook-manifest.json`);if(!existsSync(file))continue;
+  for(const agent of agents){const p=agent.id;if(provider&&provider!==p||!agent.legacyConfigSuffix)continue;const file=join(this.output,`${p}-hook-manifest.json`);if(!existsSync(file))continue;
    const manifest:Manifest=JSON.parse(readFileSync(file,'utf8'));if(!manifest.path||!manifest.entries||!existsSync(manifest.path))continue;
    // Only migrate the project configs recorded by the existing reversible installer.
-   const suffix=p==='claude'?'.claude/settings.local.json':'.codex/hooks.json';if(!manifest.path.endsWith(suffix))continue;
+   const suffix=agent.legacyConfigSuffix;if(!manifest.path.endsWith(suffix))continue;
    const config=JSON.parse(readFileSync(manifest.path,'utf8'));
    if(Object.entries(manifest.entries).some(([event,entry])=>(config.hooks?.[event]||[]).some((v:unknown)=>JSON.stringify(v)===JSON.stringify(entry))))found.push({path:manifest.path,manifest,file});
   }return found;
@@ -117,14 +115,14 @@ export class HookInstallation{
    return {...t,state,error,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
   });
   let legacyPaths:string[]=[];try{legacyPaths=this.legacy().map(l=>l.path);}catch(e){this.migrationError=String(e);}
-  return {setupSeen:existsSync(join(this.stateRoot,'hook-setup.json')),runtimeVersion,runtimeReady:ready,targets,legacyPaths,migrationError:this.migrationError};
+  return {setupSeen:existsSync(join(this.stateRoot,'hook-setup.json')),runtimeVersion,runtimeReady:ready,agents:agents.map(({id,name,setting,usageSetting,trustNote})=>({id,name,setting,usageSetting,trustNote})),targets,legacyPaths,migrationError:this.migrationError};
  }
  dismiss(){privateWrite(join(this.stateRoot,'hook-setup.json'),JSON.stringify({version:1,seenAt:Date.now()})+'\n');return this.status();}
  private cleanupPlan(){
   const manifests:Manifest[]=[],helpers:string[]=[],errors:string[]=[];
   const records=join(this.stateRoot,'hook-installations');
   const managed:Array<{path:string;provider:HookProvider}>=[];
-  const commands:Record<HookProvider,string[]>={claude:[],codex:[]};
+  const commands:Record<HookProvider,string[]>=Object.fromEntries(agents.map(agent=>[agent.id,[]]));
   try{if(existsSync(records)){
    if(lstatSync(records).isSymbolicLink())throw new Error('symlink ownership folder refused');
    for(const entry of readdirSync(records,{withFileTypes:true})){
@@ -133,9 +131,13 @@ export class HookInstallation{
      const file=this.ledgerPath(entry.name);if(!existsSync(file))continue;
      if(lstatSync(file).isSymbolicLink())throw new Error('symlink ownership record refused');
      const record=JSON.parse(readFileSync(file,'utf8'));
-     if(typeof record.path!=='string'||hash(record.path)!==entry.name||!['hooks.json','settings.json'].includes(basename(record.path)))throw new Error('Invalid managed path');
+     if(typeof record.path!=='string'||hash(record.path)!==entry.name)throw new Error('Invalid managed path');
      if(!Array.isArray(record.commands)||!record.commands.every((value:unknown)=>typeof value==='string'))throw new Error('Invalid managed hook record');
-     const provider=basename(record.path)==='hooks.json'?'codex':'claude';
+     const candidates=agents.filter(agent=>agent.configFile===basename(record.path));
+     const ownedProviders=new Set(record.commands.map((command:string)=>command.match(/'--provider'\s+'([a-z0-9-]+)'/)?.[1]).filter((value:unknown):value is string=>typeof value==='string'));
+     const recorded=typeof record.provider==='string'?record.provider:ownedProviders.size===1?[...ownedProviders][0]:undefined;
+     const provider=recorded&&agentById.get(recorded)?.configFile===basename(record.path)?recorded:candidates.length===1?candidates[0].id:undefined;
+     if(!provider)throw new Error('Unknown managed provider');
      managed.push({path:record.path,provider});commands[provider].push(...record.commands);
     }catch(e){errors.push(`${entry.name}: ${String(e)}`);}
    }
@@ -147,12 +149,12 @@ export class HookInstallation{
    if(JSON.stringify(JSON.parse(manifest.original))!==JSON.stringify(JSON.parse(manifest.updated)))manifests.push(manifest);
   }catch(e){errors.push(`${record.path}: ${String(e)}`);}}
   // Legacy project installers recorded exact command ownership as well.
-  for(const provider of ['claude','codex'] as const){try{
+  for(const agent of agents.filter(agent=>agent.legacyConfigSuffix)){const provider=agent.id;try{
    const file=join(this.output,`${provider}-hook-manifest.json`);
    if(!existsSync(file))continue;
    if(lstatSync(file).isSymbolicLink())throw new Error('symlink legacy record refused');
    const manifest:Manifest=JSON.parse(readFileSync(file,'utf8'));
-   if(typeof manifest.path!=='string'||!manifest.path.endsWith(provider==='claude'?'.claude/settings.local.json':'.codex/hooks.json')||!manifest.entries)throw new Error('Invalid legacy record');
+   if(typeof manifest.path!=='string'||!manifest.path.endsWith(agent.legacyConfigSuffix!)||!manifest.entries)throw new Error('Invalid legacy record');
    if(!existsSync(manifest.path))continue;
    for(const legacy of [{path:manifest.path,manifest}]){
     const commands=Object.values(legacy.manifest.entries).flatMap((entry:any)=>entry.hooks?.map((handler:any)=>handler.command)||[]);
@@ -162,14 +164,14 @@ export class HookInstallation{
    }
   }catch(e){errors.push(`${provider} project hooks: ${String(e)}`);}}
   // This folder is exclusively our generated runtime. Unknown contents are retained.
-  const root=join(this.stateRoot,'hook-runtime'),allowed=new Set([...files,'node','package.json']);
+  const root=join(this.stateRoot,'hook-runtime'),allowed=new Set([...files.filter(f=>!f.includes('/')),'sources','node','package.json']);
   try{if(existsSync(root)){
    if(lstatSync(root).isSymbolicLink())throw new Error('symlink runtime folder refused');
    for(const entry of readdirSync(root,{withFileTypes:true})){
     const path=join(root,entry.name);
     if(entry.isFile()&&['launch.sh','current'].includes(entry.name)){helpers.push(path);continue;}
     if(!entry.isDirectory()||!/^\.?[a-f0-9]{16}(?:-replaced-[a-f0-9-]+|-[a-f0-9-]+)?$/.test(entry.name))throw new Error(`Unrecognized runtime retained: ${path}`);
-    if(readdirSync(path,{withFileTypes:true}).some(f=>!f.isFile()||!allowed.has(f.name)))throw new Error(`Unexpected runtime contents retained: ${path}`);
+    if(readdirSync(path,{withFileTypes:true}).some(f=>f.name==='sources'? !f.isDirectory()||readdirSync(join(path,'sources'),{withFileTypes:true}).some(child=>!child.isFile()||!files.includes(join('sources',child.name))):!f.isFile()||!allowed.has(f.name)))throw new Error(`Unexpected runtime contents retained: ${path}`);
     helpers.push(path);
    }
   }}catch(e){errors.push(String(e));}
@@ -196,7 +198,7 @@ export class HookInstallation{
   }finally{this.busy=false;}
  }
  async install(provider:HookProvider){
-  if(!['claude','codex'].includes(provider))throw new Error('Invalid provider');if(this.busy)throw new Error('Hook installation is already running');this.busy=true;
+  if(!agentById.has(provider))throw new Error('Invalid provider');if(this.busy)throw new Error('Hook installation is already running');this.busy=true;
   try{
    this.installErrors.clear();this.installRuntime();
    const providerTargets=this.targets().filter(t=>t.provider===provider);
@@ -207,7 +209,7 @@ export class HookInstallation{
      const manifest=prepareConfig(t.path,provider,command,hookEvents(provider),recognized);
      const backup=join(this.stateRoot,'hook-installations',t.id,'original.json');if(!existsSync(backup))privateWrite(backup,JSON.stringify(manifest,null,2)+'\n');
      // Record ownership before applying, so an interrupted install remains repairable.
-     privateWrite(this.ledgerPath(t.id),JSON.stringify({path:t.path,commands:[...new Set([...owned,command])]},null,2)+'\n');applyConfig(manifest);
+     privateWrite(this.ledgerPath(t.id),JSON.stringify({path:t.path,provider,commands:[...new Set([...owned,command])]},null,2)+'\n');applyConfig(manifest);
     }catch(e){this.installErrors.set(t.id,String(e));}
    }
    if(this.status().targets.filter(t=>t.provider===provider).every(t=>t.state==='installed')){

@@ -2,11 +2,12 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, lstatSync, renameSy
 import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { object } from './orca.ts';
+import {agentById} from './sources/agent-registry.ts';
 export interface Manifest { path: string; existed: boolean; original: string; updated: string; entries: Record<string,unknown>; }
 function read(path:string):string { if(existsSync(path) && lstatSync(path).isSymbolicLink())throw new Error('symlink configuration refused');return existsSync(path)?readFileSync(path,'utf8'):''; }
 function write(path:string,text:string):void { mkdirSync(dirname(path),{recursive:true,mode:0o700});const tmp=path+'.'+randomUUID()+'.tmp';writeFileSync(tmp,text,{mode:0o600,flag:'wx'});renameSync(tmp,path); }
 export function prepareConfig(path:string, provider:string, command:string, events:string[], ownedCommands:string[]=[]):Manifest {
-  if(!['claude','codex'].includes(provider))throw new Error('unsupported provider');
+  if(!agentById.has(provider))throw new Error('unsupported provider');
   const original=read(path), config=original?JSON.parse(original):{};
   if(!config || typeof config!=='object' || Array.isArray(config))throw new Error('unsupported configuration');
   if(config.hooks !== undefined && (typeof config.hooks!=='object'||Array.isArray(config.hooks)||config.hooks===null)) throw new Error('unsupported hook configuration');
@@ -46,6 +47,5 @@ export function restoreConfig(manifest:Manifest):void {
 }
 
 export function hookEvents(provider:string):string[]{
- const common=['SessionStart','UserPromptSubmit','PreToolUse','PostToolUse','PermissionRequest','Stop','SessionEnd','SubagentStart','SubagentStop'];
- return provider==='claude'?[...common,'PostToolUseFailure','StopFailure']:[...common,'Interrupt'];
+ const agent=agentById.get(provider);if(!agent)throw new Error('unsupported provider');return [...agent.hookEvents];
 }

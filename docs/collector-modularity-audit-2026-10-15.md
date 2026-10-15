@@ -32,4 +32,10 @@ The one-file extension promise can apply to sources that fit an existing capabil
 3. Move Orca polling and macOS probe lifecycle out of `Collector`, preserving cancellation and lock semantics.
 4. Generate settings, health, and UI lists from descriptors and prove that a fixture source is discovered without editing central switch statements.
 
-The existing baseline is `7839c86` on local `main`: 148 Node tests, frontend typecheck, and 5 Rust tests passed before this refactor.
+The baseline was `7839c86`: 148 Node tests, frontend typecheck, and 5 Rust tests passed before the refactor.
+
+## Refactor implementation
+
+The source registry now discovers `.browser.ts`, `.agent.ts`, and `.poller.ts` files. Safari, Chrome, Brave, Claude, Codex, and Orca each have a source file. The browser declarations drive settings, the Swift probe arguments, URL allowlisting, settings UI, and display names. Claude and Codex declarations drive hook normalization, installation target discovery, runtime packaging, usage parsing, duplicate policy, settings, and health/UI lists. A separate agent registry keeps browser and polling modules out of the installed hook runtime. Orca polling and foreground attribution live in its poller file. The macOS helper lifecycle moved into `MacActivityProbe`; `Collector` retains the lock, store, scheduling, and project reconciliation.
+
+Source IDs and setting names are checked when modules load. Rust checks the shape of source settings and provider IDs; the Node protocol validates that a requested key or provider belongs to a discovered module. Existing saved setting names and legacy hook ownership remain supported. The one-file fixture tests cover browser discovery/settings/probe arguments and agent discovery/settings. They do not prove a new third-party app's Accessibility behavior or a new agent's live hook trust and token log format.

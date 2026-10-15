@@ -108,7 +108,7 @@ const websites=computed(()=>{
   const domain=origin&&['localhost','127.0.0.1','::1'].includes(origin.hostname)||origin?.hostname.endsWith('.localhost')?origin.host:i.browserDomain!;
   const siteProject=i.workspaceId?projectFromWorkspace(i.workspaceId):'Unassigned';
   const key=domain+'::'+siteProject,group=groups.get(key)||{domain,project:siteProject,seconds:0,intervals:[] as Array<[number,number]>,browsers:new Set<string>(),pages:new Map<string,{url:string;title:string;seconds:number;intervals:Array<[number,number]>}>()};
-  group.intervals.push([i.start,i.end]);if(i.browserBundleId)group.browsers.add(i.browserBundleId==='com.apple.Safari'?'Safari':i.browserBundleId==='com.google.Chrome'?'Chrome':i.browserBundleId==='com.brave.Browser'?'Brave':i.browserBundleId);
+  group.intervals.push([i.start,i.end]);if(i.browserBundleId)group.browsers.add(status.value?.sources.find(source=>source.bundleId===i.browserBundleId)?.name||i.browserBundleId);
   if(i.browserUrl){const page=group.pages.get(i.browserUrl)||{url:i.browserUrl,title:i.browserTitle||domain,seconds:0,intervals:[] as Array<[number,number]>};page.title=i.browserTitle||page.title;page.intervals.push([i.start,i.end]);group.pages.set(i.browserUrl,page);}
   groups.set(key,group);
  }

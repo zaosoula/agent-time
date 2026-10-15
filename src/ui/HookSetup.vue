@@ -6,9 +6,10 @@ import {transport,relaunchHookSetup} from './transport.ts';
 import type {HookInstallationStatus,HookProvider} from '../capture/hook-installation.ts';
 const props=defineProps<{mode:'onboarding'|'settings'}>();
 const state=ref<HookInstallationStatus|null>(null),open=ref(false),busy=ref(false),error=ref(''),message=ref('');
-const selected=ref<HookProvider[]>(['claude','codex']);
+const selected=ref<HookProvider[]>([]);
 let timer:ReturnType<typeof setInterval>|undefined,unmounted=false,promptedIssueKey:string|null=null;
-const providers:HookProvider[]=['claude','codex'];
+const providers=computed(()=>state.value?.agents.map(agent=>agent.id)||[]);
+const agentName=(id:string)=>state.value?.agents.find(agent=>agent.id===id)?.name||id;
 const targets=(provider:HookProvider)=>state.value?.targets.filter(t=>t.provider===provider)||[];
 const installed=(provider:HookProvider)=>targets(provider).length>0&&targets(provider).every(t=>t.state==='installed');
 const hasFailures=computed(()=>state.value?.targets.some(t=>t.state==='error')||Boolean(state.value?.migrationError));
@@ -16,7 +17,7 @@ const repairTargets=computed(()=>state.value?.targets.filter(t=>t.state==='needs
 const repairing=computed(()=>Boolean(state.value?.setupSeen&&repairTargets.value.length));
 const received=(n:number|null)=>n?new Date(n*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'Waiting for an event';
 const label=(s:string)=>({'not-installed':'Not installed',installed:'Installed','needs-update':'Update needed',error:'Needs attention'}[s]||s);
-async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(props.mode==='onboarding'){
+async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(!next.setupSeen&&!selected.value.length)selected.value=next.agents.map(agent=>agent.id);if(props.mode==='onboarding'){
   if(!next.setupSeen)open.value=true;
   else {const issues=next.targets.filter(t=>t.state==='needs-update'||t.state==='error');const key=issues.map(t=>`${t.id}:${t.state}`).sort().join('|')+(next.migrationError?`|migration:${next.migrationError}`:'');
     if(!key)promptedIssueKey=null;
@@ -32,7 +33,7 @@ onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refr
 <template>
 <DialogRoot v-if="mode==='onboarding'" :open="open" @update:open="!$event&&dismiss()"><DialogPortal><DialogOverlay class="hook-overlay"/><DialogContent class="hook-dialog" @escape-key-down="busy&&$event.preventDefault()" @pointer-down-outside="busy&&$event.preventDefault()">
  <div class="hook-dialog-icon"><Bot :size="24"/></div><DialogTitle class="hook-title">{{repairing?'Update your agent hooks':'Connect your agents'}}</DialogTitle><DialogDescription class="hook-description">{{repairing?'Agent Time found hooks that need repair. Select the affected agents to update their user-wide installation.':'Install Agent Time hooks for your user account to capture sessions across projects.'}}</DialogDescription>
- <div class="hook-choices"><label v-for="p in providers" :key="p"><input v-model="selected" type="checkbox" :value="p" :disabled="busy"/><span>{{p==='claude'?'Claude Code':'Codex'}}<small>{{targets(p).length}} user configuration{{targets(p).length===1?'':'s'}}{{installed(p)?' · installed':''}}</small></span><Check v-if="installed(p)" :size="16"/></label></div>
+ <div class="hook-choices"><label v-for="p in providers" :key="p"><input v-model="selected" type="checkbox" :value="p" :disabled="busy"/><span>{{agentName(p)}}<small>{{targets(p).length}} user configuration{{targets(p).length===1?'':'s'}}{{installed(p)?' · installed':''}}</small></span><Check v-if="installed(p)" :size="16"/></label></div>
  <p class="hook-description">Detected Orca account homes are included. Existing hooks from other tools are preserved.</p>
  <p v-if="state?.legacyPaths.length" class="hook-description">Your earlier Agent Time project hooks will move to user scope.</p>
  <p class="hook-trust">After installation, start new agent sessions. In Codex, review and trust the “Agent Time” hooks in <strong>/hooks</strong>. Configuration checks cannot confirm provider trust.</p>
@@ -45,19 +46,19 @@ onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refr
  <h2 id="agents-heading" class="section-title">Agents</h2><p class="section-intro">Global overview and actions for every connected agent.</p>
  <slot name="global-controls"/>
  <div class="hook-settings"><div class="hook-section-heading"><div><h3>Hook overview</h3><p>User-wide installation across all projects.</p></div></div>
-  <div class="hook-overview"><div v-for="p in providers" :key="p"><strong>{{p==='claude'?'Claude Code':'Codex'}}</strong><span v-if="state">{{targets(p).filter(t=>t.state==='installed').length}} of {{targets(p).length}} configurations installed</span><span v-else>Checking installation…</span></div></div>
+  <div class="hook-overview"><div v-for="p in providers" :key="p"><strong>{{agentName(p)}}</strong><span v-if="state">{{targets(p).filter(t=>t.state==='installed').length}} of {{targets(p).length}} configurations installed</span><span v-else>Checking installation…</span></div></div>
   <div class="hook-global-actions"><button class="hook-check" :disabled="busy" @click="relaunchHookSetup">Relaunch hook setup</button><button class="hook-check" :disabled="busy||!state" @click="verify"><RefreshCw :size="13"/> Check all hooks</button><button class="hook-action" :disabled="busy||!state" @click="install(providers)">{{busy?'Working…':'Install / update all hooks'}}</button></div>
   <p v-if="error" class="hook-error" role="alert">{{error}}</p><p v-if="message" class="hook-message" role="status">{{message}}</p>
   <p v-if="state?.migrationError" class="hook-error">Project migration needs attention: {{state.migrationError}}</p><p v-else-if="state?.legacyPaths.length" class="hook-description">Installing here also moves your earlier Agent Time project hooks to user scope.</p>
  </div>
 </section>
 <section v-for="p in providers" :id="'settings-'+p" :key="p" class="hook-section" :aria-labelledby="p+'-heading'" tabindex="-1">
- <h2 :id="p+'-heading'" class="section-title">{{p==='claude'?'Claude':'Codex'}}</h2><p class="section-intro">Hooks, tokens and usage settings for {{p==='claude'?'Claude Code':'Codex'}}.</p>
+ <h2 :id="p+'-heading'" class="section-title">{{agentName(p)}}</h2><p class="section-intro">Hooks, tokens and usage settings for {{agentName(p)}}.</p>
  <slot :name="p+'-controls'"/>
  <div class="hook-settings"><div class="hook-provider-heading"><h3>Hook installation</h3><div class="hook-provider-actions"><button class="hook-check" :disabled="busy||!state" @click="verify"><RefreshCw :size="13"/> Check</button><button class="hook-action" :disabled="busy||!state" @click="install([p])">{{busy?'Working…':installed(p)?'Update hooks':'Install / repair hooks'}}</button></div></div>
   <div v-for="t in targets(p)" :key="t.id" class="hook-target"><div><span>{{t.label}}</span><small>{{received(t.lastEvent)}}</small></div><span :class="['hook-state',t.state]">{{label(t.state)}}</span><p v-if="t.error" class="hook-error">{{t.error}}</p></div>
   <details v-if="targets(p).length" class="hook-paths"><summary>Configuration locations</summary><code v-for="t in targets(p)" :key="t.id">{{t.path}}</code></details>
-  <p v-if="p==='codex'" class="hook-trust">Start a new Codex session after changes and review the Agent Time hooks in <strong>/hooks</strong>.</p><p v-else class="hook-trust">Start a new Claude session after installing or updating hooks.</p>
+  <p class="hook-trust">{{state?.agents.find(agent=>agent.id===p)?.trustNote||`Start a new ${agentName(p)} session after installing or updating hooks.`}}</p>
   <p class="hook-description">Installed confirms configuration and runtime files. A received event confirms capture is reaching Agent Time.</p>
  </div>
 </section>

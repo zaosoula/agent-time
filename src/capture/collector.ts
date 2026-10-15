@@ -1,14 +1,12 @@
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
-import { spawn, type ChildProcess } from 'node:child_process';
-import { createInterface } from 'node:readline';
 import { EventStore } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
-import { readWorkers, readFleet, workerEvent, terminalEvents, callOrca } from './orca.ts';
+import { callOrca } from './orca.ts';
 import { importSpool } from './hooks.ts';
-import { normalizeActivity,probeCapabilities } from './macos.ts';
-import {resolveOrcaTab,tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
+import { normalizeActivity,MacActivityProbe } from './macos.ts';
+import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
 import { dailyTotals,summaryForDate } from './daily.ts';
 import {UsageReader} from '../usage/reader.ts';
@@ -17,26 +15,27 @@ import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityC
 import {WebsiteResolver,websiteKey,projectPathFromWorktree,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
 import {applyHumanDecisions,humanIntervalKey} from './human-review.ts';
+import {agents,browsers,pollers,agentById,sourceMetadata} from './sources/registry.ts';
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private running=false; private timer:ReturnType<typeof setTimeout>|undefined; private deadline:ReturnType<typeof setTimeout>|undefined;
-  private helper:ChildProcess|undefined; private inFlight:Promise<void>|undefined; private lastPoll:number|null=null;
+  private activityProbe:MacActivityProbe; private inFlight:Promise<void>|undefined; private lastPoll:number|null=null;
   private lastError:string|null=null; private macos:Record<string,unknown>|null=null; private lockOwned=false;
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
   private summaryCache:{revision:string;at:number;value:Summary}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
-  private probe?:string; private interval:number; private runId?:string; private reader:typeof callOrca;
+  private interval:number; private runId?:string; private reader:typeof callOrca;
   private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
   private lastOrcaAccessibility:AccessibilityCapture|null=null;
-  private probeCheckAt=0;private probeRefresh:Promise<void>|undefined;
   private legacyHookSpools:string[]=[];
   private focusRefresh:Promise<void>|undefined;
   private websiteResolver:WebsiteResolver;private websiteMatches=new Map<string,WebsiteResolution>();private websiteApplied=new Map<string,number>();private websitePending=new Map<string,Promise<void>>();private websiteRevision=0;
   private linear:LinearConnection;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
-    this.probe=probe;this.interval=interval;this.runId=runId;this.reader=reader;
+    this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
+    this.activityProbe=new MacActivityProbe(probe,()=>this.surfaces,()=>this.running,line=>this.onProbeLine(line),reason=>{this.lastError=reason;if(reason==='macOS helper exited')this.store.put(makeEvent('macos','coverage',{data:{reason}}));},()=>this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}})));
     this.websiteResolver=new WebsiteResolver(output);
     this.linear=new LinearConnection(output,keychainHelper(keychainPath));
     const settings=join(output,'settings.json');
@@ -51,19 +50,19 @@ export class Collector {
     this.surfaceHistory=this.store.events().filter(e=>e.kind==='capture_settings').sort((a,b)=>a.observedAt-b.observedAt);
     this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
   }
-  private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders({claude:s.claudeTokenUsage,codex:s.codexTokenUsage});if(this.running&&s.tokenUsage&&(s.claudeTokenUsage||s.codexTokenUsage))this.usageReader.start();else void this.usageReader.stop();}
-  status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
+  private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
+  status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
   trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary(15000)),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}
   captureHealth():CaptureHealth{
-    const macos=this.store.recent('macos',16),claude=this.store.recent('hook',24,'claude'),codex=this.store.recent('hook',24,'codex'),orca=this.store.recent('orca',32),capture=this.store.recent('capture',8);
+    const macos=this.store.recent('macos',16),hookEvents=Object.fromEntries(agents.map(agent=>[agent.id,this.store.recent('hook',24,agent.id)])) as Record<string,CaptureEvent[]>,pollerEvents=Object.fromEntries(pollers.map(source=>[source.id,this.store.recent(source.id,32)])) as Record<string,CaptureEvent[]>,capture=this.store.recent('capture',8);
     const targets=this.hookInstallation.status().targets;
     const hooks=(provider:HookProvider)=>{const own=targets.filter(t=>t.provider===provider);return {installed:own.filter(t=>t.state==='installed').length,total:own.length,needsAttention:own.some(t=>t.state==='needs-update'||t.state==='error')};};
     const currentUrl=typeof this.macos?.browserUrl==='string'?this.macos.browserUrl:null,currentKey=currentUrl?websiteKey(currentUrl,this.websiteResolver.rules()):null;
     const current=currentKey?{key:currentKey,observedAt:Number(this.macos?.observedAt)||0}:undefined;
-    return {checkedAt:Date.now()/1000,latest:{macos:macos[0]?.observedAt||null,claude:claude[0]?.observedAt||null,codex:codex[0]?.observedAt||null,orca:orca[0]?.observedAt||null},hooks:{claude:hooks('claude'),codex:hooks('codex')},accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...claude,...codex,...orca,...capture])};
+    return {checkedAt:Date.now()/1000,latest:{macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,hookEvents[agent.id][0]?.observedAt||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))},hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
   }
   verifyHooks(){return this.hookInstallation.verify();}
   installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}
@@ -124,22 +123,22 @@ export class Collector {
     validateSettings(patch);
     if(this.stopping)throw new Error('Capture is stopping');
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Change settings in the app that owns capture');
-    const next={...this.surfaces,...patch};
+    const next={...this.surfaces,...patch} as CaptureSettings;
     if(Object.keys(defaultSettings).every(k=>next[k as keyof CaptureSettings]===this.surfaces[k as keyof CaptureSettings]))return this.status();
-    const browserChanged=Object.values(['browserSafari','browserChrome','browserBrave'] as const).some(key=>next[key]!==this.surfaces[key]);
+    const browserChanged=browsers.some(source=>next[source.setting]!==this.surfaces[source.setting]);
     if(this.lockOwned)this.drainHooks();
     const path=join(this.output,'settings.json'),existing=existsSync(path)?JSON.parse(readFileSync(path,'utf8')):{};
     writeFileSync(path+'.tmp',JSON.stringify({...existing,...next},null,2)+'\n',{mode:0o600});renameSync(path+'.tmp',path);
     const change=makeEvent('capture','capture_settings',{data:{previous:{...this.surfaces},surfaces:next}});
     this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;this.summaryCache=undefined;
-    if(!next.macosActivity||browserChanged){const helper=this.helper;this.helper=undefined;helper?.kill('SIGTERM');this.macos=null;if(!next.macosActivity){this.focusedTabs=[];this.focusedTabsAt=0;}}
-    if(this.running&&next.macosActivity&&!this.helper)this.startHelper();
+    if(!next.macosActivity||browserChanged){this.activityProbe.stop();this.macos=null;if(!next.macosActivity){this.focusedTabs=[];this.focusedTabsAt=0;}}
+    if(this.running&&next.macosActivity&&!this.activityProbe.active)this.activityProbe.start();
     this.syncUsage();
     if(this.running&&!this.inFlight){clearTimeout(this.timer);void this.tick();}
     return this.status();
   }
   private acceptHook(event:CaptureEvent){
-    const key=event.provider==='claude'?'claudeHooks':event.provider==='codex'?'codexHooks':undefined;
+    const key=agentById.get(event.provider||'')?.setting;
     if(!key||!this.surfaces[key])return false;
     let enabled=(this.surfaceHistory[0]?.data?.previous as CaptureSettings|undefined)?.[key]??this.surfaces[key];
     for(const change of this.surfaceHistory){if(change.observedAt>event.observedAt)break;enabled=(change.data?.surfaces as CaptureSettings)?.[key]??enabled;}
@@ -153,47 +152,24 @@ export class Collector {
     }
     return issues;
   }
-  private startHelper(){
-    if(!this.surfaces.macosActivity)return;
-    if(this.probe&&existsSync(this.probe)) {
-      const args=[this.surfaces.browserSafari&&'--browser-safari',this.surfaces.browserChrome&&'--browser-chrome',this.surfaces.browserBrave&&'--browser-brave'].filter((arg):arg is string=>Boolean(arg));
-      const helper=spawn(this.probe,args,{stdio:['ignore','pipe','pipe']});this.helper=helper;
-      const lines=createInterface({input:helper.stdout!});
-      lines.on('line',line=>{if(!this.running||this.helper!==helper||!this.surfaces.macosActivity)return;try{
-        const payload=JSON.parse(line);
-        if(!browserEnabled(this.surfaces,payload.foregroundBundleId)){delete payload.browserDomain;delete payload.browserUrl;delete payload.browserTitle;}
-        const event=normalizeActivity(payload,{hostId:'local'});
-        const browserUrl=event.data?.browserUrl;
-        if(typeof browserUrl==='string'){
-          const key=websiteKey(browserUrl,this.websiteResolver.rules()),match=key?this.websiteMatches.get(key):undefined;
-          if(match&&Date.now()/1000-match.observedAt<5&&match.projectPath){event.workspaceId=match.workspaceId;event.data={...event.data,websiteAttribution:{source:match.source,projectPath:match.projectPath,detail:match.detail}};if(key){this.websiteApplied.set(key,event.observedAt);if(this.websiteApplied.size>200)this.websiteApplied.delete(this.websiteApplied.keys().next().value!);}}
-          if(!match||Date.now()/1000-match.observedAt>=3)this.resolveWebsite(browserUrl);
-        }
-        const focused=payload.foregroundBundleId==='com.stablyai.orca'&&Date.now()-this.focusedTabsAt<15000?resolveOrcaTab(payload.orcaSelectedTabTitle,this.focusedTabs):null;
-        const worktree=payload.foregroundBundleId==='com.stablyai.orca'&&typeof payload.orcaSelectedWorktreeId==='string'?payload.orcaSelectedWorktreeId:undefined;
-        const matchingTab=focused&&(!worktree||focused.workspaceId===worktree)?focused:null;
-        if(worktree)event.workspaceId=worktree;
-        if(matchingTab){event.workspaceId=matchingTab.workspaceId;event.terminalHandle=matchingTab.terminalHandle;event.data={...event.data,tabId:matchingTab.tabId,tabTitle:matchingTab.title,leafId:matchingTab.leafId};}
-        const resolved=matchingTab?{workspaceId:matchingTab.workspaceId,tabId:matchingTab.tabId,leafId:matchingTab.leafId,terminalHandle:matchingTab.terminalHandle}:null;
-        this.macos={...payload,orcaAttribution:matchingTab?{...resolved,title:matchingTab.title}:null,websiteAttribution:event.data?.websiteAttribution||null};
-        if(payload.foregroundBundleId==='com.stablyai.orca')this.lastOrcaAccessibility={observedAt:event.observedAt,windowTitle:typeof payload.orcaWindowTitle==='string'?payload.orcaWindowTitle:null,selectedTabTitle:typeof payload.orcaSelectedTabTitle==='string'?payload.orcaSelectedTabTitle:null,selectedWorktreeId:worktree||null,resolved};
-        this.store.put(event);
-      }catch{this.lastError='Invalid macOS observation';}});
-      helper.on('error',()=>{if(this.helper===helper)this.lastError='macOS activity helper unavailable';});
-      helper.on('exit',()=>{if(this.running&&this.helper===helper){this.helper=undefined;this.lastError='macOS helper exited';this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper exited'}}));}});
-    } else this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}}));
+  private onProbeLine(line:string){
+    try{
+      const payload=JSON.parse(line);
+      if(!browserEnabled(this.surfaces,payload.foregroundBundleId)){delete payload.browserDomain;delete payload.browserUrl;delete payload.browserTitle;}
+      const event=normalizeActivity(payload,{hostId:'local'});
+      const browserUrl=event.data?.browserUrl;
+      if(typeof browserUrl==='string'){
+        const key=websiteKey(browserUrl,this.websiteResolver.rules()),match=key?this.websiteMatches.get(key):undefined;
+        if(match&&Date.now()/1000-match.observedAt<5&&match.projectPath){event.workspaceId=match.workspaceId;event.data={...event.data,websiteAttribution:{source:match.source,projectPath:match.projectPath,detail:match.detail}};if(key){this.websiteApplied.set(key,event.observedAt);if(this.websiteApplied.size>200)this.websiteApplied.delete(this.websiteApplied.keys().next().value!);}}
+        if(!match||Date.now()/1000-match.observedAt>=3)this.resolveWebsite(browserUrl);
+      }
+      const foreground=pollers.map(source=>source.foreground?.(payload,event,this.focusedTabs,this.focusedTabsAt)).find(Boolean);
+      this.macos={...payload,orcaAttribution:foreground?.attribution||null,websiteAttribution:event.data?.websiteAttribution||null};
+      if(foreground?.accessibility)this.lastOrcaAccessibility=foreground.accessibility;
+      this.store.put(event);
+    }catch{this.lastError='Invalid macOS observation';}
   }
-  private refreshProbeTrust():Promise<void>|undefined{
-    if(!this.running||!this.surfaces.macosActivity||!this.probe||!existsSync(this.probe)||this.probeRefresh||Date.now()-this.probeCheckAt<15000||!this.macos&&this.helper)return this.probeRefresh;
-    this.probeCheckAt=Date.now();
-    this.probeRefresh=probeCapabilities(this.probe).then(probe=>{
-      if(!this.running||!this.surfaces.macosActivity)return;
-      const trusted=probe.accessibilityTrusted===true;
-      if(this.helper&&this.macos&&trusted===Boolean(this.macos.accessibilityTrusted))return;
-      const previous=this.helper;this.helper=undefined;previous?.kill('SIGTERM');this.startHelper();
-    }).catch(()=>{if(!this.helper)this.lastError='macOS activity helper unavailable';}).finally(()=>{this.probeRefresh=undefined;});
-    return this.probeRefresh;
-  }
+  private refreshProbeTrust():Promise<void>|undefined{return this.activityProbe.refreshTrust(this.macos);}
   summary(maxAgeMs=0):Summary {
     const revision=this.store.revision();if(this.summaryCache&&(this.summaryCache.revision===revision||maxAgeMs>0&&Date.now()-this.summaryCache.at<maxAgeMs))return this.summaryCache.value;
     const events=this.store.events(),summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60}),this.store.humanDecisions());
@@ -215,7 +191,7 @@ export class Collector {
     }
     writeFileSync(lock,String(process.pid),{mode:0o600,flag:'wx'});this.lockOwned=true;this.running=true;this.lastError=null;
     this.store.put(makeEvent('capture','capture_start'));
-    this.startHelper();
+    this.activityProbe.start();
     this.syncUsage();
     if(durationSeconds!==undefined)this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
     await this.tick();return this.status();
@@ -237,15 +213,10 @@ export class Collector {
       let pollingError:string|null=null;
       void this.refreshProbeTrust();
       this.refreshFocusedTabs();
-      if(this.surfaces.orcaPolling){
-        const revision=this.revision,valid=()=>this.running&&this.surfaces.orcaPolling&&this.revision===revision;
-        const {workers,coverage}=this.runId?await readWorkers(this.reader,this.runId,valid):await readFleet(this.reader,valid);
-        if(valid()){
-          this.store.putObservations(workers.map(workerEvent));
-          for(const issue of coverage)this.store.put(makeEvent('orca','coverage',{data:{reason:issue.reason}}));
-          try{const terminals=await terminalEvents(this.reader);if(valid())this.store.putObservations(terminals);}catch(error){if(valid())this.store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
-          pollingError=coverage.find(i=>!i.reason.startsWith('Only this Orca host'))?.reason||null;
-        }
+      for(const source of pollers.filter(source=>this.surfaces[source.setting])){
+        const revision=this.revision,valid=()=>this.running&&this.surfaces[source.setting]===true&&this.revision===revision;
+        const error=await source.poll({reader:this.reader,runId:this.runId,valid,store:this.store});
+        if(valid()&&error&&!pollingError)pollingError=error;
       }
       for(const issue of this.drainHooks())this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
       this.lastPoll=Date.now()/1000;this.lastError=pollingError;
@@ -260,7 +231,7 @@ export class Collector {
     this.running=false;clearTimeout(this.timer);clearTimeout(this.deadline);
     this.focusedTabs=[];this.focusedTabsAt=0;
     // Kill the helper immediately; slow fleet reads cannot orphan it during shutdown.
-    if(this.helper){this.helper.kill('SIGTERM');this.helper=undefined;}
+    this.activityProbe.stop();
     await this.usageReader.stop();
     await this.inFlight;
     this.drainHooks();
