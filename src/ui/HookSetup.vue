@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import {ref,onMounted,onUnmounted,computed} from 'vue';
+import {ref,watch,onMounted,onUnmounted,computed} from 'vue';
 import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDescription} from 'reka-ui';
 import {Bot,Check,RefreshCw} from '@lucide/vue';
 import {transport,relaunchHookSetup} from './transport.ts';
 import type {HookInstallationStatus,HookProvider} from '../capture/hook-installation.ts';
 const props=defineProps<{mode:'onboarding'|'settings'}>();
+const emit=defineEmits<{status:[value:HookInstallationStatus]}>();
 const state=ref<HookInstallationStatus|null>(null),open=ref(false),busy=ref(false),error=ref(''),message=ref('');
+watch(state,value=>{if(value)emit('status',value);});
 const selected=ref<HookProvider[]>([]);
 let timer:ReturnType<typeof setInterval>|undefined,unmounted=false,promptedIssueKey:string|null=null;
 const providers=computed(()=>state.value?.agents.map(agent=>agent.id)||[]);

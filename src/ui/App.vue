@@ -2,10 +2,12 @@
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from 'vue';
 import { TabsRoot,TabsList,TabsTrigger,TabsContent,TooltipProvider,TooltipRoot,TooltipTrigger,TooltipPortal,TooltipContent } from 'reka-ui';
 import { Clock3, CalendarDays, Layers3, Activity, Folder, ChevronRight, ChevronLeft, Settings2, Search, Play, Pause, Download, X, CircleHelp, Radio, Monitor, Globe2, Bot, ArrowUpRight, SlidersHorizontal, ShieldCheck } from '@lucide/vue';
-import { transport,native,type CaptureStatus } from './transport.ts';
+import { transport,native,relaunchHookSetup,type CaptureStatus } from './transport.ts';
 import CaptureSettingsPage from './CaptureSettings.vue';
 import UsagePage from './UsagePage.vue';
 import HookSetup from './HookSetup.vue';
+import type {HookInstallationStatus} from '../capture/hook-installation.ts';
+import {outdatedHookTargets} from './hook-warning.ts';
 import CaptureHealthPage from './CaptureHealth.vue';
 import HumanReview from './HumanReview.vue';
 import type { CaptureSettings } from '../capture/settings.ts';
@@ -18,6 +20,9 @@ import { clampTimeRange,minimumTimelineSpan,panTimeRange,timelineTicks,zoomTimeR
 import {indexSessionIntervals,intervalSessionKey,sessionIntervalKey} from './session-intervals.ts';
 const empty:Summary={intervals:[],unresolved:[],coverage:[],sessions:[],humanSeconds:0,agentSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
 const summary=ref<Summary>(empty),status=ref<CaptureStatus|null>(null),error=ref(''),captureBusy=ref(false),settingsBusy=ref(false),project=ref('all'),search=ref(''),selected=ref<Session|null>(null),view=ref('timeline'),page=ref('today');
+const hookStatus=ref<HookInstallationStatus|null>(null);
+const outdatedHooks=computed(()=>outdatedHookTargets(status.value,hookStatus.value));
+const outdatedAgents=computed(()=>[...new Set(outdatedHooks.value.map(target=>hookStatus.value?.agents.find(agent=>agent.id===target.provider)?.name||target.provider))].join(', '));
 const timelineLimit=ref(40),tableLimit=ref(100);
 const reviewSiteFilter=ref('');
 const expandedRoots=ref<Record<string,boolean>>({});
@@ -270,7 +275,7 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();clearInterval(timer);clea
 </script>
 <template>
 <TooltipProvider :delay-duration="350">
-<HookSetup mode="onboarding"/>
+<HookSetup mode="onboarding" @status="hookStatus=$event"/>
 <div class="app-shell">
  <aside class="sidebar">
   <div class="titlebar-space" data-tauri-drag-region></div>
@@ -284,6 +289,7 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();clearInterval(timer);clea
  <main class="main-pane">
   <header class="toolbar" data-tauri-drag-region><div class="breadcrumbs"><template v-if="page==='today'||page==='sessions'"><span>{{project==='all'?'All projects':project}}</span><ChevronRight :size="12"/></template><strong>{{page==='usage'?'Tokens & limits':page==='settings'?'Settings':page==='health'?'Capture health':page==='sessions'?'Agent sessions':'My day'}}</strong></div><div class="toolbar-actions"><TooltipRoot v-if="page==='today'||page==='sessions'"><TooltipTrigger as-child><button class="icon-button" aria-label="Export selected day's timesheet as CSV" @click="exportCsv"><Download :size="17"/></button></TooltipTrigger><TooltipPortal><TooltipContent class="tooltip">Export this day’s timesheet</TooltipContent></TooltipPortal></TooltipRoot><button class="capture-button" :disabled="busy||!status" @click="toggleCapture"><Pause v-if="status?.running" :size="12"/><Play v-else :size="12"/>{{!status?'Checking…':settingsBusy?'Saving…':captureBusy?'Updating capture…':status.running?'Pause capture':'Start capture'}}</button></div></header>
   <div v-if="error||status?.lastError" class="error-banner"><CircleHelp :size="16"/><span>{{error||status?.lastError}}</span><button @click="refresh">Retry</button></div>
+  <div v-if="outdatedHooks.length" class="error-banner" role="alert"><CircleHelp :size="16"/><span><strong>Agent tracking may be idle.</strong> {{outdatedAgents}} {{outdatedHooks.length===1?'hook needs':'hooks need'}} updating. Time from affected sessions may be missing.</span><button @click="relaunchHookSetup">Update hooks</button></div>
   <UsagePage v-if="page==='usage'" :status="status"/>
   <CaptureSettingsPage v-else-if="page==='settings'" :status="status" :busy="busy" @change="updateSettings" @error="error=$event"/>
   <section v-else-if="page!=='health'" class="day-content">
