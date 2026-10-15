@@ -23,7 +23,7 @@ Status: **not approved for invitations**. Update this record for each candidate 
 
 | Gate | Result |
 | --- | --- |
-| Revision and dependency check | Pending |
+| Revision and dependency check | Implementation revision `289684c` passed [Apple Silicon CI checks](https://github.com/zaosoula/agent-time/actions/runs/38765239418) on 2026-10-15; actual signed candidate pending |
 | Artifact URL and SHA-256 | Pending |
 | Developer ID, Hardened Runtime, nested signatures | Pending |
 | Notarization, stapling, Gatekeeper, quarantine | Pending |
@@ -38,4 +38,4 @@ Release owner decision: **hold** until every gate has dated evidence.
 
 ## Local implementation evidence — not release approval
 
-On 2026-10-15, the isolated `beta/closed-beta` worktree passed `npm test` (163 tests), `npm run build`, `cargo test --locked --release --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml` (7 tests), and `npm audit --omit=dev --audit-level=high` (0 reported vulnerabilities). A local **Apple Development signed** Apple Silicon smoke build produced an app, updater archive, and signature. Its bundle declares macOS 13.5, each Swift helper declares 13.5, and `codesign --verify --deep --strict` passed. This smoke build was not notarized, quarantined, installed on a second Mac, or used for an in-app update; it must not be distributed as the beta. Record the commit SHA and real release artifact hashes after final review.
+On 2026-10-15, the isolated `beta/closed-beta` worktree passed `npm test` (163 tests), `npm run build`, `cargo test --locked --release --target aarch64-apple-darwin --manifest-path src-tauri/Cargo.toml` (7 tests), and `npm audit --omit=dev --audit-level=high` (0 reported vulnerabilities). Revision `289684c` also passed the separate Apple Silicon CI checks linked above: locked install, JavaScript tests, interface build, dependency audit, Swift sidecars, and locked Rust tests. A local **Apple Development signed** Apple Silicon smoke build produced an app, updater archive, and signature. Its bundle declares macOS 13.5, each Swift helper declares 13.5, and `codesign --verify --deep --strict` passed. This smoke build was not notarized, quarantined, installed on a second Mac, or used for an in-app update; it must not be distributed as the beta. Record the real release artifact hashes after final review.
