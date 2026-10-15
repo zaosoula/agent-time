@@ -16,6 +16,7 @@ import {WebsiteResolver,websiteKey,projectPathFromWorktree,type KnownWorkspace,t
 import {LinearConnection,keychainHelper} from './linear.ts';
 import {applyHumanDecisions,humanIntervalKey} from './human-review.ts';
 import {agents,browsers,pollers,agentById,sourceMetadata} from './sources/registry.ts';
+import {outdatedHookTargets} from './hook-warning.ts';
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private running=false; private timer:ReturnType<typeof setTimeout>|undefined; private deadline:ReturnType<typeof setTimeout>|undefined;
@@ -52,7 +53,7 @@ export class Collector {
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
-  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);return {running:this.running,...dailyTotals(this.summary(15000)),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0)};}
+  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);const hooks=this.running?this.hookInstallation.status():null;const outdated=outdatedHookTargets({running:this.running,surfaces:this.surfaces},hooks);const hookWarning=outdated.length&&hooks?{key:hooks.runtimeVersion+':'+outdated.map(target=>target.id).sort().join(','),agents:[...new Set(outdated.map(target=>hooks.agents.find(agent=>agent.id===target.provider)?.name||target.provider))]}:null;return {running:this.running,...dailyTotals(this.summary(15000)),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning};}
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}

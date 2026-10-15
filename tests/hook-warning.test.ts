@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {outdatedHookTargets} from '../src/ui/hook-warning.ts';
+import {outdatedHookTargets} from '../src/capture/hook-warning.ts';
 import type {CaptureStatus} from '../src/ui/transport.ts';
 import type {HookInstallationStatus} from '../src/capture/hook-installation.ts';
 

@@ -98,7 +98,7 @@ fn startup_item(operation:String)->Result<Value,String>{
  serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
 }
 pub fn run(){
- tauri::Builder::default().setup(|app|{
+ tauri::Builder::default().plugin(tauri_plugin_notification::init()).setup(|app|{
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
   let init=bridge.clone();std::thread::spawn(move||{let _=init.request("start",json!({}));});app.manage(bridge.clone());tray::install(app,bridge)?;
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;

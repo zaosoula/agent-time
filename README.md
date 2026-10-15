@@ -70,6 +70,8 @@ For Codex, target its documented `hooks.json` in the active trusted config layer
 
 Hooks record only provider/session/subagent IDs, working directory, tool identity/name, event type, and allowlisted Orca workspace/terminal IDs. They never invoke Orca or send data over the network, return no output, and succeed silently if capture fails. Each hook uses a private atomic spool record.
 
+While capture runs, outdated hooks for an enabled agent trigger an in-app warning and one macOS notification per issue state during that app run. Clicking the notification opens Settings to repair the hooks. The in-app warning remains while capture and the affected agent's hooks are enabled and the configuration is outdated.
+
 ## Adding a tracked source
 
 The built-in sources live in [`src/capture/sources/`](src/capture/sources/). Each source is one file, discovered by its suffix. The settings, health view, and source lists read the source metadata; there is no central list to edit.

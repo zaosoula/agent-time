@@ -7,7 +7,7 @@ import CaptureSettingsPage from './CaptureSettings.vue';
 import UsagePage from './UsagePage.vue';
 import HookSetup from './HookSetup.vue';
 import type {HookInstallationStatus} from '../capture/hook-installation.ts';
-import {outdatedHookTargets} from './hook-warning.ts';
+import {outdatedHookTargets} from '../capture/hook-warning.ts';
 import CaptureHealthPage from './CaptureHealth.vue';
 import HumanReview from './HumanReview.vue';
 import type { CaptureSettings } from '../capture/settings.ts';
