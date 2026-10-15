@@ -1,0 +1,31 @@
+name: Beta checks
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  apple-silicon-checks:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+      - name: Confirm Apple Silicon runner
+        run: test "$(uname -m)" = arm64
+      - name: Install locked JavaScript dependencies
+        run: npm ci
+      - name: Run capture and beta tests
+        run: npm test
+      - name: Typecheck and compile interface
+        run: npm run build
+      - name: Review production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Build local sidecars for Rust tests
+        run: npm run sidecars:build
+      - name: Run Rust tests with locked dependencies
+        run: cargo test --locked --manifest-path src-tauri/Cargo.toml

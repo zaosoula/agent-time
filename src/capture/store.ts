@@ -46,6 +46,7 @@ export class EventStore {
     }catch(error){this.db.exec('ROLLBACK');this.generation=before;throw error;}
   }
   count():number{return Number(this.db.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
+  quickCheck():boolean{try{return this.db.prepare('PRAGMA quick_check(1)').get()?.quick_check==='ok';}catch{return false;}}
   revision():string{return `${this.generation}:${this.db.prepare('PRAGMA data_version').get()?.data_version}`;}
   events(): CaptureEvent[] {
     // Preserve causal insertion order across process epochs. Reducers sort per source epoch.

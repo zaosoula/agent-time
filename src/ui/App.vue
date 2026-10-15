@@ -9,6 +9,7 @@ import HookSetup from './HookSetup.vue';
 import type {HookInstallationStatus} from '../capture/hook-installation.ts';
 import {outdatedHookTargets} from '../capture/hook-warning.ts';
 import CaptureHealthPage from './CaptureHealth.vue';
+import BetaUpdates from './BetaUpdates.vue';
 import HumanReview from './HumanReview.vue';
 import type { CaptureSettings } from '../capture/settings.ts';
 import type { Summary,Session,Interval } from '../capture/events.ts';
@@ -18,6 +19,7 @@ import { creditedIntervals,groupTimelineProjects,type TimelineProjectGroup } fro
 import { workloadAreaPath,workloadChartHeight,workloadChartWidth } from './workload-chart.ts';
 import { clampTimeRange,minimumTimelineSpan,panTimeRange,timelineTicks,zoomTimeRange,type TimeRange } from './timeline-viewport.ts';
 import {indexSessionIntervals,intervalSessionKey,sessionIntervalKey} from './session-intervals.ts';
+const betaUpdatesEnabled=import.meta.env.VITE_BETA_UPDATES==='1';
 const empty:Summary={intervals:[],unresolved:[],coverage:[],sessions:[],humanSeconds:0,agentSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
 const summary=ref<Summary>(empty),status=ref<CaptureStatus|null>(null),error=ref(''),captureBusy=ref(false),settingsBusy=ref(false),project=ref('all'),search=ref(''),selected=ref<Session|null>(null),view=ref('timeline'),page=ref('today');
 const hookStatus=ref<HookInstallationStatus|null>(null);
@@ -290,6 +292,7 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();clearInterval(timer);clea
   <header class="toolbar" data-tauri-drag-region><div class="breadcrumbs"><template v-if="page==='today'||page==='sessions'"><span>{{project==='all'?'All projects':project}}</span><ChevronRight :size="12"/></template><strong>{{page==='usage'?'Tokens & limits':page==='settings'?'Settings':page==='health'?'Capture health':page==='sessions'?'Agent sessions':'My day'}}</strong></div><div class="toolbar-actions"><TooltipRoot v-if="page==='today'||page==='sessions'"><TooltipTrigger as-child><button class="icon-button" aria-label="Export selected day's timesheet as CSV" @click="exportCsv"><Download :size="17"/></button></TooltipTrigger><TooltipPortal><TooltipContent class="tooltip">Export this day’s timesheet</TooltipContent></TooltipPortal></TooltipRoot><button class="capture-button" :disabled="busy||!status" @click="toggleCapture"><Pause v-if="status?.running" :size="12"/><Play v-else :size="12"/>{{!status?'Checking…':settingsBusy?'Saving…':captureBusy?'Updating capture…':status.running?'Pause capture':'Start capture'}}</button></div></header>
   <div v-if="error||status?.lastError" class="error-banner"><CircleHelp :size="16"/><span>{{error||status?.lastError}}</span><button @click="refresh">Retry</button></div>
   <div v-if="outdatedHooks.length" class="error-banner" role="alert"><CircleHelp :size="16"/><span><strong>Agent tracking may be idle.</strong> {{outdatedAgents}} {{outdatedHooks.length===1?'hook needs':'hooks need'}} updating. Time from affected sessions may be missing.</span><button @click="relaunchHookSetup">Update hooks</button></div>
+  <BetaUpdates v-if="betaUpdatesEnabled"/>
   <UsagePage v-if="page==='usage'" :status="status"/>
   <CaptureSettingsPage v-else-if="page==='settings'" :status="status" :busy="busy" @change="updateSettings" @error="error=$event"/>
   <section v-else-if="page!=='health'" class="day-content">

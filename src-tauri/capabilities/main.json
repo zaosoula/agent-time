@@ -3,5 +3,5 @@
   "identifier": "main-navigation",
   "description": "Allow the main window to receive native menu navigation events.",
   "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten"]
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "updater:default", "process:allow-restart"]
 }

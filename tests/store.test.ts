@@ -6,6 +6,10 @@ import { join } from 'node:path';
 import { EventStore } from '../src/capture/store.ts';
 import {retainedObservationRows} from '../src/capture/observation-retention.ts';
 const event = { eventId: 'e1', source: 'test', kind: 'running', observedAt: 10, monotonicAt: 1, collectorEpoch: 'a' };
+test('support integrity check reports a healthy local database without exposing rows',()=>{
+ const store=new EventStore(':memory:');
+ try{store.put(event);assert.equal(store.quickCheck(),true);}finally{store.close();}
+});
 test('replays are idempotent and conflicting IDs are rejected', () => {
   const store = new EventStore(':memory:');
   assert.equal(store.put(event), true); assert.equal(store.put(event), false);

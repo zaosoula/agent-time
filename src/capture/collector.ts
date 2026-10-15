@@ -17,6 +17,8 @@ import {LinearConnection,keychainHelper} from './linear.ts';
 import {applyHumanDecisions,humanIntervalKey} from './human-review.ts';
 import {agents,browsers,pollers,agentById,sourceMetadata} from './sources/registry.ts';
 import {outdatedHookTargets} from './hook-warning.ts';
+import {diagnosticSummary} from './diagnostics.ts';
+import {release as osRelease} from 'node:os';
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private running=false; private timer:ReturnType<typeof setTimeout>|undefined; private deadline:ReturnType<typeof setTimeout>|undefined;
@@ -64,6 +66,10 @@ export class Collector {
     const currentUrl=typeof this.macos?.browserUrl==='string'?this.macos.browserUrl:null,currentKey=currentUrl?websiteKey(currentUrl,this.websiteResolver.rules()):null;
     const current=currentKey?{key:currentKey,observedAt:Number(this.macos?.observedAt)||0}:undefined;
     return {checkedAt:Date.now()/1000,latest:{macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,hookEvents[agent.id][0]?.observedAt||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))},hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
+  }
+  diagnostics(){
+    const bytes=['events.sqlite','events.sqlite-wal'].reduce((total,file)=>{try{return total+statSync(join(this.output,file)).size;}catch{return total;}},0);
+    return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
   verifyHooks(){return this.hookInstallation.verify();}
   installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}

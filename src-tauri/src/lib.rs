@@ -8,6 +8,17 @@ fn spawn_owned(command: &mut Command) -> std::io::Result<Child> {
  #[cfg(unix)] command.process_group(0);
  command.spawn()
 }
+fn stop_owned(child:&mut Child) {
+ #[cfg(unix)] unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM); }
+ let deadline=std::time::Instant::now()+Duration::from_secs(2);
+ loop {
+  if child.try_wait().ok().flatten().is_some(){return;}
+  if std::time::Instant::now()>=deadline{break;}
+  std::thread::sleep(Duration::from_millis(25));
+ }
+ #[cfg(unix)] unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL); }
+ let _=child.kill();let _=child.wait();
+}
 struct Bridge { child: Mutex<Child>, input: Mutex<ChildStdin>, pending: Pending, counter: AtomicU64 }
 impl Bridge {
  fn start(app: &tauri::App) -> Result<Self, String> {
@@ -53,8 +64,7 @@ impl Bridge {
  fn shutdown(&self) {
   let _=self.request("stop",json!({}));
   if let Ok(mut child)=self.child.lock(){
-   #[cfg(unix)] unsafe { libc::kill(-(child.id() as i32), libc::SIGTERM); }
-   let _=child.kill();let _=child.wait();
+   stop_owned(&mut child);
   }
  }
 }
@@ -63,7 +73,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
  let source_setting=|key:&str|key.len()<=64&&key!="browserTracking"&&key.bytes().all(|b|b.is_ascii_alphanumeric())&&(key.starts_with("browser")&&key.as_bytes().get(7).map(|b|b.is_ascii_uppercase()).unwrap_or(false)||key.ends_with("Hooks")||key.ends_with("TokenUsage")||key.ends_with("Polling"));
  match method {
-  "status"|"summary"|"capture_health"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect" if p.is_empty()=>Ok(()),
+  "status"|"summary"|"capture_health"|"diagnostics"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect" if p.is_empty()=>Ok(()),
   "summary" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "linear_connect" if p.len()==1 && p.get("clientId").and_then(Value::as_str).map(|v|v.len()>=8&&v.len()<=128&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')).unwrap_or(false)=>Ok(()),
   "website_rule_set" if p.len()==2 && p.get("pattern").and_then(Value::as_str).is_some() && p.get("projectPath").and_then(Value::as_str).is_some()=>Ok(()),
@@ -97,8 +107,17 @@ fn startup_item(operation:String)->Result<Value,String>{
  if !output.status.success(){return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());}
  serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
 }
+#[tauri::command]
+async fn prepare_update(bridge:State<'_,Arc<Bridge>>)->Result<(),String>{
+ let bridge=bridge.inner().clone();
+ tauri::async_runtime::spawn_blocking(move||bridge.shutdown()).await.map_err(|e|e.to_string())?;
+ Ok(())
+}
 pub fn run(){
- tauri::Builder::default().plugin(tauri_plugin_notification::init()).setup(|app|{
+ tauri::Builder::default().plugin(tauri_plugin_notification::init()).plugin(tauri_plugin_process::init()).setup(|app|{
+  if option_env!("AGENT_TIME_BETA")==Some("1") {
+   app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+  }
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
   let init=bridge.clone();std::thread::spawn(move||{let _=init.request("start",json!({}));});app.manage(bridge.clone());tray::install(app,bridge)?;
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;
@@ -114,10 +133,10 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,open_accessibility_settings,open_linear_oauth_settings,startup_item]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .invoke_handler(tauri::generate_handler![capture_request,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
-#[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
+#[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("diagnostics",&json!({})).is_ok());assert!(validate_method("diagnostics",&json!({"includeRawEvents":true})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
 #[cfg(test)]mod human_review_tests{use super::*;#[test]fn human_decision_protocol(){
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"assigned","projectPath":"/project"})).is_ok());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"unassigned"})).is_ok());
@@ -128,6 +147,18 @@ pub fn run(){
 #[cfg(all(test,unix))]
 mod process_tests {
  use super::*;
+ #[test] fn collector_flushes_on_shutdown_signal() {
+  use std::io::BufRead;
+  let marker=std::env::temp_dir().join(format!("agent-time-shutdown-{}",std::process::id()));
+  let _=std::fs::remove_file(&marker);
+  let mut command=Command::new("/bin/sh");
+  command.arg("-c").arg(format!("trap 'echo closed > {} ; exit 0' TERM; echo ready; while :; do sleep 1; done",marker.display())).stdout(Stdio::piped());
+  let mut child=spawn_owned(&mut command).unwrap();
+  let mut line=String::new();BufReader::new(child.stdout.take().unwrap()).read_line(&mut line).unwrap();assert_eq!(line.trim(),"ready");
+  stop_owned(&mut child);
+  assert!(marker.exists(),"collector should finish its SIGTERM cleanup before forced termination");
+  let _=std::fs::remove_file(marker);
+ }
  #[test] fn collector_process_owns_its_group() {
   let mut command=Command::new("/bin/sleep");command.arg("30");
   let mut child=spawn_owned(&mut command).unwrap();let pid=child.id() as i32;

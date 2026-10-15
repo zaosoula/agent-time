@@ -68,3 +68,9 @@ test('Linear connection protocol accepts only a client ID and fixed read operati
  assert.deepEqual(await dispatchRequest({id:'l',method:'linear_disconnect',params:{workspaceId:'two'}},c),{id:'l',result:{disconnected:'two'}});
  for(const params of [{workspaceId:''},{workspaceId:1},{workspaceId:'one',all:true}])assert.ok('error' in await dispatchRequest({id:'l',method:'linear_disconnect',params},c));
 });
+
+test('support diagnostics are read-only and reject caller-selected paths',async()=>{
+ const controller={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),diagnostics:()=>({databaseBytes:1234})};
+ assert.deepEqual(await dispatchRequest({id:'diagnostics',method:'diagnostics',params:{}},controller),{id:'diagnostics',result:{databaseBytes:1234}});
+ assert.ok('error' in await dispatchRequest({id:'diagnostics',method:'diagnostics',params:{path:'/private/work'}},controller));
+});

@@ -1,7 +1,7 @@
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
-interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown; captureHealth?():unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
+interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown; captureHealth?():unknown; diagnostics?():unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -59,6 +59,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='status')return {id,result:controller.status()};
     if(request.method==='summary')return {id,result:controller.summary(15000)};
     if(request.method==='capture_health'&&controller.captureHealth)return {id,result:controller.captureHealth()};
+    if(request.method==='diagnostics'&&controller.diagnostics)return {id,result:controller.diagnostics()};
     if(request.method==='tray_status'&&controller.trayStatus)return {id,result:controller.trayStatus()};
     if(request.method==='usage'&&controller.usage)return {id,result:controller.usage()};
     if(request.method==='website_projects'&&controller.websiteProjects)return {id,result:controller.websiteProjects()};
