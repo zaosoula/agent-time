@@ -1,4 +1,5 @@
-import {object} from './orca.ts';
+import type {Interval,Session} from './events.ts';
+const object=(value:unknown):Record<string,any>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,any>:{};
 export interface FocusedOrcaTab {workspaceId:string;tabId:string;leafId:string;terminalHandle:string;title:string;}
 function terminal(node:unknown,leafId:string):string|null{
  const pane=object(node);
@@ -20,3 +21,24 @@ export function resolveOrcaTab(label:string|undefined,index:FocusedOrcaTab[]):Fo
  // Orca can visually truncate long labels; require a useful prefix and one match.
  if(value.length<12)return null;const prefix=index.filter(t=>t.title.trim().toLocaleLowerCase().startsWith(value));return prefix.length===1?prefix[0]:null;
 }
+export function humanIntervalsBySession(sessions:Session[],intervals:Interval[]):Map<string,Interval[]>{
+ const bounds=new Map<string,[number,number]>();
+ for(const i of intervals.filter(i=>i.state==='grouped'&&!i.child)){
+  const key=i.dispatchId?`dispatch:${i.hostId}:${i.dispatchId}`:`session:${i.hostId}:${i.sessionId}`;
+  const range=bounds.get(key);bounds.set(key,range?[Math.min(range[0],i.start),Math.max(range[1],i.end)]:[i.start,i.end]);
+ }
+ const candidates=sessions.filter(s=>!s.child&&bounds.has(s.key)).map(s=>({session:s,bounds:bounds.get(s.key)!}));
+ const assigned=new Map<string,Interval[]>();
+ for(const i of intervals.filter(i=>i.state==='human'&&!i.userAttribution&&(i.terminalHandle||i.tabTitle))){
+  const label=i.tabTitle?.trim().toLocaleLowerCase();
+  const matching=candidates.filter(x=>i.start<x.bounds[1]&&i.end>x.bounds[0]&&(
+   i.terminalHandle?x.session.terminalHandle===i.terminalHandle&&x.session.workspaceId===i.workspaceId:
+   label&&label.length>=12&&(!i.workspaceId||i.workspaceId===x.session.workspaceId)&&x.session.title.trim().toLocaleLowerCase().startsWith(label)
+  ));
+  if(matching.length!==1)continue;
+  const {session,bounds:[start,end]}=matching[0],rows=assigned.get(session.key)||[];
+  rows.push({...i,start:Math.max(i.start,start),end:Math.min(i.end,end)});assigned.set(session.key,rows);
+ }
+ return assigned;
+}
+export function humanIntervalsForSession(session:Session,sessions:Session[],intervals:Interval[]):Interval[]{return humanIntervalsBySession(sessions,intervals).get(session.key)||[];}

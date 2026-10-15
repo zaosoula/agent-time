@@ -7,14 +7,22 @@ import type {HookInstallationStatus,HookProvider} from '../capture/hook-installa
 const props=defineProps<{mode:'onboarding'|'settings'}>();
 const state=ref<HookInstallationStatus|null>(null),open=ref(false),busy=ref(false),error=ref(''),message=ref('');
 const selected=ref<HookProvider[]>(['claude','codex']);
-let timer:ReturnType<typeof setInterval>|undefined,unmounted=false;
+let timer:ReturnType<typeof setInterval>|undefined,unmounted=false,promptedIssueKey:string|null=null;
 const providers:HookProvider[]=['claude','codex'];
 const targets=(provider:HookProvider)=>state.value?.targets.filter(t=>t.provider===provider)||[];
 const installed=(provider:HookProvider)=>targets(provider).length>0&&targets(provider).every(t=>t.state==='installed');
 const hasFailures=computed(()=>state.value?.targets.some(t=>t.state==='error')||Boolean(state.value?.migrationError));
+const repairTargets=computed(()=>state.value?.targets.filter(t=>t.state==='needs-update'||t.state==='error')||[]);
+const repairing=computed(()=>Boolean(state.value?.setupSeen&&repairTargets.value.length));
 const received=(n:number|null)=>n?new Date(n*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'Waiting for an event';
 const label=(s:string)=>({'not-installed':'Not installed',installed:'Installed','needs-update':'Update needed',error:'Needs attention'}[s]||s);
-async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(props.mode==='onboarding'&&!next.setupSeen)open.value=true;}catch(e){error.value=String(e);}}
+async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(props.mode==='onboarding'){
+  if(!next.setupSeen)open.value=true;
+  else {const issues=next.targets.filter(t=>t.state==='needs-update'||t.state==='error');const key=issues.map(t=>`${t.id}:${t.state}`).sort().join('|')+(next.migrationError?`|migration:${next.migrationError}`:'');
+    if(!key)promptedIssueKey=null;
+    else if(key!==promptedIssueKey){selected.value=[...new Set(issues.map(t=>t.provider))];promptedIssueKey=key;open.value=true;}
+  }
+}}catch(e){error.value=String(e);}}
 async function install(list:HookProvider[]){busy.value=true;error.value='';message.value='';try{for(const provider of list)state.value=await transport.installHooks(provider);message.value=list.some(p=>!installed(p))||state.value?.migrationError?'Some configurations need attention. Check the details below.':'Hooks installed. Start a new session to receive events.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function verify(){busy.value=true;error.value='';try{state.value=await transport.verifyHooks();message.value='Installation checked.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function dismiss(){if(busy.value)return;try{state.value=await transport.dismissHookSetup();open.value=false;}catch(e){error.value=String(e);}}
@@ -23,14 +31,14 @@ onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refr
 </script>
 <template>
 <DialogRoot v-if="mode==='onboarding'" :open="open" @update:open="!$event&&dismiss()"><DialogPortal><DialogOverlay class="hook-overlay"/><DialogContent class="hook-dialog" @escape-key-down="busy&&$event.preventDefault()" @pointer-down-outside="busy&&$event.preventDefault()">
- <div class="hook-dialog-icon"><Bot :size="24"/></div><DialogTitle class="hook-title">Connect your agents</DialogTitle><DialogDescription class="hook-description">Install Agent Time hooks for your user account to capture sessions across projects.</DialogDescription>
+ <div class="hook-dialog-icon"><Bot :size="24"/></div><DialogTitle class="hook-title">{{repairing?'Update your agent hooks':'Connect your agents'}}</DialogTitle><DialogDescription class="hook-description">{{repairing?'Agent Time found hooks that need repair. Select the affected agents to update their user-wide installation.':'Install Agent Time hooks for your user account to capture sessions across projects.'}}</DialogDescription>
  <div class="hook-choices"><label v-for="p in providers" :key="p"><input v-model="selected" type="checkbox" :value="p" :disabled="busy"/><span>{{p==='claude'?'Claude Code':'Codex'}}<small>{{targets(p).length}} user configuration{{targets(p).length===1?'':'s'}}{{installed(p)?' · installed':''}}</small></span><Check v-if="installed(p)" :size="16"/></label></div>
  <p class="hook-description">Detected Orca account homes are included. Existing hooks from other tools are preserved.</p>
  <p v-if="state?.legacyPaths.length" class="hook-description">Your earlier Agent Time project hooks will move to user scope.</p>
  <p class="hook-trust">After installation, start new agent sessions. In Codex, review and trust the “Agent Time” hooks in <strong>/hooks</strong>. Configuration checks cannot confirm provider trust.</p>
  <p v-if="error" class="hook-error" role="alert">{{error}}</p><p v-if="message" class="hook-message" role="status">{{message}}</p>
- <div v-if="hasFailures" class="hook-problems"><p v-for="t in state?.targets.filter(t=>t.error)" :key="t.id">{{t.label}}: {{t.error}}</p><p v-if="state?.migrationError">Project migration: {{state.migrationError}}</p></div>
- <div class="hook-dialog-actions"><button :disabled="busy" @click="dismiss">{{message?'Done':'Set up later'}}</button><button class="hook-primary" :disabled="busy||!selected.length||!state" @click="install(selected)">{{busy?'Installing…':'Install selected hooks'}}</button></div>
+ <div v-if="repairing||hasFailures" class="hook-problems"><p v-for="t in repairTargets" :key="t.id">{{t.label}}: {{t.error||label(t.state)}}</p><p v-if="state?.migrationError">Project migration: {{state.migrationError}}</p></div>
+ <div class="hook-dialog-actions"><button :disabled="busy" @click="dismiss">{{message?'Done':repairing?'Later':'Set up later'}}</button><button class="hook-primary" :disabled="busy||!selected.length||!state" @click="install(selected)">{{busy?'Installing…':repairing?'Update selected hooks':'Install selected hooks'}}</button></div>
 </DialogContent></DialogPortal></DialogRoot>
 <template v-else>
 <section id="settings-agents" class="hook-section" aria-labelledby="agents-heading" tabindex="-1">

@@ -9,16 +9,17 @@ export interface CaptureEvent {
   data?: Record<string, unknown>;
 }
 export interface Interval {
-  start: number; end: number; state: 'running' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
+  start: number; end: number; state: 'running' | 'turn' | 'grouped' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
   sourceEventIds: string[]; hostId?: string; workspaceId?: string; sessionId?: string; agentId?: string;
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
-  tabId?: string; terminalHandle?: string; tabTitle?: string;
+  tabId?: string; terminalHandle?: string; tabTitle?: string; browserDomain?: string; browserOrigin?: string; browserBundleId?: string; browserUrl?: string; browserTitle?: string;
+  foregroundName?: string; foregroundBundleId?: string; userAttribution?: 'assigned' | 'unassigned';
 }
 export interface Issue { reason: string; eventId?: string; source?: string; }
 export interface Session {
   key: string; hostId?: string; workspaceId?: string; cwd?: string; runId?: string; taskId?: string; dispatchId?: string;
   sessionId?: string; agentId?: string; provider?: string; title: string; state: string;
-  terminalHandle?: string; lastObservedAt: number; seconds: number; child: boolean; proof: string;
+  terminalHandle?: string; lastObservedAt: number; seconds: number; observedSeconds: number; child: boolean; proof: string;
 }
 export interface Summary {
   intervals: Interval[]; unresolved: Issue[]; coverage: Issue[]; sessions: Session[];

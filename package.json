@@ -14,6 +14,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
     "tauri": "tauri",
+    "desktop:build": "node scripts/build-desktop.mjs",
     "native:build": "mkdir -p .capture/bin && swiftc native/ActivityProbe.swift -o .capture/bin/activity-probe",
     "sidecars:build": "node scripts/package-sidecars.mjs"
   },

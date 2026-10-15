@@ -1,13 +1,15 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
-import { resolve, join } from 'node:path';
+import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs';
+import { resolve, join, dirname } from 'node:path';
 import { parseArgs } from 'node:util';
 import { createInterface } from 'node:readline';
 import { normalizeHook, hookContext, spoolHook } from './hooks.ts';
 import { Collector } from './collector.ts';
 import { EventStore } from './store.ts';
 import { summarize } from './correlate.ts';
+import {applyHumanDecisions} from './human-review.ts';
 import { renderReport } from './report.ts';
 import { dispatchRequest } from './protocol.ts';
+import { defaultSettings, storedSettings } from './settings.ts';
 import { prepareConfig, applyConfig, restoreConfig, hookEvents } from './hook-config.ts';
 const args=process.argv.slice(2),command=args.shift();
 if(command==='hook') {
@@ -19,12 +21,13 @@ if(command==='hook') {
   }catch{} // A telemetry hook never blocks or injects context into its agent.
 }else{
   try{
-    const {values,positionals}=parseArgs({args,allowPositionals:true,options:{output:{type:'string'},database:{type:'string'},duration:{type:'string'},interval:{type:'string'},run:{type:'string'},probe:{type:'string'},provider:{type:'string'},config:{type:'string'},manifest:{type:'string'},'hook-command':{type:'string'}}});
+    const {values,positionals}=parseArgs({args,allowPositionals:true,options:{output:{type:'string'},database:{type:'string'},duration:{type:'string'},interval:{type:'string'},run:{type:'string'},probe:{type:'string'},keychain:{type:'string'},provider:{type:'string'},config:{type:'string'},manifest:{type:'string'},'hook-command':{type:'string'}}});
     const output=resolve((command==='report'?undefined:values.output)||process.env.ADE_CAPTURE_OUTPUT||'.capture');
     if(command==='report'){
-      const store=new EventStore(resolve(values.database||join(output,'events.sqlite')));
+      const database=resolve(values.database||join(output,'events.sqlite')),store=new EventStore(database);
+      const settingsPath=join(dirname(database),'settings.json'),settings=existsSync(settingsPath)?storedSettings(JSON.parse(readFileSync(settingsPath,'utf8'))):defaultSettings;
       const target=resolve(values.output||'.capture/report.html');mkdirSync(resolve(target,'..'),{recursive:true});
-      writeFileSync(target,renderReport(summarize(store.events()),[]),{mode:0o600});store.close();console.log(target);
+      writeFileSync(target,renderReport(applyHumanDecisions(summarize(store.events(),{idleThreshold:settings.humanIdleMinutes*60,agentIdleThreshold:settings.agentIdleMinutes*60}),store.humanDecisions()),[]),{mode:0o600});store.close();console.log(target);
     }else if(command==='hook-config'){
       if(!values.manifest)throw new Error('--manifest is required');
       if(positionals[0]==='prepare'){
@@ -35,7 +38,7 @@ if(command==='hook') {
     }else if(command==='collect'||command==='protocol'){
       const interval=Number(values.interval||5),duration=Number(values.duration||300);
       if(!Number.isFinite(interval)||interval<1||interval>60||!Number.isFinite(duration)||duration<1||duration>86400)throw new Error('Invalid duration or interval');
-      const collector=new Collector(output,values.probe||process.env.ADE_ACTIVITY_PROBE||resolve('.capture/bin/activity-probe'),interval,values.run);
+      const collector=new Collector(output,values.probe||process.env.ADE_ACTIVITY_PROBE||resolve('.capture/bin/activity-probe'),interval,values.run,undefined,values.keychain||resolve('.capture/bin/linear-keychain'));
       let closing=false;async function shutdown(){if(closing)return;closing=true;await collector.close();process.exit(0);}
       process.on('SIGTERM',()=>{void shutdown();});process.on('SIGINT',()=>{void shutdown();});
       if(command==='collect'){await collector.start(duration);console.log(JSON.stringify(collector.status()));setTimeout(()=>{void shutdown();},duration*1000);}

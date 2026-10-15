@@ -1,17 +1,69 @@
-import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,rmSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';import {Collector} from '../src/capture/collector.ts';import {makeEvent} from '../src/capture/events.ts';
+import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,rmSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';import {Collector} from '../src/capture/collector.ts';import {makeEvent} from '../src/capture/events.ts';import {storedSettings} from '../src/capture/settings.ts';
+
+test('legacy website preference migrates to individual browsers',()=>{
+ const disabled=storedSettings({browserTracking:false});
+ assert.equal(disabled.browserSafari,false);assert.equal(disabled.browserChrome,false);assert.equal(disabled.browserBrave,false);
+ const mixed=storedSettings({browserTracking:false,browserBrave:true});
+ assert.equal(mixed.browserSafari,false);assert.equal(mixed.browserBrave,true);
+});
+
+test('disabled browser page details are discarded while foreground activity remains',async()=>{
+ const {writeFileSync,readFileSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
+ const output=mkdtempSync(join(tmpdir(),'ade-browser-switch-')),helper=join(output,'probe'),argsFile=join(output,'args');
+ const safari=JSON.stringify({kind:'activity',foregroundBundleId:'com.apple.Safari',idleSeconds:0,uptime:100,accessibilityTrusted:true,browserDomain:'example.com',browserUrl:'https://example.com/safari',browserTitle:'Safari page'});
+ const brave=JSON.stringify({kind:'activity',foregroundBundleId:'com.brave.Browser',idleSeconds:0,uptime:100,accessibilityTrusted:true,browserDomain:'example.com',browserUrl:'https://example.com/brave',browserTitle:'Brave page'});
+ writeFileSync(helper,`#!/bin/sh\nprintf '%s' "$*" > '${argsFile}'\necho '${safari}'\necho '${brave}'\nexec /bin/sleep 5\n`,{mode:0o755});
+ const c=new Collector(output,helper);c.updateSettings({orcaPolling:false,browserSafari:false,browserChrome:false,browserBrave:true});
+ try{
+  await c.start(30);for(let i=0;i<80&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(25);
+  const samples=c.store.events().filter(e=>e.kind==='activity');
+  assert.equal(samples.length,2);assert.equal(samples[0]?.data?.foregroundBundleId,'com.apple.Safari');assert.equal(samples[0]?.data?.browserUrl,undefined);
+  assert.equal(samples[1]?.data?.browserUrl,'https://example.com/brave');
+  assert.equal(readFileSync(argsFile,'utf8'),'--browser-brave');
+ }finally{await c.close();rmSync(output,{recursive:true});}
+});
+
+test('changing one browser restarts the probe with the new enabled set',async()=>{
+ const {writeFileSync,readFileSync,existsSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
+ const output=mkdtempSync(join(tmpdir(),'ade-browser-restart-')),helper=join(output,'probe'),log=join(output,'launches');
+ writeFileSync(helper,`#!/bin/sh\nprintf '%s\\n' "$*" >> '${log}'\nexec /bin/sleep 10\n`,{mode:0o755});
+ const c=new Collector(output,helper);c.updateSettings({orcaPolling:false});
+ const launches=()=>readFileSync(log,'utf8').trim().split('\n');
+ try{
+  await c.start(30);for(let i=0;i<80&&!existsSync(log);i++)await sleep(25);
+  c.updateSettings({browserChrome:false});for(let i=0;i<80&&launches().length<2;i++)await sleep(25);
+  assert.equal(launches().at(-1),'--browser-safari --browser-brave');
+  c.updateSettings({browserChrome:true});for(let i=0;i<80&&launches().length<3;i++)await sleep(25);
+  assert.equal(launches().at(-1),'--browser-safari --browser-chrome --browser-brave');
+ }finally{await c.close();rmSync(output,{recursive:true});}
+});
 test('surface changes persist, discard disabled hook backlog, and preserve enabled providers',async()=>{
  const {spoolHook,normalizeHook}=await import('../src/capture/hooks.ts');
  const path=mkdtempSync(join(tmpdir(),'ade-surfaces-'));let c=new Collector(path);
  try{
-  c.updateSettings({orcaPolling:false,macosActivity:false,claudeHooks:false});
+  c.updateSettings({orcaPolling:false,macosActivity:false,claudeHooks:false,humanIdleMinutes:10,agentIdleMinutes:2});
   await c.start(30);
   spoolHook(normalizeHook('claude',{hook_event_name:'Stop',session_id:'disabled'},{}),join(path,'spool'));
   spoolHook(normalizeHook('codex',{hook_event_name:'Stop',session_id:'enabled'},{}),join(path,'spool'));
   c.updateSettings({claudeHooks:true});await c.stop();
   assert.ok(!c.store.events().some(e=>e.sessionId==='disabled'));
   assert.ok(c.store.events().some(e=>e.sessionId==='enabled'));
-  await c.close();c=new Collector(path);assert.equal(c.status().surfaces.claudeHooks,true);assert.equal(c.status().surfaces.macosActivity,false);assert.equal(c.status().orcaPolling,false);
+  await c.close();c=new Collector(path);assert.equal(c.status().surfaces.claudeHooks,true);assert.equal(c.status().surfaces.macosActivity,false);assert.equal(c.status().orcaPolling,false);assert.equal(c.status().surfaces.humanIdleMinutes,10);assert.equal(c.status().surfaces.agentIdleMinutes,2);
   assert.throws(()=>c.updateSettings({orcaPolling:'yes'} as any));
+  for(const invalid of [0,-1,1.5,61,NaN,Infinity,'5'])assert.throws(()=>c.updateSettings({agentIdleMinutes:invalid} as any));
+ }finally{await c.close();rmSync(path,{recursive:true});}
+});
+test('saved idle controls change the dashboard summary without restarting capture',async()=>{
+ const path=mkdtempSync(join(tmpdir(),'ade-idle-controls-')),c=new Collector(path);
+ const root={hostId:'local',terminalHandle:'term',sessionId:'session',provider:'codex'};
+ try{
+  c.store.put(makeEvent('hook','prompt_submitted',{...root,observedAt:1000,monotonicAt:1000}));
+  c.store.put(makeEvent('hook','response_stop',{...root,observedAt:1180,monotonicAt:1180}));
+  c.store.put(makeEvent('macos','activity',{observedAt:2000,monotonicAt:2000,data:{foregroundBundleId:'test',idleSeconds:90}}));
+  c.store.put(makeEvent('macos','activity',{observedAt:2005,monotonicAt:2005,data:{foregroundBundleId:'test',idleSeconds:90}}));
+  assert.equal(c.summary().agentSeconds,180);assert.equal(c.summary().humanSeconds,60);
+  c.updateSettings({agentIdleMinutes:2,humanIdleMinutes:1});
+  assert.equal(c.summary().agentSeconds,120);assert.equal(c.summary().humanSeconds,0);
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
 test('disabling Orca during a read discards its late results',async()=>{
@@ -32,6 +84,25 @@ test('macOS activity can stop and restart its helper without stopping capture',a
   const pid=Number(readFileSync(pidfile,'utf8'));c.updateSettings({macosActivity:false});await sleep(50);assert.throws(()=>process.kill(pid,0),{code:'ESRCH'});assert.equal(c.status().running,true);
   c.updateSettings({macosActivity:true});for(let i=0;i<300&&Number(readFileSync(pidfile,'utf8'))===pid;i++)await sleep(10);
   const nextPid=Number(readFileSync(pidfile,'utf8'));assert.notEqual(nextPid,pid);process.kill(nextPid,0);
+ }finally{await c.close();rmSync(path,{recursive:true});}
+});
+test('Accessibility grant restarts only the probe and exposes raw and matched Orca IDs',async()=>{
+ const {writeFileSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
+ const path=mkdtempSync(join(tmpdir(),'ade-live-ax-')),helper=join(path,'probe'),grant=join(path,'granted');
+ const falseSample=JSON.stringify({kind:'activity',foregroundBundleId:'com.stablyai.orca',foregroundName:'Orca',idleSeconds:0,uptime:100,accessibilityTrusted:false});
+ const trueSample=JSON.stringify({kind:'activity',foregroundBundleId:'com.stablyai.orca',foregroundName:'Orca',idleSeconds:0,uptime:100,accessibilityTrusted:true,orcaWindowTitle:'Orca',orcaSelectedTabTitle:'Review project',orcaSelectedWorktreeId:'host::/project'});
+ writeFileSync(helper,`#!/bin/sh\nif [ "$1" = "--trust-only" ]; then if [ -f "${grant}" ]; then echo '{"accessibilityTrusted":true}'; else echo '{"accessibilityTrusted":false}'; fi; exit; fi\nif [ -f "${grant}" ]; then echo '${trueSample}'; else echo '${falseSample}'; fi\nexec /bin/sleep 30\n`,{mode:0o755});
+ const layout={ok:true,result:{visualLayouts:[{worktreeId:'host::/project',root:{tabs:[{tabId:'tab-1',title:'Review project',activeLeafId:'leaf-1',panes:{type:'terminal',leafId:'leaf-1',handle:'term-1'}}]}}]}};
+ const c=new Collector(path,helper,1,undefined,async()=>layout);c.updateSettings({orcaPolling:false});
+ try{
+  await c.start(30);for(let i=0;i<200&&c.status().macos?.accessibilityTrusted!==false;i++)await sleep(20);
+  assert.equal(c.status().macos?.accessibilityTrusted,false);
+  writeFileSync(grant,'');await (c as any).refreshProbeTrust();
+  for(let i=0;i<200&&c.status().macos?.accessibilityTrusted!==true;i++)await sleep(20);
+  assert.equal(c.status().running,true);assert.equal(c.status().macos?.accessibilityTrusted,true);
+  const accessibility=c.captureHealth().accessibility;
+  assert.equal(accessibility?.selectedWorktreeId,'host::/project');assert.equal(accessibility?.selectedTabTitle,'Review project');
+  assert.deepEqual(accessibility?.resolved,{workspaceId:'host::/project',tabId:'tab-1',leafId:'leaf-1',terminalHandle:'term-1'});
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
 test('an inactive observer cannot consume spool or insert capture-stop into another owners database',async()=>{
@@ -57,6 +128,22 @@ test('persisted polling disable skips Orca reads while importing hook events',as
  spoolHook(normalizeHook('claude',{hook_event_name:'SessionStart',session_id:'test-session'},{}),join(path,'spool'));
  try{await c.start(5);assert.equal(calls,0);assert.equal(c.status().orcaPolling,false);assert.ok(c.store.events().some(e=>e.source==='hook'&&e.sessionId==='test-session'));assert.ok(!c.store.events().some(e=>e.source==='orca'));}
  finally{await c.close();rmSync(path,{recursive:true});}
+});
+test('new data store drains hooks from an old store until active sessions restart',async()=>{
+ const {writeFileSync,existsSync,readdirSync,readFileSync}=await import('node:fs');const {spoolHook,normalizeHook}=await import('../src/capture/hooks.ts');
+ const root=mkdtempSync(join(tmpdir(),'ade-moved-store-')),path=join(root,'current'),oldSpool=join(root,'previous','spool');
+ const {mkdirSync}=await import('node:fs');mkdirSync(path,{recursive:true});
+ writeFileSync(join(path,'settings.json'),JSON.stringify({orcaPolling:false,macosActivity:false,legacyHookSpools:[oldSpool]}));
+ const c=new Collector(path);
+ try{
+  assert.equal(spoolHook(normalizeHook('claude',{hook_event_name:'SessionStart',session_id:'old-session'},{}),oldSpool),true);
+  await c.start(5);
+  assert.ok(c.store.events().some(e=>e.source==='hook'&&e.sessionId==='old-session'));
+  assert.deepEqual(readdirSync(oldSpool),[]);
+  c.updateSettings({claudeHooks:false});
+  assert.deepEqual(JSON.parse(readFileSync(join(path,'settings.json'),'utf8')).legacyHookSpools,[oldSpool]);
+  assert.equal(existsSync(join(root,'previous','events.sqlite')),false);
+ }finally{await c.close();rmSync(root,{recursive:true});}
 });
 test('existing shared usage settings migrate to per-agent controls and retain independent preferences',async()=>{
  const {writeFileSync}=await import('node:fs');const path=mkdtempSync(join(tmpdir(),'ade-provider-settings-'));writeFileSync(join(path,'settings.json'),JSON.stringify({tokenUsage:true}));let c=new Collector(path);
@@ -93,6 +180,32 @@ test('selected Orca terminal samples become workspace and tab intervals without 
  const c=new Collector(path,helper,5,undefined,async()=>layout);c.updateSettings({orcaPolling:false});
  try{await c.start(30);for(let i=0;i<60&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(50);const samples=c.store.events().filter(e=>e.kind==='activity');assert.equal(samples.length,2);assert.ok(samples.every(e=>e.workspaceId==='workspace-1'&&e.data?.tabId==='tab-1'));assert.equal(c.summary().intervals.find(i=>i.state==='human')?.tabId,'tab-1');}
  finally{await c.close();rmSync(path,{recursive:true});}
+});
+test('selected Orca worktree samples remain project-attributed when no tab metadata matches',async()=>{
+ const {writeFileSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
+ const path=mkdtempSync(join(tmpdir(),'ade-worktree-focus-')),helper=join(path,'probe');
+ const activity=JSON.stringify({kind:'activity',foregroundBundleId:'com.stablyai.orca',idleSeconds:0,uptime:100,accessibilityTrusted:true,orcaSelectedWorktreeId:'workspace-1',orcaSelectedTabTitle:'Unmatched tab'});
+ writeFileSync(helper,`#!/bin/sh\nsleep .2\necho '${activity}'\nsleep .2\necho '${activity}'\n`,{mode:0o755});
+ const c=new Collector(path,helper,5,undefined,async()=>({ok:true,result:{visualLayouts:[]}}));c.updateSettings({orcaPolling:false});
+ try{await c.start(30);for(let i=0;i<60&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(50);const samples=c.store.events().filter(e=>e.kind==='activity');assert.equal(samples.length,2);assert.ok(samples.every(e=>e.workspaceId==='workspace-1'&&e.data?.tabId===undefined));const interval=c.summary().intervals.find(i=>i.state==='human');assert.equal(interval?.workspaceId,'workspace-1');assert.equal(interval?.tabId,undefined);}
+ finally{await c.close();rmSync(path,{recursive:true});}
+});
+test('a website rule attributes stable browser time to a project without creating an agent session',async()=>{
+ const {writeFileSync,mkdirSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
+ const output=mkdtempSync(join(tmpdir(),'ade-website-rule-')),project=join(output,'project'),helper=join(output,'probe');mkdirSync(project);
+ const activity=JSON.stringify({kind:'activity',foregroundBundleId:'com.brave.Browser',foregroundName:'Brave Browser',idleSeconds:0,uptime:100,accessibilityTrusted:true,browserDomain:'localhost',browserUrl:'http://localhost:1420/page',browserTitle:'Page'});
+ writeFileSync(helper,`#!/bin/sh\necho '${activity}'\nsleep .2\necho '${activity}'\nsleep .2\necho '${activity}'\nexec /bin/sleep 5\n`,{mode:0o755});
+ const c=new Collector(output,helper,5,undefined,async()=>({ok:true,result:{terminals:[],visualLayouts:[]}}));c.updateSettings({orcaPolling:false});c.setWebsiteRule('http://localhost:1420',project);
+ try{
+  await c.start(30);
+  for(let i=0;i<80&&c.store.events().filter(e=>e.kind==='activity').length<3;i++)await sleep(25);
+  const samples=c.store.events().filter(e=>e.kind==='activity');assert.equal(samples.length,3);
+  assert.equal(samples.at(-1)?.workspaceId,'web::'+project);
+  assert.equal(c.summary().sessions.length,0);
+  assert.ok(c.summary().intervals.some(i=>i.state==='human'&&i.workspaceId==='web::'+project&&i.browserOrigin==='http://localhost:1420'));
+  const reconciliation=c.captureHealth().websites.find(site=>site.key==='http://localhost:1420');
+  assert.equal(reconciliation?.projectPath,project);assert.equal(reconciliation?.source,'rule');assert.ok(reconciliation?.appliedAt);
+ }finally{await c.close();rmSync(output,{recursive:true});}
 });
 test('display summaries can lag briefly while an exact summary sees new capture',async()=>{
  const path=mkdtempSync(join(tmpdir(),'ade-summary-age-')),c=new Collector(path);

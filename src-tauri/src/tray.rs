@@ -69,7 +69,7 @@ pub fn handle(app:&tauri::AppHandle,id:&str){match id{
   let _=state.toggle.set_enabled(false);let _=state.status.set_text("Updating capture…");
   let bridge=app.state::<Arc<Bridge>>().inner().clone();
   std::thread::spawn(move||{
-   let result=bridge.request("tray_status",json!({})).and_then(|v|if v["running"].as_bool()==Some(true){bridge.request("stop",json!({}))}else{bridge.request("start",json!({"durationSeconds":86400}))});
+   let result=bridge.request("tray_status",json!({})).and_then(|v|if v["running"].as_bool()==Some(true){bridge.request("stop",json!({}))}else{bridge.request("start",json!({}))});
    state.busy.store(false,Ordering::Release);
    if result.is_err(){let _=state.status.set_text("Capture change failed — open dashboard");let _=state.toggle.set_enabled(true);}else{state.refresh(&bridge);}
   });
