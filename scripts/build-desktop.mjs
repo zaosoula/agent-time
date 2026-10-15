@@ -1,5 +1,6 @@
-import { spawnSync } from 'node:child_process';
+import { spawnSync, execFileSync } from 'node:child_process';
 import { copyFileSync, mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { stdio: 'inherit', ...options });
@@ -8,6 +9,15 @@ function run(command, args, options = {}) {
 }
 
 if (process.platform !== 'darwin') throw new Error('The desktop app build requires macOS');
+
+// Tauri overwrites this bundle in place. A collector still running from it can
+// combine loaded modules with newly copied files and publish broken hook runtimes.
+const app = resolve('src-tauri/target/release/bundle/macos/Agent Time.app');
+const executable = `${app}/Contents/MacOS/agent-time`;
+const processes = execFileSync('ps', ['-axo', 'command='], { encoding: 'utf8' });
+if (processes.split('\n').some(command => command === executable || command.startsWith(`${executable} `))) {
+  throw new Error('Quit Agent Time from the menu bar before rebuilding its running app bundle.');
+}
 
 let identity = process.env.APPLE_SIGNING_IDENTITY;
 if (!identity) {
@@ -26,7 +36,6 @@ run('npm', ['run', 'sidecars:build']);
 run('npm', ['run', 'tauri', '--', 'build', '--bundles', 'app', '--config', JSON.stringify({ bundle: { macOS: { hardenedRuntime: false } } })], {
   env: { ...process.env, APPLE_SIGNING_IDENTITY: identity },
 });
-const app = 'src-tauri/target/release/bundle/macos/Agent Time.app';
 const agents = `${app}/Contents/Library/LaunchAgents`;
 mkdirSync(agents, { recursive: true });
 copyFileSync('native/studio.ezyo.agenttime.startup.plist', `${agents}/studio.ezyo.agenttime.startup.plist`);
