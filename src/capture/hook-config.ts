@@ -31,7 +31,9 @@ export function prepareConfig(path:string, provider:string, command:string, even
   return {path,existed:existsSync(path),original,updated:JSON.stringify(config,null,2)+'\n',entries};
 }
 export function applyConfig(manifest:Manifest):void {
-  if(read(manifest.path)!==manifest.original)throw new Error('configuration changed before install');write(manifest.path,manifest.updated);
+  if(read(manifest.path)!==manifest.original)throw new Error('configuration changed before install');
+  if(manifest.original===manifest.updated)return;
+  write(manifest.path,manifest.updated);
 }
 export function restoreConfig(manifest:Manifest):void {
   const current=read(manifest.path);

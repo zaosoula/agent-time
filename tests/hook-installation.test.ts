@@ -35,6 +35,20 @@ test('a stable hook command survives runtime refresh at startup',async()=>{
   assert.equal(existsSync(current),false);
  }finally{f.close();}
 });
+test('reinstalling unchanged Codex hooks does not replace trusted configuration files',async()=>{
+ const f=fixture();try{
+  const account=join(f.home,'Library/Application Support/orca/codex-accounts/account/home');mkdirSync(account,{recursive:true});
+  await f.manager.install('codex');
+  const paths=[join(f.home,'.codex/hooks.json'),join(account,'hooks.json')];
+  const before=paths.map(path=>({path,bytes:readFileSync(path,'utf8'),inode:statSync(path).ino,modified:statSync(path).mtimeMs}));
+  await f.manager.install('codex');
+  for(const {path,bytes,inode,modified} of before){
+   assert.equal(readFileSync(path,'utf8'),bytes);
+   assert.equal(statSync(path).ino,inode);
+   assert.equal(statSync(path).mtimeMs,modified);
+  }
+ }finally{f.close();}
+});
 test('an existing hashed command migrates once to the stable launcher',async()=>{
  const f=fixture();try{
   await f.manager.install('claude');const target=f.manager.status().targets.find(t=>t.provider==='claude')!;
