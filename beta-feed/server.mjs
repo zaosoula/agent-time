@@ -1,4 +1,4 @@
-import {createHash, createHmac, randomUUID, timingSafeEqual} from 'node:crypto';
+import {createHash, randomUUID, timingSafeEqual} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {link, mkdir, open, readFile, rename, rm, stat} from 'node:fs/promises';
 import {createServer} from 'node:http';
@@ -9,41 +9,19 @@ const VERSION = /^\d+\.\d+\.\d+-beta\.\d+$/;
 const ARCHIVE = 'Agent Time.app.tar.gz';
 const FILES = new Set([ARCHIVE, `${ARCHIVE}.sig`]);
 const SHA256 = /^[a-f0-9]{64}$/;
-const NONCE = /^[A-Za-z0-9_-]{1,64}$/;
 
 function installerName(version) { return `Agent Time_${version}_aarch64.dmg`; }
 function installerPath(version) { return `/install/${version}/${encodeURIComponent(installerName(version))}`; }
-function inviteSignature(key, version, expires, nonce) {
-  return createHmac('sha256', key).update(`${installerPath(version)}\n${expires}\n${nonce}`).digest('hex');
-}
 
-export function createInstallLink({publicOrigin, inviteSigningKey, version, expires, nonce}) {
-  if (!VERSION.test(version) || !Number.isSafeInteger(expires) || !NONCE.test(nonce) || !inviteSigningKey || inviteSigningKey.length < 32) throw new Error('Invalid installer invitation');
-  const url = new URL(installerPath(version), publicOrigin);
-  url.searchParams.set('expires', String(expires));
-  url.searchParams.set('nonce', nonce);
-  url.searchParams.set('signature', inviteSignature(inviteSigningKey, version, expires, nonce));
-  return url.href;
-}
-
-export function createInvitePageLink(options) {
-  const install = new URL(createInstallLink(options));
-  const page = new URL('/', options.publicOrigin);
-  page.searchParams.set('version', options.version);
-  page.searchParams.set('expires', install.searchParams.get('expires'));
-  page.searchParams.set('nonce', install.searchParams.get('nonce'));
-  page.searchParams.set('signature', install.searchParams.get('signature'));
-  return page.href;
-}
-
-function validInvite(url, key, version) {
-  const expires = Number(url.searchParams.get('expires'));
-  const nonce = url.searchParams.get('nonce') ?? '';
-  const supplied = url.searchParams.get('signature') ?? '';
-  if (!VERSION.test(version) || !Number.isSafeInteger(expires) || expires <= Math.floor(Date.now() / 1000) || !NONCE.test(nonce) || !SHA256.test(supplied)) return false;
-  const a = Buffer.from(supplied, 'hex');
-  const b = Buffer.from(inviteSignature(key, version, expires, nonce), 'hex');
-  return timingSafeEqual(a, b);
+async function currentInstallerVersion(dataDir) {
+  try {
+    const version = (await readFile(join(dataDir, 'installer-current'), 'utf8')).trim();
+    if (!VERSION.test(version)) throw new Error('Invalid current installer version');
+    return version;
+  } catch (error) {
+    if (error.code === 'ENOENT') return null;
+    throw error;
+  }
 }
 
 function reply(response, status, body = '', headers = {}) {
@@ -127,9 +105,9 @@ async function serveFile(response, path, contentType, cacheControl, extraHeaders
   }
 }
 
-export function createBetaFeed({dataDir, uploadToken, inviteSigningKey, publicOrigin}) {
-  if (!dataDir || !uploadToken || uploadToken.length < 32 || !inviteSigningKey || inviteSigningKey.length < 32 || !/^https:\/\/[^/]+$/.test(publicOrigin)) {
-    throw new Error('DATA_DIR, strong UPLOAD_TOKEN and INVITE_SIGNING_KEY, and HTTPS PUBLIC_ORIGIN are required');
+export function createBetaFeed({dataDir, uploadToken, publicOrigin}) {
+  if (!dataDir || !uploadToken || uploadToken.length < 32 || !/^https:\/\/[^/]+$/.test(publicOrigin)) {
+    throw new Error('DATA_DIR, strong UPLOAD_TOKEN, and HTTPS PUBLIC_ORIGIN are required');
   }
   return async (request, response) => {
     try {
@@ -139,12 +117,11 @@ export function createBetaFeed({dataDir, uploadToken, inviteSigningKey, publicOr
       if (request.method === 'GET' && path === '/icon.png') return await serveFile(response, fileURLToPath(new URL('./icon.png', import.meta.url)), 'image/png', 'public, max-age=86400');
       if (request.method === 'GET' && path === '/manrope.ttf') return await serveFile(response, fileURLToPath(new URL('./manrope.ttf', import.meta.url)), 'font/ttf', 'public, max-age=86400');
       if (request.method === 'GET' && path === '/') {
-        const version = url.searchParams.get('version') ?? '';
-        const invited = validInvite(url, inviteSigningKey, version);
-        const installLink = invited ? createInstallLink({publicOrigin, inviteSigningKey, version, expires: Number(url.searchParams.get('expires')), nonce: url.searchParams.get('nonce')}) : null;
+        const version = await currentInstallerVersion(dataDir);
+        const installLink = version ? new URL(installerPath(version), publicOrigin).href : null;
         const {renderLandingPage} = await import('./landing.mjs');
-        return reply(response, 200, renderLandingPage({version: invited ? version : null, installLink}), {
-          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive',
+        return reply(response, 200, renderLandingPage({version, installLink}), {
+          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer',
           'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'",
         });
       }
@@ -162,13 +139,24 @@ export function createBetaFeed({dataDir, uploadToken, inviteSigningKey, publicOr
       if (request.method === 'GET' && installer) {
         const [, version, encodedName] = installer;
         if (!VERSION.test(version) || decodeURIComponent(encodedName) !== installerName(version)) return reply(response, 404);
-        if (!validInvite(url, inviteSigningKey, version)) return reply(response, 403);
-        return await serveFile(response, join(dataDir, 'installers', version, installerName(version)), 'application/x-apple-diskimage', 'private, no-store', {
+        if (version !== await currentInstallerVersion(dataDir)) return reply(response, 404);
+        return await serveFile(response, join(dataDir, 'installers', version, installerName(version)), 'application/x-apple-diskimage', 'no-store', {
           'Content-Disposition': `attachment; filename="${installerName(version)}"`, 'Referrer-Policy': 'no-referrer',
         });
       }
       if (!path.startsWith('/admin/')) return reply(response, 404);
       if (!authorized(request, uploadToken)) return reply(response, 401);
+
+      if (request.method === 'PUT' && path === '/admin/installers/current') {
+        const version = (await checkedBody(request, 128)).toString('utf8').trim();
+        if (!VERSION.test(version) || !(await exists(join(dataDir, 'installers', version, installerName(version))))) return reply(response, 422);
+        await replaceAtomic(join(dataDir, 'installer-current'), Buffer.from(`${version}\n`));
+        return reply(response, 204);
+      }
+      if (request.method === 'DELETE' && path === '/admin/installers/current') {
+        await rm(join(dataDir, 'installer-current'), {force: true});
+        return reply(response, 204);
+      }
 
       const installerUpload = /^\/admin\/installers\/([^/]+)\/([^/]+)$/.exec(path);
       if (request.method === 'PUT' && installerUpload) {
@@ -238,7 +226,6 @@ if (process.argv[1] && basename(process.argv[1]) === 'server.mjs') {
   const server = createServer(createBetaFeed({
     dataDir: process.env.DATA_DIR ?? '/data',
     uploadToken: process.env.UPLOAD_TOKEN,
-    inviteSigningKey: process.env.INVITE_SIGNING_KEY,
     publicOrigin: process.env.PUBLIC_ORIGIN,
   }));
   server.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');

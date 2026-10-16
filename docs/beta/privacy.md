@@ -1,6 +1,6 @@
-# Agent Time beta data notice — owner review pending
+# Agent Time beta data notice
 
-Agent Time records activity on this Mac so you can review personal work time. The beta is for feedback, not billing or payroll. The release owner must approve this notice before invitations.
+Agent Time records activity on this Mac so you can review personal work time. The beta is for feedback, not billing or payroll. The release owner approved this notice for public beta distribution on 2026-10-16.
 
 ## What is stored locally
 

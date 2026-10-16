@@ -1,6 +1,6 @@
-# Agent Time closed beta release record
+# Agent Time public beta release record
 
-Status: **not approved for invitations**. Update this record for each candidate with the exact commit, artifact hashes, and observed results.
+Status: **first-install DMG approved for public beta** by the release owner on 2026-10-16. The updater feed remains unpromoted. Update this record for each candidate with the exact commit, artifact hashes, and observed results.
 
 ## Release contract
 
@@ -10,14 +10,14 @@ Status: **not approved for invitations**. Update this record for each candidate 
 | First candidate | `0.2.0-beta.1` |
 | Architecture | Apple Silicon, `aarch64-apple-darwin` only |
 | Minimum macOS | Provisional build floor `13.5` from bundled Node; pending clean-machine test before claiming support |
-| Initial install | One private Developer ID signed and notarized download |
+| Initial install | Public Developer ID signed and notarized DMG after the release owner selects its version |
 | Later updates | Signed in-app update over HTTPS, `darwin-aarch64` manifest entry; no routine replacement downloads |
 | Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) signed the local candidate on 2026-10-16. Certificate expires 2027-02-01. |
 | Notary credentials | EzyoStudio team API key authenticated with `xcrun notarytool history`; Apple accepted both the app and DMG on 2026-10-16. Private key is outside Git with user-only file permissions. |
 | Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. Update signature verification remains pending. |
-| Beta update endpoint and access | Planned `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; DNS and HTTPS respond, but the feed returns 404 until deployed. Tester-network access remains pending. |
+| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; DNS and HTTPS respond, but the feed returns 404 until a signed update is promoted. External update testing remains pending. |
 | Feedback contact and owner | `zao.soula@ezyostudio.com`; supplied by release owner on 2026-10-16. Feedback workflow remains untested. |
-| Withdrawal contact list | Pending invited-tester list; keep outside Git |
+| Public withdrawal channel | The landing page and source repository can carry a notice; support email is `zao.soula@ezyostudio.com`. Incident communication has not been tested. |
 
 ## Candidate evidence
 
@@ -32,9 +32,9 @@ Status: **not approved for invitations**. Update this record for each candidate 
 | In-app update between two signed versions | Pending |
 | Failed update and recovery cases | Pending |
 | 48–72 hour capture soak and limits | Pending |
-| Privacy/support owner review | Pending |
+| Privacy/support owner review | Release owner approved the existing data notice on 2026-10-16. Support workflow remains untested. |
 
-Release owner decision: **hold** until every gate has dated evidence.
+Release owner decision: **offer the signed and notarized `0.2.0-beta.1` DMG now**, with the remaining clean Mac, first-run, update, recovery, and soak checks explicitly pending. The owner selected the MIT license and approved the data notice on 2026-10-16. Do not promote the updater manifest until its separate gates pass.
 
 ## Local implementation evidence — not release approval
 
