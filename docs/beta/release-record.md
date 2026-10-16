@@ -12,21 +12,21 @@ Status: **not approved for invitations**. Update this record for each candidate 
 | Minimum macOS | Provisional build floor `13.5` from bundled Node; pending clean-machine test before claiming support |
 | Initial install | One private Developer ID signed and notarized download |
 | Later updates | Signed in-app update over HTTPS, `darwin-aarch64` manifest entry; no routine replacement downloads |
-| Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) is installed with its private key in the release Mac Keychain; verified 2026-10-16. Certificate expires 2027-02-01. Signed release artifact remains pending. |
-| Notary credentials | EzyoStudio team API key authenticated successfully with `xcrun notarytool history` on 2026-10-16; release artifact notarization remains pending. Private key is outside Git with user-only file permissions. |
+| Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) signed the local candidate on 2026-10-16. Certificate expires 2027-02-01. |
+| Notary credentials | EzyoStudio team API key authenticated with `xcrun notarytool history`; Apple accepted both the app and DMG on 2026-10-16. Private key is outside Git with user-only file permissions. |
 | Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. Update signature verification remains pending. |
 | Beta update endpoint and access | Planned `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; DNS and HTTPS respond, but the feed returns 404 until deployed. Tester-network access remains pending. |
-| Feedback contact and owner | Pending owner choice; must be monitored before invitations |
+| Feedback contact and owner | `zao.soula@ezyostudio.com`; supplied by release owner on 2026-10-16. Feedback workflow remains untested. |
 | Withdrawal contact list | Pending invited-tester list; keep outside Git |
 
 ## Candidate evidence
 
 | Gate | Result |
 | --- | --- |
-| Revision and dependency check | Implementation revision `289684c` passed [Apple Silicon CI checks](https://github.com/zaosoula/agent-time/actions/runs/38765239418) on 2026-10-15; actual signed candidate pending |
-| Artifact URL and SHA-256 | Pending |
-| Developer ID, Hardened Runtime, nested signatures | Pending |
-| Notarization, stapling, Gatekeeper, quarantine | Pending |
+| Revision and dependency check | Candidate built from `05f4c7ece29eff71a1623195d2eb19634be87b90` on 2026-10-16. Local `npm ci`, 167 JavaScript tests, interface build, and 7 locked Apple Silicon Rust release tests passed; CI for this revision pending. |
+| Artifact URL and SHA-256 | Local DMG `102f0f0734020f0d857ce1405a24c8a9f34dd23a33ce093500739dcb3a07ef3b`; signed updater archive `4c4db8ed361613068a453b252b31dcfac0deaa2051d41d7489024bdb5b0002fa`. Candidate manifest staged outside Git; hosted URL and byte comparison pending. |
+| Developer ID, Hardened Runtime, nested signatures | Passed local `beta:build` checks for app and all bundled Mach-O files on 2026-10-16. |
+| Notarization, stapling, Gatekeeper, quarantine | Apple accepted app and DMG; both staple validations and local app Gatekeeper assessment passed 2026-10-16. Quarantined Finder download pending. |
 | Clean Apple Silicon install without developer tools | Pending |
 | First-run capture and permissions | Pending |
 | In-app update between two signed versions | Pending |

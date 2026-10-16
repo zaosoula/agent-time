@@ -1,0 +1,80 @@
+import assert from 'node:assert/strict';
+import {createHash} from 'node:crypto';
+import {mkdtemp, rm} from 'node:fs/promises';
+import {createServer} from 'node:http';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
+import test from 'node:test';
+import {createBetaFeed} from '../beta-feed/server.mjs';
+
+const version = '0.2.0-beta.1';
+const archiveName = 'Agent Time.app.tar.gz';
+const origin = 'https://agent-time.ezyostudio.com';
+const token = 'test-token-'.repeat(5);
+const sha = (body: string) => createHash('sha256').update(body).digest('hex');
+
+test('the live feed stays absent until signed artifacts and a candidate are explicitly promoted', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'agent-time-feed-'));
+  const server = createServer(createBetaFeed({dataDir, uploadToken: token, publicOrigin: origin}));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  const auth = {Authorization: `Bearer ${token}`};
+  const put = (path: string, body: string, authorized = true) => fetch(base + path, {
+    method: 'PUT',
+    headers: {...(authorized ? auth : {}), 'X-Content-SHA256': sha(body)},
+    body,
+  });
+  try {
+    assert.equal((await fetch(base + '/beta/latest.json')).status, 404);
+    const archivePath = `/admin/releases/${version}/${encodeURIComponent(archiveName)}`;
+    assert.equal((await put(archivePath, 'archive bytes', false)).status, 401);
+    assert.equal((await put(archivePath, 'archive bytes')).status, 201);
+    assert.equal((await put(archivePath, 'replacement')).status, 409);
+    assert.equal(await (await fetch(base + `/beta/${version}/${encodeURIComponent(archiveName)}`)).text(), 'archive bytes');
+    assert.equal((await put(`${archivePath}.sig`, 'signed archive')).status, 201);
+
+    const manifest = JSON.stringify({version, notes: 'First beta', platforms: {'darwin-aarch64': {
+      url: `${origin}/beta/${version}/${encodeURIComponent(archiveName)}`,
+      signature: 'signed archive',
+    }}});
+    assert.equal((await put('/admin/manifest/candidate', manifest)).status, 201);
+    assert.equal((await fetch(base + '/beta/latest.json')).status, 404);
+    assert.equal((await fetch(base + '/beta/latest.json.candidate')).status, 404);
+    assert.equal((await fetch(base + '/admin/manifest/promote', {method: 'POST'})).status, 401);
+    assert.equal((await fetch(base + '/admin/manifest/promote', {method: 'POST', headers: auth})).status, 204);
+    const live = await fetch(base + '/beta/latest.json');
+    assert.equal(live.status, 200);
+    assert.equal(live.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await live.json(), JSON.parse(manifest));
+    assert.equal((await fetch(base + '/beta/not-a-version/file')).status, 404);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await rm(dataDir, {recursive: true, force: true});
+  }
+});
+
+test('bad bytes and a manifest with an external archive cannot be staged', async () => {
+  const dataDir = await mkdtemp(join(tmpdir(), 'agent-time-feed-'));
+  const server = createServer(createBetaFeed({dataDir, uploadToken: token, publicOrigin: origin}));
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== 'string');
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const badArchive = await fetch(base + `/admin/releases/${version}/${encodeURIComponent(archiveName)}`, {
+      method: 'PUT', headers: {Authorization: `Bearer ${token}`, 'X-Content-SHA256': sha('different')}, body: 'archive bytes',
+    });
+    assert.equal(badArchive.status, 422);
+    assert.equal((await fetch(base + `/beta/${version}/${encodeURIComponent(archiveName)}`)).status, 404);
+    const badManifest = JSON.stringify({version, notes: '', platforms: {'darwin-aarch64': {url: 'https://wrong.example/beta/file', signature: 'x'}}});
+    const candidate = await fetch(base + '/admin/manifest/candidate', {
+      method: 'PUT', headers: {Authorization: `Bearer ${token}`, 'X-Content-SHA256': sha(badManifest)}, body: badManifest,
+    });
+    assert.equal(candidate.status, 422);
+  } finally {
+    await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    await rm(dataDir, {recursive: true, force: true});
+  }
+});
