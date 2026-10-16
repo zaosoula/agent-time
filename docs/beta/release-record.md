@@ -12,10 +12,10 @@ Status: **not approved for invitations**. Update this record for each candidate 
 | Minimum macOS | Provisional build floor `13.5` from bundled Node; pending clean-machine test before claiming support |
 | Initial install | One private Developer ID signed and notarized download |
 | Later updates | Signed in-app update over HTTPS, `darwin-aarch64` manifest entry; no routine replacement downloads |
-| Signing identity and team | Pending Developer ID Application identity and owner confirmation |
-| Notary credentials | Pending owner provision in protected release environment |
-| Updater key custody and backup | Pending owner provision; private key must stay outside Git |
-| Beta update endpoint and access | Pending owner choice; app must reach feed and archive without manual authentication |
+| Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) is installed with its private key in the release Mac Keychain; verified 2026-10-16. Certificate expires 2027-02-01. Signed release artifact remains pending. |
+| Notary credentials | EzyoStudio team API key authenticated successfully with `xcrun notarytool history` on 2026-10-16; release artifact notarization remains pending. Private key is outside Git with user-only file permissions. |
+| Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. Update signature verification remains pending. |
+| Beta update endpoint and access | Planned `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; DNS and HTTPS respond, but the feed returns 404 until deployed. Tester-network access remains pending. |
 | Feedback contact and owner | Pending owner choice; must be monitored before invitations |
 | Withdrawal contact list | Pending invited-tester list; keep outside Git |
 

@@ -2,6 +2,7 @@ import {spawnSync,execFileSync} from 'node:child_process';
 import {existsSync,readdirSync,statSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {betaBuildConfig} from './beta-config.mjs';
+import {betaBundleEnvironment,notarizeBetaDmg} from './beta-release-steps.mjs';
 
 function run(command,args,options={}){
  const result=spawnSync(command,args,{stdio:'inherit',...options});
@@ -17,12 +18,14 @@ const executable=join(app,'Contents/MacOS/agent-time');
 const processes=execFileSync('ps',['-axo','command='],{encoding:'utf8'});
 if(processes.split('\n').some(command=>command===executable||command.startsWith(`${executable} `)))throw new Error('Quit the beta app before rebuilding its running bundle');
 run('npm',['run','sidecars:build']);
-run('npm',['run','tauri','--','build','--target','aarch64-apple-darwin','--bundles','app,dmg','--config',JSON.stringify(config)],{env:{...process.env,AGENT_TIME_BETA:'1',VITE_BETA_UPDATES:'1'}});
+run('npm',['run','tauri','--','build','--target','aarch64-apple-darwin','--bundles','app,dmg','--config',JSON.stringify(config)],{env:betaBundleEnvironment(process.env)});
 const dir=resolve('src-tauri/target/aarch64-apple-darwin/release/bundle');
 const macos=join(dir,'macos'),dmg=join(dir,'dmg');
 const one=(folder,suffix)=>{const matches=readdirSync(folder).filter(name=>name.endsWith(suffix));if(matches.length!==1)throw new Error(`Expected one ${suffix} in ${folder}`);return join(folder,matches[0]);};
 const archive=one(macos,'.app.tar.gz'),signature=`${archive}.sig`,container=one(dmg,'.dmg');
 if(!existsSync(signature))throw new Error('Signed updater archive is missing its .sig file');
+console.log('Notarizing and stapling the DMG...');
+notarizeBetaDmg(container,process.env);
 const minimum=config.bundle.macOS.minimumSystemVersion;
 const declared=execFileSync('plutil',['-extract','LSMinimumSystemVersion','raw','-o','-',join(app,'Contents/Info.plist')],{encoding:'utf8'}).trim();
 if(declared!==minimum)throw new Error(`Bundle minimum macOS version ${declared} does not match ${minimum}`);

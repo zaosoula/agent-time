@@ -18,3 +18,8 @@ test('beta build refuses development signing, insecure feed, or missing release 
  assert.throws(()=>betaBuildConfig({...env,APPLE_API_KEY_PATH:''},identities,'darwin','arm64'),/notar/i);
  assert.throws(()=>betaBuildConfig(env,identities,'darwin','x64'),/Apple Silicon/);
 });
+test('Apple ID release builds require a DMG notarization Keychain profile before building',()=>{
+ const apple={...env,APPLE_API_ISSUER:'',APPLE_API_KEY:'',APPLE_API_KEY_PATH:'',APPLE_ID:'owner@example.test',APPLE_PASSWORD:'app-password',APPLE_TEAM_ID:'TEAM123456'};
+ assert.throws(()=>betaBuildConfig(apple,identities,'darwin','arm64'),/Keychain profile/);
+ assert.ok(betaBuildConfig({...apple,APPLE_NOTARY_KEYCHAIN_PROFILE:'agent-time-notary'},identities,'darwin','arm64'));
+});

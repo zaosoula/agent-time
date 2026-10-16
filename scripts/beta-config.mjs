@@ -6,9 +6,13 @@ export function betaBuildConfig(env, identityList, platform = process.platform, 
   const identities = [...identityList.matchAll(developerIdentity)];
   const matching = identities.find(([, hash, name]) => selected === hash || selected === name);
   if (!matching) throw new Error('A valid Developer ID Application signing identity is required');
-  if (![env.APPLE_API_ISSUER, env.APPLE_API_KEY, env.APPLE_API_KEY_PATH].every(value => value?.trim()) &&
-      ![env.APPLE_ID, env.APPLE_PASSWORD, env.APPLE_TEAM_ID].every(value => value?.trim())) {
+  const hasApiCredentials = [env.APPLE_API_ISSUER, env.APPLE_API_KEY, env.APPLE_API_KEY_PATH].every(value => value?.trim());
+  const hasAppleIdCredentials = [env.APPLE_ID, env.APPLE_PASSWORD, env.APPLE_TEAM_ID].every(value => value?.trim());
+  if (!hasApiCredentials && !hasAppleIdCredentials) {
     throw new Error('Apple notarization API or app-specific password credentials are required');
+  }
+  if (!hasApiCredentials && !env.APPLE_NOTARY_KEYCHAIN_PROFILE?.trim()) {
+    throw new Error('Apple ID DMG notarization requires a Keychain profile');
   }
   if (!env.TAURI_SIGNING_PRIVATE_KEY?.trim()) throw new Error('The updater private signing key is required');
   if (!env.BETA_UPDATER_PUBLIC_KEY?.trim()) throw new Error('The updater public key is required');
