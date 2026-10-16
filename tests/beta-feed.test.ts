@@ -90,7 +90,7 @@ test('a first-install DMG needs an expiring private link', async () => {
   const path = `/install/${version}/${encodeURIComponent(name)}`;
   try {
     const publicPage = await (await fetch(base + '/')).text();
-    assert.match(publicPage, /See where your work time goes/);
+    assert.match(publicPage, /See your work time/);
     assert.doesNotMatch(publicPage, /Download Agent Time for Mac/);
     assert.match(publicPage, /noindex, nofollow/);
     assert.match(publicPage, /Skip to content/);
