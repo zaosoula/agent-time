@@ -24,7 +24,7 @@ Status: **first-install DMG approved for public beta** by the release owner on 2
 | Gate | Result |
 | --- | --- |
 | Revision and dependency check | Candidate built from `05f4c7ece29eff71a1623195d2eb19634be87b90` on 2026-10-16. Local `npm ci`, 167 JavaScript tests, interface build, and 7 locked Apple Silicon Rust release tests passed; CI for this revision pending. |
-| Artifact URL and SHA-256 | Local DMG `102f0f0734020f0d857ce1405a24c8a9f34dd23a33ce093500739dcb3a07ef3b`; signed updater archive `4c4db8ed361613068a453b252b31dcfac0deaa2051d41d7489024bdb5b0002fa`. Candidate manifest staged outside Git; hosted URL and byte comparison pending. |
+| Artifact URL and SHA-256 | Local and publicly downloaded DMG `102f0f0734020f0d857ce1405a24c8a9f34dd23a33ce093500739dcb3a07ef3b` at `https://agent-time.ezyostudio.com/install/0.2.0-beta.1/Agent%20Time_0.2.0-beta.1_aarch64.dmg`; signed updater archive `4c4db8ed361613068a453b252b31dcfac0deaa2051d41d7489024bdb5b0002fa`. Candidate manifest staged outside Git; hosted updater archive and signature comparison pending. |
 | Developer ID, Hardened Runtime, nested signatures | Passed local `beta:build` checks for app and all bundled Mach-O files on 2026-10-16. |
 | Notarization, stapling, Gatekeeper, quarantine | Apple accepted app and DMG; both staple validations and local app Gatekeeper assessment passed 2026-10-16. Quarantined Finder download pending. |
 | Clean Apple Silicon install without developer tools | Pending |
@@ -35,6 +35,10 @@ Status: **first-install DMG approved for public beta** by the release owner on 2
 | Privacy/support owner review | Release owner approved the existing data notice on 2026-10-16. Support workflow remains untested. |
 
 Release owner decision: **offer the signed and notarized `0.2.0-beta.1` DMG now**, with the remaining clean Mac, first-run, update, recovery, and soak checks explicitly pending. The owner selected the MIT license and approved the data notice on 2026-10-16. Do not promote the updater manifest until its separate gates pass.
+
+## Public download verification — 2026-10-16
+
+Coolify deployment `epf87gppslbpv3nurx3ij7fb` finished with source commit `6a48ab941d0b59cea5c32e014cefae1c93b14cc0`; the service reported healthy. The HTTPS landing page returned 200 with the public download link, data notice, source, and MIT license links. A full unauthenticated GET of the DMG matched the local SHA-256 above. The update feed still returned 404, as intended while OTA validation is pending. This verifies hosting and bytes, not a clean Mac installation or a successful in-app update.
 
 ## Local implementation evidence — not release approval
 
