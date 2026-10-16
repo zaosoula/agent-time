@@ -92,6 +92,10 @@ test('a first-install DMG needs an expiring private link', async () => {
     const publicPage = await (await fetch(base + '/')).text();
     assert.match(publicPage, /See where your work time goes/);
     assert.doesNotMatch(publicPage, /Download Agent Time for Mac/);
+    assert.match(publicPage, /noindex, nofollow/);
+    assert.match(publicPage, /Skip to content/);
+    assert.match(publicPage, /Beta data notice/);
+    assert.equal((await fetch(base + '/manrope.ttf')).status, 200);
     assert.equal((await fetch(base + path)).status, 403);
     const upload = await fetch(base + `/admin/installers/${version}/${encodeURIComponent(name)}`, {
       method: 'PUT', headers: {Authorization: `Bearer ${token}`, 'X-Content-SHA256': sha('notarized DMG')}, body: 'notarized DMG',

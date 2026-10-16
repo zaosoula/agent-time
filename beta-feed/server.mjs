@@ -137,14 +137,15 @@ export function createBetaFeed({dataDir, uploadToken, inviteSigningKey, publicOr
       const path = url.pathname;
       if (request.method === 'GET' && path === '/healthz') return reply(response, 200, 'ok');
       if (request.method === 'GET' && path === '/icon.png') return await serveFile(response, fileURLToPath(new URL('./icon.png', import.meta.url)), 'image/png', 'public, max-age=86400');
+      if (request.method === 'GET' && path === '/manrope.ttf') return await serveFile(response, fileURLToPath(new URL('./manrope.ttf', import.meta.url)), 'font/ttf', 'public, max-age=86400');
       if (request.method === 'GET' && path === '/') {
         const version = url.searchParams.get('version') ?? '';
         const invited = validInvite(url, inviteSigningKey, version);
         const installLink = invited ? createInstallLink({publicOrigin, inviteSigningKey, version, expires: Number(url.searchParams.get('expires')), nonce: url.searchParams.get('nonce')}) : null;
         const {renderLandingPage} = await import('./landing.mjs');
         return reply(response, 200, renderLandingPage({version: invited ? version : null, installLink}), {
-          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer',
-          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'",
+          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex, nofollow, noarchive',
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'",
         });
       }
       if (request.method === 'GET' && path === '/beta/latest.json') {
