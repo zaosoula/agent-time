@@ -1,0 +1,132 @@
+name: Build and publish Agent Time beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Version already committed in npm, Tauri, and Cargo (for example 0.2.0-beta.2)
+        required: true
+        type: string
+      release_notes:
+        description: Notes shown by the in-app updater
+        required: true
+        type: string
+      publish:
+        description: Publish after the protected release job is approved
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: agent-time-beta-release
+  cancel-in-progress: false
+
+jobs:
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 90
+    environment: beta-signing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+      - name: Confirm Apple Silicon and install locked dependencies
+        run: |
+          test "$(uname -m)" = arm64
+          npm ci
+          rustup target add aarch64-apple-darwin
+      - name: Check candidate
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          node scripts/ci-stage-beta.mjs --check-version
+          npm test
+          npm run build
+          npm audit --omit=dev --audit-level=high
+          npm run sidecars:build
+          cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - name: Prepare temporary Apple signing credentials
+        env:
+          APPLE_CERTIFICATE_B64: ${{ secrets.APPLE_CERTIFICATE_B64 }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_P8: ${{ secrets.APPLE_API_KEY_P8 }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${APPLE_CERTIFICATE_B64:?Missing Developer ID certificate}"
+          : "${APPLE_CERTIFICATE_PASSWORD:?Missing certificate password}"
+          : "${APPLE_API_KEY_P8:?Missing App Store Connect API key}"
+          : "${APPLE_API_KEY:?Missing App Store Connect key ID}"
+          umask 077
+          certificate="$RUNNER_TEMP/agent-time-signing.p12"
+          keychain="$RUNNER_TEMP/agent-time-signing.keychain-db"
+          api_key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "$APPLE_CERTIFICATE_B64" | openssl base64 -d -A -out "$certificate"
+          printf '%s' "$APPLE_API_KEY_P8" > "$api_key"
+          keychain_password="$(openssl rand -hex 32)"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security default-keychain -s "$keychain"
+          security list-keychains -d user -s "$keychain"
+          security import "$certificate" -k "$keychain" -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$keychain_password" "$keychain"
+          identity="$(security find-identity -v -p codesigning "$keychain" | awk '/Developer ID Application: EZYOSTUDIO/ { print $2 }')"
+          test "$(printf '%s\n' "$identity" | sed '/^$/d' | wc -l | tr -d ' ')" = 1
+          printf 'APPLE_SIGNING_IDENTITY=%s\nAPPLE_API_KEY_PATH=%s\n' "$identity" "$api_key" >> "$GITHUB_ENV"
+      - name: Build signed and notarized Apple Silicon release
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          BETA_UPDATER_PUBLIC_KEY: ${{ secrets.BETA_UPDATER_PUBLIC_KEY }}
+          BETA_UPDATE_URL: https://agent-time.ezyostudio.com/beta/latest.json
+        run: npm run beta:build
+      - name: Stage checked release files
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          RELEASE_NOTES: ${{ inputs.release_notes }}
+        run: node scripts/ci-stage-beta.mjs beta-out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: agent-time-beta-${{ inputs.expected_version }}
+          path: beta-out/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Remove temporary signing credentials
+        if: always()
+        shell: bash
+        run: |
+          rm -f "$RUNNER_TEMP/agent-time-signing.p12" "$RUNNER_TEMP"/AuthKey_*.p8
+          security delete-keychain "$RUNNER_TEMP/agent-time-signing.keychain-db" 2>/dev/null || true
+
+  publish:
+    if: inputs.publish == true
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment:
+      name: beta-publication
+      url: https://agent-time.ezyostudio.com/
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - uses: actions/download-artifact@v4
+        with:
+          name: agent-time-beta-${{ inputs.expected_version }}
+          path: beta-out
+      - name: Publish verified signed update and installer
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          FEED_UPLOAD_TOKEN: ${{ secrets.FEED_UPLOAD_TOKEN }}
+        run: node scripts/ci-publish-beta.mjs beta-out
