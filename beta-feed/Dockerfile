@@ -1,6 +1,7 @@
 FROM node:26-alpine
 WORKDIR /app
 COPY --chown=node:node server.mjs ./server.mjs
+COPY --chown=node:node landing.mjs icon.png ./
 RUN mkdir /data && chown node:node /data
 USER node
 ENV PORT=3000 DATA_DIR=/data

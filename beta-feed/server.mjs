@@ -1,13 +1,50 @@
-import {createHash, randomUUID, timingSafeEqual} from 'node:crypto';
+import {createHash, createHmac, randomUUID, timingSafeEqual} from 'node:crypto';
 import {createReadStream} from 'node:fs';
 import {link, mkdir, open, readFile, rename, rm, stat} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {basename, join} from 'node:path';
+import {fileURLToPath} from 'node:url';
 
 const VERSION = /^\d+\.\d+\.\d+-beta\.\d+$/;
 const ARCHIVE = 'Agent Time.app.tar.gz';
 const FILES = new Set([ARCHIVE, `${ARCHIVE}.sig`]);
 const SHA256 = /^[a-f0-9]{64}$/;
+const NONCE = /^[A-Za-z0-9_-]{1,64}$/;
+
+function installerName(version) { return `Agent Time_${version}_aarch64.dmg`; }
+function installerPath(version) { return `/install/${version}/${encodeURIComponent(installerName(version))}`; }
+function inviteSignature(key, version, expires, nonce) {
+  return createHmac('sha256', key).update(`${installerPath(version)}\n${expires}\n${nonce}`).digest('hex');
+}
+
+export function createInstallLink({publicOrigin, inviteSigningKey, version, expires, nonce}) {
+  if (!VERSION.test(version) || !Number.isSafeInteger(expires) || !NONCE.test(nonce) || !inviteSigningKey || inviteSigningKey.length < 32) throw new Error('Invalid installer invitation');
+  const url = new URL(installerPath(version), publicOrigin);
+  url.searchParams.set('expires', String(expires));
+  url.searchParams.set('nonce', nonce);
+  url.searchParams.set('signature', inviteSignature(inviteSigningKey, version, expires, nonce));
+  return url.href;
+}
+
+export function createInvitePageLink(options) {
+  const install = new URL(createInstallLink(options));
+  const page = new URL('/', options.publicOrigin);
+  page.searchParams.set('version', options.version);
+  page.searchParams.set('expires', install.searchParams.get('expires'));
+  page.searchParams.set('nonce', install.searchParams.get('nonce'));
+  page.searchParams.set('signature', install.searchParams.get('signature'));
+  return page.href;
+}
+
+function validInvite(url, key, version) {
+  const expires = Number(url.searchParams.get('expires'));
+  const nonce = url.searchParams.get('nonce') ?? '';
+  const supplied = url.searchParams.get('signature') ?? '';
+  if (!VERSION.test(version) || !Number.isSafeInteger(expires) || expires <= Math.floor(Date.now() / 1000) || !NONCE.test(nonce) || !SHA256.test(supplied)) return false;
+  const a = Buffer.from(supplied, 'hex');
+  const b = Buffer.from(inviteSignature(key, version, expires, nonce), 'hex');
+  return timingSafeEqual(a, b);
+}
 
 function reply(response, status, body = '', headers = {}) {
   response.writeHead(status, {'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store', ...headers});
@@ -79,10 +116,10 @@ async function replaceAtomic(path, body) {
   } finally { await rm(temp, {force: true}); }
 }
 
-async function serveFile(response, path, contentType, cacheControl) {
+async function serveFile(response, path, contentType, cacheControl, extraHeaders = {}) {
   try {
     const info = await stat(path);
-    response.writeHead(200, {'Content-Type': contentType, 'Content-Length': info.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff'});
+    response.writeHead(200, {'Content-Type': contentType, 'Content-Length': info.size, 'Cache-Control': cacheControl, 'X-Content-Type-Options': 'nosniff', ...extraHeaders});
     createReadStream(path).pipe(response);
   } catch (error) {
     if (error.code === 'ENOENT') return reply(response, 404);
@@ -90,14 +127,26 @@ async function serveFile(response, path, contentType, cacheControl) {
   }
 }
 
-export function createBetaFeed({dataDir, uploadToken, publicOrigin}) {
-  if (!dataDir || !uploadToken || uploadToken.length < 32 || !/^https:\/\/[^/]+$/.test(publicOrigin)) {
-    throw new Error('DATA_DIR, a strong UPLOAD_TOKEN, and HTTPS PUBLIC_ORIGIN are required');
+export function createBetaFeed({dataDir, uploadToken, inviteSigningKey, publicOrigin}) {
+  if (!dataDir || !uploadToken || uploadToken.length < 32 || !inviteSigningKey || inviteSigningKey.length < 32 || !/^https:\/\/[^/]+$/.test(publicOrigin)) {
+    throw new Error('DATA_DIR, strong UPLOAD_TOKEN and INVITE_SIGNING_KEY, and HTTPS PUBLIC_ORIGIN are required');
   }
   return async (request, response) => {
     try {
-      const path = new URL(request.url, 'http://localhost').pathname;
+      const url = new URL(request.url, 'http://localhost');
+      const path = url.pathname;
       if (request.method === 'GET' && path === '/healthz') return reply(response, 200, 'ok');
+      if (request.method === 'GET' && path === '/icon.png') return await serveFile(response, fileURLToPath(new URL('./icon.png', import.meta.url)), 'image/png', 'public, max-age=86400');
+      if (request.method === 'GET' && path === '/') {
+        const version = url.searchParams.get('version') ?? '';
+        const invited = validInvite(url, inviteSigningKey, version);
+        const installLink = invited ? createInstallLink({publicOrigin, inviteSigningKey, version, expires: Number(url.searchParams.get('expires')), nonce: url.searchParams.get('nonce')}) : null;
+        const {renderLandingPage} = await import('./landing.mjs');
+        return reply(response, 200, renderLandingPage({version: invited ? version : null, installLink}), {
+          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer',
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; base-uri 'none'; form-action 'none'",
+        });
+      }
       if (request.method === 'GET' && path === '/beta/latest.json') {
         return await serveFile(response, join(dataDir, 'latest.json'), 'application/json; charset=utf-8', 'no-store');
       }
@@ -108,8 +157,31 @@ export function createBetaFeed({dataDir, uploadToken, publicOrigin}) {
         if (!VERSION.test(version) || !FILES.has(name)) return reply(response, 404);
         return await serveFile(response, join(dataDir, 'releases', version, name), name.endsWith('.sig') ? 'text/plain; charset=utf-8' : 'application/gzip', 'public, max-age=31536000, immutable');
       }
+      const installer = /^\/install\/([^/]+)\/([^/]+)$/.exec(path);
+      if (request.method === 'GET' && installer) {
+        const [, version, encodedName] = installer;
+        if (!VERSION.test(version) || decodeURIComponent(encodedName) !== installerName(version)) return reply(response, 404);
+        if (!validInvite(url, inviteSigningKey, version)) return reply(response, 403);
+        return await serveFile(response, join(dataDir, 'installers', version, installerName(version)), 'application/x-apple-diskimage', 'private, no-store', {
+          'Content-Disposition': `attachment; filename="${installerName(version)}"`, 'Referrer-Policy': 'no-referrer',
+        });
+      }
       if (!path.startsWith('/admin/')) return reply(response, 404);
       if (!authorized(request, uploadToken)) return reply(response, 401);
+
+      const installerUpload = /^\/admin\/installers\/([^/]+)\/([^/]+)$/.exec(path);
+      if (request.method === 'PUT' && installerUpload) {
+        const [, version, encodedName] = installerUpload;
+        if (!VERSION.test(version) || decodeURIComponent(encodedName) !== installerName(version)) return reply(response, 404);
+        const target = join(dataDir, 'installers', version, installerName(version));
+        if (await exists(target)) return reply(response, 409);
+        const body = await checkedBody(request, 200 * 1024 * 1024);
+        try { await putImmutable(target, body); } catch (error) {
+          if (error.code === 'EEXIST') return reply(response, 409);
+          throw error;
+        }
+        return reply(response, 201);
+      }
 
       const upload = /^\/admin\/releases\/([^/]+)\/([^/]+)$/.exec(path);
       if (request.method === 'PUT' && upload) {
@@ -165,6 +237,7 @@ if (process.argv[1] && basename(process.argv[1]) === 'server.mjs') {
   const server = createServer(createBetaFeed({
     dataDir: process.env.DATA_DIR ?? '/data',
     uploadToken: process.env.UPLOAD_TOKEN,
+    inviteSigningKey: process.env.INVITE_SIGNING_KEY,
     publicOrigin: process.env.PUBLIC_ORIGIN,
   }));
   server.listen(Number(process.env.PORT ?? 3000), '0.0.0.0');
