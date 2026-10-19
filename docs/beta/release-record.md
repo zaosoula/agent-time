@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-Status: **`0.2.0-beta.2` published on 2026-10-19** after the `beta.1` first-run incident. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation and end-to-end OTA results are still pending.
+Status: **`0.2.0-beta.3` published on 2026-10-19** with Orca CLI discovery optional. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation, Mac mini confirmation, and end-to-end OTA results are still pending.
 
 ## Release contract
 
@@ -15,7 +15,7 @@ Status: **`0.2.0-beta.2` published on 2026-10-19** after the `beta.1` first-run 
 | Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) signed the local candidate on 2026-10-16. Certificate expires 2027-02-01. |
 | Notary credentials | EzyoStudio team API key authenticated with `xcrun notarytool history`; Apple accepted both the app and DMG on 2026-10-16. Private key is outside Git with user-only file permissions. |
 | Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. End-to-end in-app signature acceptance remains pending. |
-| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify. Deployment `tvk0vltj71bkops4n4y66vbk` from `12b0b7f` changed the empty feed to HTTP 204. The promoted feed now serves `0.2.0-beta.2` for `darwin-aarch64` with a signature. External in-app update testing remains pending. |
+| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify. Deployment `tvk0vltj71bkops4n4y66vbk` from `12b0b7f` changed the empty feed to HTTP 204. The promoted feed now serves `0.2.0-beta.3` for `darwin-aarch64` with a signature. External in-app update testing remains pending. |
 | Feedback contact and owner | `zao.soula@ezyostudio.com`; supplied by release owner on 2026-10-16. Feedback workflow remains untested. |
 | Public withdrawal channel | The landing page and source repository can carry a notice; support email is `zao.soula@ezyostudio.com`. Incident communication has not been tested. |
 
@@ -53,6 +53,12 @@ At that staging point, the public site said the installer was being prepared and
 The release owner explicitly requested publication. GitHub Actions [run 39251971042](https://github.com/zaosoula/agent-time/actions/runs/39251971042) built commit `c942b8c47ff37caf0d6001071e5991d78e81ec4a` on Apple Silicon. Candidate checks, Developer ID signing, notarization, stapling, the bundled collector smoke check, artifact staging, and protected publication all passed. The public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.2/Agent%20Time_0.2.0-beta.2_aarch64.dmg) was downloaded independently and matched the staged SHA-256 `aeeb2d2e086d437b6305bbcfa1c96aa30c81dfcca218cb98533d7bd3b00e1c62`. The updater archive SHA-256 is `d2446de684a1711b035746d888d552887a10f54e0b40095109243aaf57ed62df`.
 
 The public landing page displays `0.2.0-beta.2` and links to that DMG. The live update feed reports `0.2.0-beta.2` for `darwin-aarch64` with a signature. The release includes the collector JIT entitlement, window dragging permission, empty-feed handling, completed hook-setup action, and a one-time Accessibility guidance dialog after hook setup. The owner chose to publish while clean-Mac Finder installation, interactive Accessibility and hook setup, an actual `beta.1` to `beta.2` in-app update, recovery, and soak testing remain pending. Testers should report those first-run results.
+
+## `0.2.0-beta.3` public release — 2026-10-19
+
+A Mac mini without Orca reported `spawn orca ENOENT`. Commit `0a667aaf916d0c367a369b40ea5bbdc88b3d59d8` detects whether the configured Orca command is executable before polling runs, fetching terminal layouts, or reading Orca account limits. When it is unavailable, Orca discovery is skipped and shown as optional; Mac activity, agent hooks, and local token history remain active. The preference remains saved so discovery can resume if Orca becomes available later. A focused no-Orca test confirmed that a Codex hook event is captured with no Orca event or collector error. Local checks passed: 175 JavaScript tests, the UI build, version consistency, and 7 locked Rust tests.
+
+GitHub Actions [run 39255235488](https://github.com/zaosoula/agent-time/actions/runs/39255235488) passed Apple Silicon build, signing, notarization, packaged collector smoke check, artifact staging, and protected publication. The public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.3/Agent%20Time_0.2.0-beta.3_aarch64.dmg) was independently downloaded and matched SHA-256 `3c8eb3947ab841284338e32b23933d398897e43740b29534a799639948bf0871`. The public updater archive matched SHA-256 `81a2d582fca5dab950790c256c0c8b301a64bb083a82304eb12e0587d143761e`. The landing page and live signed feed report `0.2.0-beta.3` for Apple Silicon. Actual update completion and capture on the affected Mac mini remain to be confirmed.
 
 ## Public download verification — 2026-10-16
 
