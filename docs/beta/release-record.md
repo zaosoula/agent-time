@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-Status: **`0.2.0-beta.3` published on 2026-10-19** with Orca CLI discovery optional. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation, Mac mini confirmation, and end-to-end OTA results are still pending.
+Status: **`0.2.0-beta.4` published on 2026-10-19** with a macOS daily summary widget and refreshed app icon. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation, visual widget gallery confirmation, Mac mini confirmation, and end-to-end OTA results are still pending.
 
 ## Release contract
 
@@ -66,7 +66,9 @@ Commit `db74c586586d5b1f2222da3a219815552822cee0` adds a medium macOS widget sho
 
 Local checks passed: 177 JavaScript tests, interface build, 8 locked Rust tests, widget/host version and entitlement checks, nested signing, updater archive contents, Apple notarization and stapling, and Gatekeeper assessment. The signed local DMG SHA-256 is `3c425b3e46c85a7245bec1e126fc1153ed6608640bb98d70a0fe831b97b4e116`; the signed updater archive SHA-256 is `0fee50c48c80886624528240bb976dd4ba3f3aa53ed9a26a6ee940548de7e6e4`. Both are staged outside Git under `.capture/release-beta4/` and have **not** been published.
 
-The notarized DMG was mounted and its app installed at `/Applications/Agent Time.app` on the release Mac. The app and collector started, macOS registered `studio.ezyo.agenttime.widget(0.2.0-beta.4)`, and the app-group snapshot reported a current-day available summary. The widget's visual rendering in the macOS widget gallery is unverified because the available computer-control route could not read the gallery. Clean-Mac installation, external first run, and actual OTA update/recovery remain pending. GitHub Actions [build-only run 39280113062](https://github.com/zaosoula/agent-time/actions/runs/39280113062) was requested from the exact candidate commit; its result is pending. The live feed and public installer still offer `0.2.0-beta.3`.
+The notarized DMG was mounted and its app installed at `/Applications/Agent Time.app` on the release Mac. The app and collector started, macOS registered `studio.ezyo.agenttime.widget(0.2.0-beta.4)`, and the app-group snapshot reported a current-day available summary. The widget's visual rendering in the macOS widget gallery is unverified because the available computer-control route could not read the gallery. Clean-Mac installation, external first run, and actual OTA update/recovery remain pending. GitHub Actions [build-only run 39280113062](https://github.com/zaosoula/agent-time/actions/runs/39280113062) was requested from the exact candidate commit but remained queued behind an older run waiting at `beta-signing` at publication time.
+
+The release owner requested beta.4 publication on 2026-10-19. The exact locally signed, notarized, and staged candidate was uploaded through the authenticated feed service using `scripts/ci-publish-beta.mjs` with its version and source revision checked. The live [update manifest](https://agent-time.ezyostudio.com/beta/latest.json) and landing page report `0.2.0-beta.4`. Independent public downloads matched the staged SHA-256 for both the [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.4/Agent%20Time_0.2.0-beta.4_aarch64.dmg) (`3c425b3e46c85a7245bec1e126fc1153ed6608640bb98d70a0fe831b97b4e116`) and updater archive (`0fee50c48c80886624528240bb976dd4ba3f3aa53ed9a26a6ee940548de7e6e4`). This publication used the locally validated artifact because the protected GitHub build had not started; it does not establish GitHub runner or end-to-end OTA proof.
 
 ## Public download verification — 2026-10-16
 
