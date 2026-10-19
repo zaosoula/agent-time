@@ -31,12 +31,12 @@ if (sha256(archive) !== archiveSha256 || sha256(dmg) !== dmgSha256 ||
 }
 
 const live = await fetch(origin + '/beta/latest.json', {cache: 'no-store'});
-if (live.ok) {
+if (live.ok && live.status !== 204) {
   const current = await live.json();
   if (!isNewerBetaVersion(version, current.version || '')) {
     throw new Error('The live updater version is not older than this release');
   }
-} else if (live.status !== 404) throw new Error(`Could not inspect live updater feed: HTTP ${live.status}`);
+} else if (live.status !== 204 && live.status !== 404) throw new Error(`Could not inspect live updater feed: HTTP ${live.status}`);
 
 async function upload(path, body) {
   const response = await fetch(uploadOrigin + path, {
