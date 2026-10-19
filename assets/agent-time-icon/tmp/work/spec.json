@@ -1,0 +1,102 @@
+{
+  "name": "AgentTimeIcon",
+  "target_platforms": [
+    "macOS"
+  ],
+  "deliverable_type": "icon-composer-package",
+  "source_reference": "Project-owned Agent Time clock icon at src/ui/icon.svg; redesign keeps its clock silhouette.",
+  "brief": "A clear, calm macOS icon for tracking developer and coding-agent time. Preserve the recognisable clock; use two hand colors for human and agent activity.",
+  "semantic_review": {
+    "status": "exact-enough",
+    "identity_risk": "low",
+    "basis": "The project-owned clock is a simple low-risk mark. An independent visual review accepted the recognizable ring and hand geometry at 64 px and in the macOS render.",
+    "route": "semantic-svg",
+    "notes": "Intentional palette and geometry refresh, not pixel reproduction."
+  },
+  "source_analysis": {
+    "fidelity_target": "Preserve a simple clock ring and two hands while improving contrast and small-size clarity.",
+    "identity_risk": "low",
+    "route": "semantic-svg",
+    "must_preserve": [
+      "clock ring",
+      "hands meeting at the central pivot",
+      "simple silhouette visible at small sizes"
+    ],
+    "must_not_add": [
+      "text",
+      "glow",
+      "shadow",
+      "bevel",
+      "small hour ticks",
+      "rasterized reference"
+    ],
+    "components": [
+      {
+        "id": "clock-ring",
+        "layer": "clock ring",
+        "format": "svg",
+        "spec_constraints": [
+          "one filled donut",
+          "no stroke or effects"
+        ]
+      },
+      {
+        "id": "human-hand",
+        "layer": "human time hand",
+        "format": "svg",
+        "spec_constraints": [
+          "one opaque rounded vertical bar"
+        ]
+      },
+      {
+        "id": "agent-hand",
+        "layer": "agent time hand",
+        "format": "svg",
+        "spec_constraints": [
+          "one opaque rounded diagonal bar"
+        ]
+      }
+    ],
+    "acceptance_checks": [
+      "recognisable clock at 64px",
+      "foreground remains editable SVG",
+      "no background duplication in Icon Composer assets"
+    ]
+  },
+  "fill": {
+    "solid": "extended-srgb:0.08627,0.10588,0.18824,1.00000"
+  },
+  "layers": [
+    {
+      "name": "background",
+      "svg": "<rect width=\"1024\" height=\"1024\" fill=\"#161B30\"/>",
+      "composer": {
+        "include": false
+      }
+    },
+    {
+      "name": "clock ring",
+      "svg": "<path d=\"M512 190 A322 322 0 1 1 511.999 190 Z M512 270 A242 242 0 1 0 512.001 270 Z\" fill=\"#91A4F7\" fill-rule=\"evenodd\"/>",
+      "composer": {
+        "format": "svg",
+        "reason": "clean filled clock ring remains editable"
+      }
+    },
+    {
+      "name": "human time hand",
+      "svg": "<rect x=\"483\" y=\"296\" width=\"58\" height=\"237\" rx=\"29\" fill=\"#F6F7FF\"/>",
+      "composer": {
+        "format": "svg",
+        "reason": "clean filled clock hand remains editable"
+      }
+    },
+    {
+      "name": "agent time hand",
+      "svg": "<rect x=\"497\" y=\"486\" width=\"237\" height=\"58\" rx=\"29\" transform=\"rotate(32 512 515)\" fill=\"#67E3D3\"/><circle cx=\"512\" cy=\"515\" r=\"32\" fill=\"#67E3D3\"/>",
+      "composer": {
+        "format": "svg",
+        "reason": "clean filled second hand and pivot remain editable"
+      }
+    }
+  ]
+}

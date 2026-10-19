@@ -3,10 +3,11 @@ use serde_json::{json,Value};
 use std::sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}};
 use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem},tray::TrayIconBuilder};
 use tauri_plugin_notification::NotificationExt;
+use crate::widget::WidgetPublisher;
 
 pub struct TrayState {
  status:MenuItem<tauri::Wry>,today:MenuItem<tauri::Wry>,detail:MenuItem<tauri::Wry>,tokens:MenuItem<tauri::Wry>,toggle:MenuItem<tauri::Wry>,
- busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,
+ busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,widget:WidgetPublisher,last_summary:Mutex<Option<Value>>,
 }
 fn hook_warning_body(value:&Value,last:&mut Option<String>)->Option<String>{
  if value["running"].as_bool()!=Some(true){return None;}
@@ -38,6 +39,8 @@ impl TrayState {
   match bridge.request("tray_status",json!({})){
    Ok(value)=>{
     if self.busy.load(Ordering::Acquire)||self.stopped.load(Ordering::Acquire){return;}
+    self.widget.publish(&value,false);
+    if let Ok(mut last)=self.last_summary.lock(){*last=Some(value.clone());}
     let running=value["running"].as_bool().unwrap_or(false);
     if let Some(body)=hook_warning_body(&value,&mut self.last_warning.lock().unwrap()){
      let _=app.notification().builder().title("Agent tracking may be idle").body(body).show();
@@ -49,8 +52,12 @@ impl TrayState {
     let _=self.tokens.set_text(format!("Tokens: {} · ${:.2} API equivalent{}",count,value["apiUsdToday"].as_f64().unwrap_or(0.0),if value["unpricedToday"].as_f64().unwrap_or(0.0)>0.0{" (partial)"}else{""}));
     let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);
    },
-   Err(_)=>{let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);}
+   Err(_)=>{if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);}
   }
+ }
+ pub fn publish_stopped(&self){
+  let previous=self.last_summary.lock().ok().and_then(|last|last.clone());
+  if let Some(mut value)=previous{value["running"]=json!(false);value["workingAgents"]=json!(0);self.widget.publish(&value,true);}else{self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),true);}
  }
 }
 pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
@@ -67,7 +74,7 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let quit=MenuItem::with_id(app,"tray-quit","Quit Agent Time",true,None::<&str>)?;
  let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&dashboard,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
  TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true).build(app)?;
- let state=Arc::new(TrayState{status,today,detail,tokens,toggle,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None)});
+ let state=Arc::new(TrayState{status,today,detail,tokens,toggle,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None)});
  app.manage(state.clone());
  let handle=app.handle().clone();
  std::thread::spawn(move||{while !state.stopped.load(Ordering::Acquire){state.refresh(&bridge,&handle);std::thread::sleep(std::time::Duration::from_secs(5));}});

@@ -12,6 +12,9 @@ execFileSync('swiftc',['-target',swiftTarget,'native/LinearKeychain.swift','-o',
 copyFileSync('.capture/bin/linear-keychain',`src-tauri/binaries/linear-keychain-${target}`);
 execFileSync('swiftc',['-target',swiftTarget,'native/StartupItem.swift','-o','.capture/bin/startup-item'],{stdio:'inherit'});
 copyFileSync('.capture/bin/startup-item',`src-tauri/binaries/startup-item-${target}`);
+execFileSync('swiftc',['-target',swiftTarget,'native/widget/Snapshot.swift','native/WidgetSnapshot.swift','-o','.capture/bin/widget-snapshot'],{stdio:'inherit'});
+copyFileSync('.capture/bin/widget-snapshot',`src-tauri/binaries/widget-snapshot-${target}`);
+execFileSync('node',['scripts/build-widget.mjs'],{stdio:'inherit',env:process.env});
 cpSync('src/usage','src-tauri/resources/usage',{recursive:true});writeFileSync('src-tauri/resources/usage/package.json','{"type":"module"}\n');
 cpSync('src/capture','src-tauri/resources/capture',{recursive:true});writeFileSync('src-tauri/resources/capture/package.json','{"type":"module"}\n');
 console.log(`Prepared Node ${process.version} and macOS helper for ${target}`);

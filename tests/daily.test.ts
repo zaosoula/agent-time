@@ -1,5 +1,12 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {dailyTotals,summaryForDate} from '../src/capture/daily.ts';import type {Summary,Interval} from '../src/capture/events.ts';
+import {dailyTotals,summaryForDate,workingAgentCount} from '../src/capture/daily.ts';import type {Summary,Interval,Session} from '../src/capture/events.ts';
+test('working agent snapshot matches My day recency and stops on pause',()=>{
+ const now=new Date(2026,9,19,12),at=now.getTime()/1000;
+ const session=(state:string,lastObservedAt:number,seconds=60):Session=>({key:state+lastObservedAt,title:'Agent',state,lastObservedAt,seconds,observedSeconds:seconds,child:false,proof:'observed'});
+ const summary:Summary={intervals:[],sessions:[session('working',at-5),session('running',at-19),session('working',at-20),session('waiting',at-2),session('working',at-1,0)],coverage:[],unresolved:[],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
+ assert.equal(workingAgentCount(summary,now),2);
+ assert.equal(workingAgentCount(summary,now,false),0);
+});
 test('menu bar totals clip to local today, union overlap, and keep independent agents separate',()=>{
  const now=new Date(2026,9,12,12),midnight=new Date(2026,9,12).getTime()/1000;
  const interval=(start:number,end:number,fields:Partial<Interval>={}):Interval=>({start:midnight+start,end:midnight+end,state:'running',proof:'observed',sourceEventIds:[],hostId:'local',sessionId:'s1',...fields});

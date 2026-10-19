@@ -30,15 +30,15 @@ if (!identity || identity === '-') {
   throw new Error('An Apple Development signing identity is required for stable macOS Accessibility permission. Set APPLE_SIGNING_IDENTITY to one from security find-identity -v -p codesigning.');
 }
 
-run('npm', ['run', 'sidecars:build']);
+run('npm', ['run', 'sidecars:build'], {env: {...process.env, APPLE_SIGNING_IDENTITY: identity}});
 // The embedded Node collector needs V8 executable memory. Keep the local
 // development bundle signed for TCC, without enabling Hardened Runtime on Node.
-run('npm', ['run', 'tauri', '--', 'build', '--bundles', 'app', '--config', JSON.stringify({ bundle: { macOS: { hardenedRuntime: false } } })], {
+run('npm', ['run', 'tauri', '--', 'build', '--bundles', 'app', '--config', JSON.stringify({ bundle: { macOS: { hardenedRuntime: false, entitlements: './widget/host.entitlements' } } })], {
   env: { ...process.env, APPLE_SIGNING_IDENTITY: identity },
 });
 const agents = `${app}/Contents/Library/LaunchAgents`;
 mkdirSync(agents, { recursive: true });
 copyFileSync('native/studio.ezyo.agenttime.startup.plist', `${agents}/studio.ezyo.agenttime.startup.plist`);
 run('plutil', ['-lint', `${agents}/studio.ezyo.agenttime.startup.plist`]);
-run('codesign', ['--force', '--sign', identity, app]);
+run('codesign', ['--force', '--sign', identity, '--entitlements', 'src-tauri/widget/host.entitlements', app]);
 run('codesign', ['--verify', '--deep', '--strict', app]);

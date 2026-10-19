@@ -7,6 +7,7 @@ test('beta build selects only Developer ID and an Apple Silicon HTTPS update fee
  const result=betaBuildConfig(env,identities,'darwin','arm64');
  assert.equal(result.bundle.macOS.hardenedRuntime,true);
  assert.equal(result.bundle.macOS.entitlements,'./entitlements.beta.plist');
+ assert.equal(result.bundle.macOS.files['PlugIns/AgentTimeWidget.appex'],'widget/AgentTimeWidget.appex');
  assert.equal(result.bundle.macOS.minimumSystemVersion,'13.5');
  assert.equal(result.bundle.createUpdaterArtifacts,true);
  assert.deepEqual(result.plugins.updater.endpoints,['https://updates.example.test/beta/latest.json']);

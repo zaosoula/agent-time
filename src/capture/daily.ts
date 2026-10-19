@@ -15,6 +15,10 @@ export function dailyTotals(summary:Summary,now=new Date()){
  const human=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);
  return {agentSeconds,humanSeconds:minuteCreditSeconds(human),elapsedSeconds:minuteCreditSeconds([...elapsed,...human])};
 }
+export function workingAgentCount(summary:Summary,now=new Date(),running=true):number {
+ if(!running)return 0;
+ return summary.sessions.filter(session=>session.seconds>0&&['working','running'].includes(session.state)&&now.getTime()/1000-session.lastObservedAt<20).length;
+}
 
 export function summaryForDate(summary:Summary,date:string):Summary {
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('Invalid summary date');

@@ -6,6 +6,12 @@ src-tauri/target/
 src-tauri/gen/
 src-tauri/binaries/
 src-tauri/resources/
+src-tauri/widget/
+assets/agent-time-icon/tmp/work/tauri-icons/
+assets/agent-time-icon/tmp/work/preview-64.png
+assets/agent-time-icon/tmp/work/apple-renders-contact.png
+assets/agent-time-icon/tmp/reports/
+assets/agent-time-icon/tmp/README.md
 .claude/settings.local.json
 .DS_Store
 

@@ -36,7 +36,7 @@ const inspectSignature=file=>{
  if(inspected.status!==0)throw new Error(`Could not inspect signature: ${file}`);
  return inspected.stdout+inspected.stderr;
 };
-const inspectEntitlements=file=>{
+const inspectEntitlements=(file,team,widget=false)=>{
  const inspected=spawnSync('codesign',['-d','--entitlements',':-',file],{encoding:'utf8'});
  const output=inspected.stdout+inspected.stderr;
  const start=output.indexOf('<plist'),end=output.indexOf('</plist>');
@@ -44,12 +44,32 @@ const inspectEntitlements=file=>{
  const parsed=spawnSync('plutil',['-convert','json','-o','-','-'],{input:output.slice(start,end+'</plist>'.length),encoding:'utf8'});
  if(parsed.status!==0)throw new Error(`Could not parse entitlements: ${file}`);
  const entitlements=JSON.parse(parsed.stdout);
- if(Object.keys(entitlements).length!==1||entitlements['com.apple.security.cs.allow-jit']!==true)throw new Error(`Unexpected entitlement requires release review: ${file}`);
+ const group=entitlements['com.apple.security.application-groups'];
+ if(!Array.isArray(group)||group.length!==1||group[0]!==`${team}.studio.ezyo.agenttime`)throw new Error(`Widget app group mismatch: ${file}`);
+ const expected=widget?['com.apple.security.app-sandbox','com.apple.security.application-groups']:['com.apple.security.cs.allow-jit','com.apple.security.application-groups'];
+ if(Object.keys(entitlements).length!==2||expected.some(key=>entitlements[key]===undefined)||entitlements[widget?'com.apple.security.app-sandbox':'com.apple.security.cs.allow-jit']!==true)throw new Error(`Unexpected entitlement requires release review: ${file}`);
 };
 run('codesign',['--verify','--deep','--strict','--verbose=2',app]);
 const appDetails=inspectSignature(app),team=appDetails.match(/TeamIdentifier=([^\s]+)/)?.[1];
 if(!team||!appDetails.includes('flags=')||!appDetails.includes('runtime')||!appDetails.includes('Authority=Developer ID Application:'))throw new Error('App lacks a Developer ID Hardened Runtime signature');
-inspectEntitlements(app);
+inspectEntitlements(app,team);
+const widget=join(app,'Contents/PlugIns/AgentTimeWidget.appex');
+const widgetExecutable=join(widget,'Contents/MacOS/AgentTimeWidget');
+if(!existsSync(widgetExecutable))throw new Error('Widget extension missing from the app bundle');
+run('codesign',['--verify','--strict','--verbose=2',widget]);
+const widgetInfo=join(widget,'Contents/Info.plist');
+const appInfo=join(app,'Contents/Info.plist');
+const plistValue=(info,key)=>execFileSync('plutil',['-extract',key,'raw','-o','-',info],{encoding:'utf8'}).trim();
+for(const [key,expected] of [
+ ['CFBundleIdentifier','studio.ezyo.agenttime.widget'],
+ ['CFBundleShortVersionString',plistValue(appInfo,'CFBundleShortVersionString')],
+ ['CFBundleVersion',plistValue(appInfo,'CFBundleVersion')],
+ ['NSExtension.NSExtensionPointIdentifier','com.apple.widgetkit-extension'],
+ ['LSMinimumSystemVersion',minimum],
+]){
+ const actual=plistValue(widgetInfo,key);
+ if(actual!==expected)throw new Error(`Widget ${key} mismatch: ${actual}`);
+}
 const bundledFiles=[];
 function visit(folder){for(const entry of readdirSync(folder,{withFileTypes:true})){
  const path=join(folder,entry.name);
@@ -57,14 +77,15 @@ function visit(folder){for(const entry of readdirSync(folder,{withFileTypes:true
 }}
 visit(app);
 const machos=bundledFiles.filter(file=>execFileSync('file',['-b',file],{encoding:'utf8'}).includes('Mach-O'));
-for(const name of ['agent-time','node','agent-activity','linear-keychain','startup-item'])if(!machos.includes(join(app,'Contents/MacOS',name)))throw new Error(`Required bundled executable missing: ${name}`);
+for(const name of ['agent-time','node','agent-activity','linear-keychain','startup-item','widget-snapshot'])if(!machos.includes(join(app,'Contents/MacOS',name)))throw new Error(`Required bundled executable missing: ${name}`);
+if(!machos.includes(widgetExecutable))throw new Error('Widget executable is not Mach-O');
 for(const file of machos){
  run('codesign',['--verify','--strict','--verbose=2',file]);
  const details=inspectSignature(file);
  if(!details.includes('Authority=Developer ID Application:')||!details.includes(`TeamIdentifier=${team}`))throw new Error(`Nested code has a different signing identity: ${file}`);
  const kind=execFileSync('file',['-b',file],{encoding:'utf8'});
  if(kind.includes('executable')&&(!details.includes('flags=')||!details.includes('runtime')))throw new Error(`Nested executable lacks Hardened Runtime: ${file}`);
- inspectEntitlements(file);
+ inspectEntitlements(file,team,file===widgetExecutable);
  const build=execFileSync('xcrun',['vtool','-show-build',file],{encoding:'utf8'});
  const minos=build.match(/minos\s+([\d.]+)/)?.[1];
  if(!minos||later(minos,minimum))throw new Error(`Bundled executable requires macOS ${minos||'unknown'}, above the bundle minimum ${minimum}: ${file}`);

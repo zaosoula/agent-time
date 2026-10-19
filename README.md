@@ -6,7 +6,7 @@ The app shows a daily timeline, projects, agent sessions and orchestration ident
 
 ## Run the desktop app
 
-Development prerequisites: Node 26.9+, npm, Rust/Cargo and Xcode command-line tools.
+Development prerequisites: Node 26.9+, npm, Rust/Cargo and Xcode.
 
 ```sh
 npm ci
@@ -21,7 +21,11 @@ npm run desktop:build
 open 'src-tauri/target/release/bundle/macos/Agent Time.app'
 ```
 
-The local build includes its Node runtime and Swift helper. `desktop:build` chooses an installed Apple Development certificate (or uses `APPLE_SIGNING_IDENTITY`) so macOS Accessibility permission survives rebuilds with the same app identity. It disables Hardened Runtime for the local Node sidecar; a distribution build needs a separate signing and entitlement review. The first signed build may need one fresh grant if permission was previously given to an ad-hoc signed build. It still needs Orca installed and running. The package built on this Mac is Apple Silicon only, about 150 MiB; notarization and distribution are separate work.
+The local build includes its Node runtime, Swift helpers, and a native macOS widget extension. `desktop:build` chooses an installed Apple Development certificate (or uses `APPLE_SIGNING_IDENTITY`) so macOS Accessibility permission survives rebuilds with the same app identity. It disables Hardened Runtime for the local Node sidecar; a distribution build needs a separate signing and entitlement review. The first signed build may need one fresh grant if permission was previously given to an ad-hoc signed build. Orca integration is optional when its CLI is unavailable. The package built on this Mac is Apple Silicon only; notarization and distribution are separate work.
+
+## Desktop widget
+
+On macOS 14 or later, right-click the desktop, choose **Edit Widgets**, and search for **Agent Time**. Add the medium **Today's work** widget. It shows today's estimated Mac activity, credited agent time, and agents working now. Click it to open Agent Time. The widget reads a local snapshot from the running app and starts no additional collector. macOS decides when to refresh widgets; the update time is shown, and an old or previous-day snapshot asks you to open Agent Time.
 
 For a browser development preview, run `npm run native:build` then `npm run dev`. Its local transport is provided only by the Vite development server. A hosted browser version is not implemented.
 
