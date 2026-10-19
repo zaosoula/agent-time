@@ -34,6 +34,24 @@ test('a DMG is stapled only after Apple accepts its notarization', () => {
   assert.equal(calls.length, 1);
 });
 
+test('transient Apple ticket connection loss retries stapling without resubmitting the DMG', () => {
+  const calls: string[] = [];
+  const delays: number[] = [];
+  const run = (_command: string, args: string[]) => {
+    calls.push(args[0]);
+    if (args[0] === 'notarytool') return JSON.stringify({status: 'Accepted'});
+    if (calls.filter(command => command === 'stapler').length === 1) {
+      const error = new Error('Apple ticket service unavailable');
+      (error as Error & {stderr: string}).stderr = 'NSURLErrorDomain Code=-1005 The network connection was lost';
+      throw error;
+    }
+    return '';
+  };
+  notarizeBetaDmg('/release/Agent Time.dmg', credentials, run, delay => delays.push(delay));
+  assert.deepEqual(calls, ['notarytool', 'stapler', 'stapler']);
+  assert.deepEqual(delays, [5000]);
+});
+
 test('Apple ID notarization requires a Keychain profile so its password is not passed on the command line', () => {
   const run = () => JSON.stringify({status: 'Accepted'});
   assert.throws(() => notarizeBetaDmg('/release/Agent Time.dmg', {APPLE_ID: 'owner@example.test'}, run), /Keychain profile/);
