@@ -1,5 +1,19 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {parseUsage,tokenTotal,type ParserState} from '../src/usage/parser.ts';import {apiEquivalent} from '../src/usage/pricing.ts';
+test('local usage scan does not call Orca when its CLI is unavailable',async()=>{
+ const {mkdtempSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
+ const {setTimeout:sleep}=await import('node:timers/promises');const {EventStore}=await import('../src/capture/store.ts');const {UsageReader}=await import('../src/usage/reader.ts');
+ const root=mkdtempSync(join(tmpdir(),'ade-usage-no-orca-')),path=join(root,'events.sqlite'),previous=process.env.ORCA_CLI_COMMAND;
+ process.env.ORCA_CLI_COMMAND=join(root,'missing-orca');const store=new EventStore(path);store.close();
+ const reader=new UsageReader(path,[],undefined,'');
+ try{
+  reader.start();for(let i=0;i<100&&reader.summary().lastScan===null;i++)await sleep(20);
+  assert.ok(reader.summary().lastScan);assert.equal(reader.summary().error,null);assert.deepEqual(reader.summary().limits,[]);
+ }finally{
+  await reader.close();rmSync(root,{recursive:true});
+  if(previous===undefined)delete process.env.ORCA_CLI_COMMAND;else process.env.ORCA_CLI_COMMAND=previous;
+ }
+});
 test('Claude usage identity deduplicates repeated message blocks and excludes transcript text',()=>{
  const e={type:'assistant',timestamp:'2026-10-12T12:00:00Z',sessionId:'s',requestId:'r',message:{id:'m',model:'claude-opus-5-5',content:[{text:'private prompt'}],usage:{input_tokens:10,output_tokens:20,cache_read_input_tokens:100,cache_creation_input_tokens:40,cache_creation:{ephemeral_1h_input_tokens:30},output_tokens_details:{thinking_tokens:5}}}};
  const a=parseUsage('claude',e,{},'a')!;assert.equal(a.id,parseUsage('claude',{...e,message:{...e.message,content:[]}}, {},'a')?.id);assert.equal(tokenTotal(a),170);assert.ok(!JSON.stringify(a).includes('private prompt'));

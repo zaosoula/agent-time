@@ -233,7 +233,7 @@ function moveWorkloadHover(event:PointerEvent,group:TimelineProjectGroup){
  const load=group.load.find(segment=>segment.start<=time&&time<segment.end);
  hoveredLoad.value={project:group.name,left,tooltipLeft:bounds.width<236?bounds.width/2:Math.max(118,Math.min(bounds.width-118,left)),time,roots:load?.roots||0,children:load?.children||0,credited:group.creditBars.some(interval=>interval.start<=time&&time<interval.end),human:group.humanBars.some(interval=>interval.start<=time&&time<interval.end)};
 }
-const orcaPollNote=computed(()=>!status.value?'Checking capture…':!status.value.surfaces.orcaPolling?'Orca polling off':status.value.lastPoll?`Last Orca poll ${new Date(status.value.lastPoll*1000).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'Waiting for Orca poll');
+const orcaPollNote=computed(()=>!status.value?'Checking capture…':!status.value.surfaces.orcaPolling?'Orca polling off':!status.value.orcaAvailable?'Orca not installed · optional':status.value.lastPoll?`Last Orca poll ${new Date(status.value.lastPoll*1000).toLocaleTimeString('en',{hour:'2-digit',minute:'2-digit',hour12:false})}`:'Waiting for Orca poll');
 let timer:ReturnType<typeof setInterval>|undefined,clockTimer:ReturnType<typeof setInterval>|undefined;
 let unlistenNavigation:(()=>void)|undefined;
 let unmounted=false;

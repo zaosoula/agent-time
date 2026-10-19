@@ -1,9 +1,15 @@
 import { execFile } from 'node:child_process';
+import {accessSync,constants,statSync} from 'node:fs';
+import {delimiter,join} from 'node:path';
 import { promisify } from 'node:util';
 import { makeEvent, type CaptureEvent, type Issue } from './events.ts';
 const exec = promisify(execFile);
 export type JsonObject = Record<string, any>;
 export function object(value: unknown): JsonObject { return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {}; }
+export function orcaCliAvailable(command=process.env.ORCA_CLI_COMMAND||'orca',path=process.env.PATH||''):boolean{
+  const executable=(file:string)=>{try{accessSync(file,constants.X_OK);return statSync(file).isFile();}catch{return false;}};
+  return command.includes('/')?executable(command):path.split(delimiter).some(folder=>executable(join(folder||'.',command)));
+}
 export async function callOrca(argv: string[]): Promise<unknown> {
   const command = process.env.ORCA_CLI_COMMAND || 'orca';
   const { stdout } = await exec(command, argv, { timeout: 12000, maxBuffer: 8*1024*1024 });

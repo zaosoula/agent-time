@@ -9,7 +9,7 @@ import type {LinearStatus} from '../capture/linear.ts';
 export interface LinearConnectionStatus extends LinearStatus {repositoryMatches:Record<string,string[]>;}
 export interface WebsiteProjectStatus {rules:WebsiteRule[];projects:string[];matches:WebsiteResolution[];}
 export interface CaptureSourceInfo {kind:'agent'|'browser'|'poller';id:string;name:string;detail?:string;setting:string;defaultEnabled:boolean;bundleId?:string;usageSetting?:string;}
-export interface CaptureStatus { running:boolean;orcaPolling:boolean;surfaces:CaptureSettings;sources:CaptureSourceInfo[];lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:({orcaAttribution?:{workspaceId:string;tabId:string;title:string}|null}&Record<string,unknown>)|null; }
+export interface CaptureStatus { running:boolean;orcaAvailable:boolean;orcaPolling:boolean;surfaces:CaptureSettings;sources:CaptureSourceInfo[];lastPoll:number|null;lastError:string|null;eventCount:number;output:string;macos:({orcaAttribution?:{workspaceId:string;tabId:string;title:string}|null}&Record<string,unknown>)|null; }
 export interface StartupItemStatus {status:'enabled'|'requiresApproval'|'notRegistered'|'notFound'|'unknown';}
 export const native=Boolean('__TAURI_INTERNALS__' in window);
 export async function request<T>(method:string,params:Record<string,unknown>={}):Promise<T>{

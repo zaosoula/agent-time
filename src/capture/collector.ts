@@ -3,7 +3,7 @@ import { join, isAbsolute, basename, resolve } from 'node:path';
 import { EventStore } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
-import { callOrca } from './orca.ts';
+import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool } from './hooks.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
@@ -54,7 +54,8 @@ export class Collector {
     this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
-  status(){return {running:this.running,orcaPolling:this.surfaces.orcaPolling,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
+  private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
+  status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
   trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);const hooks=this.running?this.hookInstallation.status():null;const outdated=outdatedHookTargets({running:this.running,surfaces:this.surfaces},hooks);const hookWarning=outdated.length&&hooks?{key:hooks.runtimeVersion+':'+outdated.map(target=>target.id).sort().join(','),agents:[...new Set(outdated.map(target=>hooks.agents.find(agent=>agent.id===target.provider)?.name||target.provider))]}:null;return {running:this.running,...dailyTotals(this.summary(15000)),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning};}
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
@@ -209,7 +210,7 @@ export class Collector {
     if(this.running)this.timer=setTimeout(()=>{void this.tick();},this.interval*1000);
   }
   private refreshFocusedTabs(){
-    if(this.focusRefresh||!this.running||!this.surfaces.macosActivity)return;
+    if(this.focusRefresh||!this.running||!this.surfaces.macosActivity||!this.orcaAvailable())return;
     this.focusRefresh=(async()=>{
       try{const receipt=await this.reader(['terminal','list','--include-visual-layouts','--limit','1000','--json']);if(this.running&&this.surfaces.macosActivity){this.focusedTabs=tabIndexFromTerminalList(receipt);this.focusedTabsAt=Date.now();}}
       catch{this.focusedTabs=[];this.focusedTabsAt=0;}
@@ -219,8 +220,10 @@ export class Collector {
     try{
       let pollingError:string|null=null;
       void this.refreshProbeTrust();
-      this.refreshFocusedTabs();
-      for(const source of pollers.filter(source=>this.surfaces[source.setting])){
+      const orcaAvailable=this.orcaAvailable();
+      if(orcaAvailable)this.refreshFocusedTabs();
+      else {this.focusedTabs=[];this.focusedTabsAt=0;}
+      for(const source of pollers.filter(source=>this.surfaces[source.setting]&&(source.id!=='orca'||orcaAvailable))){
         const revision=this.revision,valid=()=>this.running&&this.surfaces[source.setting]===true&&this.revision===revision;
         const error=await source.poll({reader:this.reader,runId:this.runId,valid,store:this.store});
         if(valid()&&error&&!pollingError)pollingError=error;

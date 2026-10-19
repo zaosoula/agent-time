@@ -6,6 +6,24 @@ test('legacy website preference migrates to individual browsers',()=>{
  const mixed=storedSettings({browserTracking:false,browserBrave:true});
  assert.equal(mixed.browserSafari,false);assert.equal(mixed.browserBrave,true);
 });
+test('missing Orca CLI skips polling while agent hooks keep capturing',async()=>{
+ const {spoolHook,normalizeHook}=await import('../src/capture/hooks.ts');
+ const path=mkdtempSync(join(tmpdir(),'ade-no-orca-')),previous=process.env.ORCA_CLI_COMMAND;
+ process.env.ORCA_CLI_COMMAND=join(path,'missing-orca');
+ const c=new Collector(path);
+ try{
+  c.updateSettings({macosActivity:false,tokenUsage:false});
+  spoolHook(normalizeHook('codex',{hook_event_name:'SessionStart',session_id:'session-without-orca'},{}),join(path,'spool'));
+  const status=await c.start(5);
+  assert.equal(status.running,true);assert.equal(status.orcaAvailable,false);assert.equal(status.orcaPolling,false);
+  assert.equal(status.surfaces.orcaPolling,true);assert.equal(status.lastError,null);
+  assert.ok(c.store.events().some(event=>event.source==='hook'&&event.sessionId==='session-without-orca'));
+  assert.ok(!c.store.events().some(event=>event.source==='orca'));
+ }finally{
+  await c.close();rmSync(path,{recursive:true});
+  if(previous===undefined)delete process.env.ORCA_CLI_COMMAND;else process.env.ORCA_CLI_COMMAND=previous;
+ }
+});
 
 test('disabled browser page details are discarded while foreground activity remains',async()=>{
  const {writeFileSync,readFileSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');

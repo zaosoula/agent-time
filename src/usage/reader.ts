@@ -2,7 +2,7 @@ import {DatabaseSync} from 'node:sqlite';import {homedir} from 'node:os';import 
 import {readdir,stat,realpath} from 'node:fs/promises';import {createReadStream} from 'node:fs';
 import {parseUsage,tokenTotal,type ParserState,type UsageRecord,type Counts} from './parser.ts';
 import {CatalogStore,type PricingStatus} from './catalog-store.ts';
-import {callOrca,object} from '../capture/orca.ts';
+import {callOrca,object,orcaCliAvailable} from '../capture/orca.ts';
 import {agents,agentById} from '../capture/sources/agent-registry.ts';
 export interface UsageSummary{days:Array<{date:string;provider:string;tokens:number;usd:number;unpriced:number;counts:Counts}>;models:Array<{model:string;provider:string;tokens:number;usd:number;unpriced:number}>;limits:Array<{provider:string;accountId:string;status:string;updatedAt:number|null;session:any;weekly:any}>;scanning:boolean;lastScan:number|null;filesScanned:number;error:string|null;pricingCheckedAt:string;pricingSources:string[];pricing:PricingStatus;}
 const day=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
@@ -44,16 +44,18 @@ export class UsageReader{
  private async scan(){
   this.error=null;this.filesScanned=0;
   await this.pricing.refresh();if(!this.enabled)return;
-  try{
-   const receipt=object(await this.orca(['account','list','--json']));if(!receipt.ok)throw new Error('Orca account usage unavailable');
-   const r=object(receipt.result),limits=object(r.rateLimits);this.limits=this.limits.filter(l=>!this.providers[l.provider]);
-   const window=(v:any)=>v&&typeof v.usedPercent==='number'?{usedPercent:Math.max(0,Math.min(100,v.usedPercent)),resetsAt:typeof v.resetsAt==='number'?v.resetsAt:null,windowMinutes:typeof v.windowMinutes==='number'?v.windowMinutes:null}:null;
-   for(const agent of agents.filter(agent=>agent.orcaLimits)){
-    const provider=agent.id;if(!this.providers[provider])continue;
-    const candidates=[{...object(limits[provider]),accountId:r[provider]?.activeAccountId||'default'},...(Array.isArray(limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts'])?limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts']:[])];
-    for(const v of candidates)this.limits.push({provider,accountId:String(v.accountId||'unknown'),status:String(v.status||'unknown'),updatedAt:typeof v.updatedAt==='number'?v.updatedAt:null,session:window(v.session),weekly:window(v.weekly)});
-   }
-  }catch{this.error='Account limits unavailable; local token history can still be read';}
+  if(this.orca!==callOrca||orcaCliAvailable()){
+   try{
+    const receipt=object(await this.orca(['account','list','--json']));if(!receipt.ok)throw new Error('Orca account usage unavailable');
+    const r=object(receipt.result),limits=object(r.rateLimits);this.limits=this.limits.filter(l=>!this.providers[l.provider]);
+    const window=(v:any)=>v&&typeof v.usedPercent==='number'?{usedPercent:Math.max(0,Math.min(100,v.usedPercent)),resetsAt:typeof v.resetsAt==='number'?v.resetsAt:null,windowMinutes:typeof v.windowMinutes==='number'?v.windowMinutes:null}:null;
+    for(const agent of agents.filter(agent=>agent.orcaLimits)){
+     const provider=agent.id;if(!this.providers[provider])continue;
+     const candidates=[{...object(limits[provider]),accountId:r[provider]?.activeAccountId||'default'},...(Array.isArray(limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts'])?limits['inactive'+provider[0].toUpperCase()+provider.slice(1)+'Accounts']:[])];
+     for(const v of candidates)this.limits.push({provider,accountId:String(v.accountId||'unknown'),status:String(v.status||'unknown'),updatedAt:typeof v.updatedAt==='number'?v.updatedAt:null,session:window(v.session),weekly:window(v.weekly)});
+    }
+   }catch{this.error='Account limits unavailable; local token history can still be read';}
+  }else this.limits=[];
   const month=periodStart();const cutoff=month.getTime()/1000;const seen=new Set<string>();
   const captured=this.capturedSessions();
   for(const root of (await this.discoverRoots()).filter(r=>this.providers[r.provider]))for await(const file of this.files(root.path)){
