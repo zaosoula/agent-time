@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-Status: **first-install DMG approved for public beta** by the release owner on 2026-10-16. The updater feed remains unpromoted. Update this record for each candidate with the exact commit, artifact hashes, and observed results.
+Status: **`0.2.0-beta.1` installer withdrawn on 2026-10-19 after first-run failures**. The updater feed remains unpromoted. A `0.2.0-beta.2` repair candidate is in preparation. Update this record for each candidate with the exact commit, artifact hashes, and observed results.
 
 ## Release contract
 
@@ -15,7 +15,7 @@ Status: **first-install DMG approved for public beta** by the release owner on 2
 | Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) signed the local candidate on 2026-10-16. Certificate expires 2027-02-01. |
 | Notary credentials | EzyoStudio team API key authenticated with `xcrun notarytool history`; Apple accepted both the app and DMG on 2026-10-16. Private key is outside Git with user-only file permissions. |
 | Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. Update signature verification remains pending. |
-| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; DNS and HTTPS respond, but the feed returns 404 until a signed update is promoted. External update testing remains pending. |
+| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify; the unpromoted feed returned 404 in `beta.1`, which the installed updater displayed as an error. The feed is being changed to return 204 when no update exists. External update testing remains pending. |
 | Feedback contact and owner | `zao.soula@ezyostudio.com`; supplied by release owner on 2026-10-16. Feedback workflow remains untested. |
 | Public withdrawal channel | The landing page and source repository can carry a notice; support email is `zao.soula@ezyostudio.com`. Incident communication has not been tested. |
 
@@ -35,6 +35,12 @@ Status: **first-install DMG approved for public beta** by the release owner on 2
 | Privacy/support owner review | Release owner approved the existing data notice on 2026-10-16. Support workflow remains untested. |
 
 Release owner decision: **offer the signed and notarized `0.2.0-beta.1` DMG now**, with the remaining clean Mac, first-run, update, recovery, and soak checks explicitly pending. The owner selected the MIT license and approved the data notice on 2026-10-16. Do not promote the updater manifest until its separate gates pass.
+
+## First-run incident — 2026-10-19
+
+Two testers reported that capture stayed in “Checking…” and the collector exited; one also reported that the window could not be moved. The app showed an update-check error. The exact public `beta.1` DMG (SHA-256 above) reproduced the collector crash on the release Mac: its Hardened Runtime signed Node sidecar terminated before loading the collector with `Failed to reserve virtual memory for CodeRange`. A local copy signed with only `com.apple.security.cs.allow-jit` started the packaged collector from an isolated home directory. The `main` window capability lacked `core:window:allow-start-dragging`, which Tauri requires for the existing drag regions. The unpromoted update endpoint returned 404; the updater accepts 204 as “no update.”
+
+The installer selection was removed from the public landing page through the feed service on 2026-10-19. The page remains online and direct installer requests for the withdrawn version return 404. `beta.2` must prove a fresh-profile collector start, hook setup, window dragging, signed and notarized artifacts, and the update path before public selection. The earlier signed/notarized status alone did not prove runtime function.
 
 ## Public download verification — 2026-10-16
 

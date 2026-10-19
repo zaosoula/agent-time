@@ -6,6 +6,7 @@ const env={APPLE_SIGNING_IDENTITY:'ABCDEF1234567890ABCDEF1234567890ABCDEF12',BET
 test('beta build selects only Developer ID and an Apple Silicon HTTPS update feed',()=>{
  const result=betaBuildConfig(env,identities,'darwin','arm64');
  assert.equal(result.bundle.macOS.hardenedRuntime,true);
+ assert.equal(result.bundle.macOS.entitlements,'./entitlements.beta.plist');
  assert.equal(result.bundle.macOS.minimumSystemVersion,'13.5');
  assert.equal(result.bundle.createUpdaterArtifacts,true);
  assert.deepEqual(result.plugins.updater.endpoints,['https://updates.example.test/beta/latest.json']);

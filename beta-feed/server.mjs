@@ -126,6 +126,7 @@ export function createBetaFeed({dataDir, uploadToken, publicOrigin}) {
         });
       }
       if (request.method === 'GET' && path === '/beta/latest.json') {
+        if (!(await exists(join(dataDir, 'latest.json')))) return reply(response, 204);
         return await serveFile(response, join(dataDir, 'latest.json'), 'application/json; charset=utf-8', 'no-store');
       }
       const release = /^\/beta\/([^/]+)\/([^/]+)$/.exec(path);

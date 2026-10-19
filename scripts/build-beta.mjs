@@ -1,6 +1,7 @@
 import {spawnSync,execFileSync} from 'node:child_process';
-import {existsSync,readdirSync,statSync} from 'node:fs';
+import {existsSync,mkdtempSync,readdirSync,rmSync,statSync} from 'node:fs';
 import {resolve,join} from 'node:path';
+import {tmpdir} from 'node:os';
 import {betaBuildConfig} from './beta-config.mjs';
 import {betaBundleEnvironment,notarizeBetaDmg} from './beta-release-steps.mjs';
 
@@ -35,9 +36,20 @@ const inspectSignature=file=>{
  if(inspected.status!==0)throw new Error(`Could not inspect signature: ${file}`);
  return inspected.stdout+inspected.stderr;
 };
+const inspectEntitlements=file=>{
+ const inspected=spawnSync('codesign',['-d','--entitlements',':-',file],{encoding:'utf8'});
+ const output=inspected.stdout+inspected.stderr;
+ const start=output.indexOf('<plist'),end=output.indexOf('</plist>');
+ if(inspected.status!==0||start<0||end<start)throw new Error(`Could not inspect entitlements: ${file}`);
+ const parsed=spawnSync('plutil',['-convert','json','-o','-','-'],{input:output.slice(start,end+'</plist>'.length),encoding:'utf8'});
+ if(parsed.status!==0)throw new Error(`Could not parse entitlements: ${file}`);
+ const entitlements=JSON.parse(parsed.stdout);
+ if(Object.keys(entitlements).length!==1||entitlements['com.apple.security.cs.allow-jit']!==true)throw new Error(`Unexpected entitlement requires release review: ${file}`);
+};
 run('codesign',['--verify','--deep','--strict','--verbose=2',app]);
 const appDetails=inspectSignature(app),team=appDetails.match(/TeamIdentifier=([^\s]+)/)?.[1];
 if(!team||!appDetails.includes('flags=')||!appDetails.includes('runtime')||!appDetails.includes('Authority=Developer ID Application:'))throw new Error('App lacks a Developer ID Hardened Runtime signature');
+inspectEntitlements(app);
 const bundledFiles=[];
 function visit(folder){for(const entry of readdirSync(folder,{withFileTypes:true})){
  const path=join(folder,entry.name);
@@ -52,12 +64,17 @@ for(const file of machos){
  if(!details.includes('Authority=Developer ID Application:')||!details.includes(`TeamIdentifier=${team}`))throw new Error(`Nested code has a different signing identity: ${file}`);
  const kind=execFileSync('file',['-b',file],{encoding:'utf8'});
  if(kind.includes('executable')&&(!details.includes('flags=')||!details.includes('runtime')))throw new Error(`Nested executable lacks Hardened Runtime: ${file}`);
- const entitlements=spawnSync('codesign',['-d','--entitlements','-',file],{encoding:'utf8'});
- if(entitlements.status!==0||/<plist|<dict|<key/.test(entitlements.stdout+entitlements.stderr))throw new Error(`Unexpected entitlement requires release review: ${file}`);
+ inspectEntitlements(file);
  const build=execFileSync('xcrun',['vtool','-show-build',file],{encoding:'utf8'});
  const minos=build.match(/minos\s+([\d.]+)/)?.[1];
  if(!minos||later(minos,minimum))throw new Error(`Bundled executable requires macOS ${minos||'unknown'}, above the bundle minimum ${minimum}: ${file}`);
 }
+const smokeHome=mkdtempSync(join(tmpdir(),'agent-time-beta-smoke-'));
+try{
+ const collector=spawnSync(join(app,'Contents/MacOS/node'),[join(app,'Contents/Resources/capture/cli.ts'),'protocol','--output',join(smokeHome,'capture'),'--probe',join(app,'Contents/MacOS/agent-activity'),'--keychain',join(app,'Contents/MacOS/linear-keychain')],{input:'{"id":"smoke","method":"status","params":{}}\n',encoding:'utf8',timeout:15000,env:{...process.env,HOME:smokeHome}});
+ let reply;try{reply=JSON.parse(collector.stdout.trim());}catch{}
+ if(collector.status!==0||reply?.id!=='smoke'||reply?.result?.surfaces?.macosActivity!==true)throw new Error(`Bundled collector could not start: ${collector.stderr.slice(0,1000)}`);
+}finally{rmSync(smokeHome,{recursive:true,force:true});}
 run('xcrun',['stapler','validate',app]);run('xcrun',['stapler','validate',container]);
 run('spctl',['--assess','--type','execute','--verbose=4',app]);
 run('shasum',['-a','256',container,archive]);

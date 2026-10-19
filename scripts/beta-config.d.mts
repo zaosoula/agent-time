@@ -2,7 +2,7 @@ export interface BetaBuildConfig {
  bundle: {
   targets: string[];
   createUpdaterArtifacts: boolean;
-  macOS: { hardenedRuntime: boolean; minimumSystemVersion: string; signingIdentity: string; files: Record<string,string> };
+  macOS: { hardenedRuntime: boolean; entitlements: string; minimumSystemVersion: string; signingIdentity: string; files: Record<string,string> };
  };
  plugins: { updater: { pubkey: string; endpoints: string[] } };
 }

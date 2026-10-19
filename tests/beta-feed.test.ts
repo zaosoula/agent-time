@@ -27,7 +27,7 @@ test('the live feed stays absent until signed artifacts and a candidate are expl
     body,
   });
   try {
-    assert.equal((await fetch(base + '/beta/latest.json')).status, 404);
+    assert.equal((await fetch(base + '/beta/latest.json')).status, 204);
     const archivePath = `/admin/releases/${version}/${encodeURIComponent(archiveName)}`;
     assert.equal((await put(archivePath, 'archive bytes', false)).status, 401);
     assert.equal((await put(archivePath, 'archive bytes')).status, 201);
@@ -40,7 +40,7 @@ test('the live feed stays absent until signed artifacts and a candidate are expl
       signature: 'signed archive',
     }}});
     assert.equal((await put('/admin/manifest/candidate', manifest)).status, 201);
-    assert.equal((await fetch(base + '/beta/latest.json')).status, 404);
+    assert.equal((await fetch(base + '/beta/latest.json')).status, 204);
     assert.equal((await fetch(base + '/beta/latest.json.candidate')).status, 404);
     assert.equal((await fetch(base + '/admin/manifest/promote', {method: 'POST'})).status, 401);
     assert.equal((await fetch(base + '/admin/manifest/promote', {method: 'POST', headers: auth})).status, 204);

@@ -25,6 +25,7 @@ export function betaBuildConfig(env, identityList, platform = process.platform, 
       createUpdaterArtifacts: true,
       macOS: {
         hardenedRuntime: true,
+        entitlements: './entitlements.beta.plist',
         minimumSystemVersion: '13.5',
         signingIdentity: matching[1],
         files: { 'Library/LaunchAgents/studio.ezyo.agenttime.startup.plist': '../native/studio.ezyo.agenttime.startup.plist' },
