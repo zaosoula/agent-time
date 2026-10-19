@@ -9,7 +9,7 @@ struct SummaryEntry: TimelineEntry {
 struct SummaryProvider: TimelineProvider {
     func placeholder(in context: Context) -> SummaryEntry {
         let now = Date()
-        return SummaryEntry(date: now, snapshot: WidgetSnapshot(version: 1, date: WidgetSnapshot.dayString(now), updatedAt: now.timeIntervalSince1970, available: true, running: true, humanSeconds: 5400, agentSeconds: 7200, workingAgents: 2))
+        return SummaryEntry(date: now, snapshot: WidgetSnapshot(version: 1, date: WidgetSnapshot.dayString(now), updatedAt: now.timeIntervalSince1970, available: true, running: true, humanSeconds: 5400, agentSeconds: 7200, workingAgents: 2, hooksNeedUpdate: false))
     }
 
     func getSnapshot(in context: Context, completion: @escaping (SummaryEntry) -> Void) {
@@ -63,13 +63,20 @@ struct SummaryWidgetView: View {
                     metric("Working now", String(snapshot.running ? snapshot.workingAgents : 0), snapshot.running ? "agents" : "Paused")
                 }
                 Spacer(minLength: 0)
-                HStack {
-                    Text(snapshot.running ? "Tracking activity" : "Tracking paused")
-                    Spacer()
-                    Text("Updated \(Date(timeIntervalSince1970: snapshot.updatedAt), style: .time)")
+                if snapshot.hooksNeedUpdate == true {
+                    Label("Hooks need update · agent time may be missing", systemImage: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.orange)
+                        .lineLimit(2)
+                } else {
+                    HStack {
+                        Text(snapshot.running ? "Tracking activity" : "Tracking paused")
+                        Spacer()
+                        Text("Updated \(Date(timeIntervalSince1970: snapshot.updatedAt), style: .time)")
+                    }
+                    .font(.system(size: 11))
+                    .foregroundStyle(.secondary)
                 }
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
             } else {
                 Spacer(minLength: 0)
                 Text(isUnavailable ? "Open Agent Time to check capture" : "Open Agent Time to refresh today’s summary")

@@ -25,7 +25,7 @@ The local build includes its Node runtime, Swift helpers, and a native macOS wid
 
 ## Desktop widget
 
-On macOS 14 or later, right-click the desktop, choose **Edit Widgets**, and search for **Agent Time**. Add the medium **Today's work** widget. It shows today's estimated Mac activity, credited agent time, and agents working now. Click it to open Agent Time. The widget reads a local snapshot from the running app and starts no additional collector. macOS decides when to refresh widgets; the update time is shown, and an old or previous-day snapshot asks you to open Agent Time.
+On macOS 14 or later, right-click the desktop, choose **Edit Widgets**, and search for **Agent Time**. Add the medium **Today's work** widget. It shows today's estimated Mac activity, credited agent time, and agents working now. Click it to open Agent Time. The widget reads a local snapshot from the running app and starts no additional collector. It warns when agent hooks need updating because agent time may be missing, and shows an unavailable state if the collector cannot respond. macOS decides when to refresh widgets; the update time is shown, and an old or previous-day snapshot asks you to open Agent Time.
 
 For a browser development preview, run `npm run native:build` then `npm run dev`. Its local transport is provided only by the Vite development server. A hosted browser version is not implemented.
 

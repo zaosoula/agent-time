@@ -10,7 +10,8 @@ fn payload(value: &Value) -> Option<String> {
     let agent = value.get("agentSeconds")?.as_f64()?;
     let working = value.get("workingAgents")?.as_u64()?;
     if !human.is_finite() || human < 0.0 || !agent.is_finite() || agent < 0.0 || working > 1000 { return None; }
-    Some(json!({"date":date,"available":available,"running":running && available,"humanSeconds":human,"agentSeconds":agent,"workingAgents":if running && available { working } else { 0 }}).to_string())
+    let hooks_need_update = running && available && value.get("hookWarning").is_some_and(|warning| !warning.is_null());
+    Some(json!({"date":date,"available":available,"running":running && available,"humanSeconds":human,"agentSeconds":agent,"workingAgents":if running && available { working } else { 0 },"hooksNeedUpdate":hooks_need_update}).to_string())
 }
 
 pub struct WidgetPublisher {
@@ -54,5 +55,14 @@ impl WidgetPublisher {
         assert!(payload(&json!({"date":"bad","running":true,"humanSeconds":0,"agentSeconds":0,"workingAgents":0})).is_none());
         let unavailable = json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0});
         assert_eq!(serde_json::from_str::<Value>(&payload(&unavailable).unwrap()).unwrap()["available"], false);
+    }
+    #[test] fn snapshot_payload_reports_outdated_hooks_only_while_capture_runs() {
+        let mut value = json!({"date":"2026-10-19","running":true,"humanSeconds":60,"agentSeconds":120,"workingAgents":1,"hookWarning":{"key":"v1:claude","agents":["Claude Code"]}});
+        assert_eq!(serde_json::from_str::<Value>(&payload(&value).unwrap()).unwrap()["hooksNeedUpdate"], true);
+        value["hookWarning"] = Value::Null;
+        assert_eq!(serde_json::from_str::<Value>(&payload(&value).unwrap()).unwrap()["hooksNeedUpdate"], false);
+        value["running"] = json!(false);
+        value["hookWarning"] = json!({"key":"v1:claude"});
+        assert_eq!(serde_json::from_str::<Value>(&payload(&value).unwrap()).unwrap()["hooksNeedUpdate"], false);
     }
 }
