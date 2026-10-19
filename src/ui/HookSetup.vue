@@ -17,13 +17,15 @@ const installed=(provider:HookProvider)=>targets(provider).length>0&&targets(pro
 const hasFailures=computed(()=>state.value?.targets.some(t=>t.state==='error')||Boolean(state.value?.migrationError));
 const repairTargets=computed(()=>state.value?.targets.filter(t=>t.state==='needs-update'||t.state==='error')||[]);
 const repairing=computed(()=>Boolean(state.value?.setupSeen&&repairTargets.value.length));
+const allInstalled=computed(()=>Boolean(state.value&&providers.value.length&&providers.value.every(installed)&&!hasFailures.value));
 const received=(n:number|null)=>n?new Date(n*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'Waiting for an event';
 const label=(s:string)=>({'not-installed':'Not installed',installed:'Installed','needs-update':'Update needed',error:'Needs attention'}[s]||s);
 async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(!next.setupSeen&&!selected.value.length)selected.value=next.agents.map(agent=>agent.id);if(props.mode==='onboarding'){
   if(!next.setupSeen)open.value=true;
   else {const issues=next.targets.filter(t=>t.state==='needs-update'||t.state==='error');const key=issues.map(t=>`${t.id}:${t.state}`).sort().join('|')+(next.migrationError?`|migration:${next.migrationError}`:'');
+    if(key&&message.value==='Hooks installed. Start a new session to receive events.')message.value='';
     if(!key)promptedIssueKey=null;
-    else if(key!==promptedIssueKey){selected.value=[...new Set(issues.map(t=>t.provider))];promptedIssueKey=key;open.value=true;}
+    else if(key!==promptedIssueKey){message.value='';selected.value=[...new Set(issues.map(t=>t.provider))];promptedIssueKey=key;open.value=true;}
   }
 }}catch(e){error.value=String(e);}}
 async function install(list:HookProvider[]){busy.value=true;error.value='';message.value='';try{for(const provider of list)state.value=await transport.installHooks(provider);message.value=list.some(p=>!installed(p))||state.value?.migrationError?'Some configurations need attention. Check the details below.':'Hooks installed. Start a new session to receive events.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
@@ -41,7 +43,7 @@ onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refr
  <p class="hook-trust">After installation, start new agent sessions. In Codex, review and trust the “Agent Time” hooks in <strong>/hooks</strong>. Configuration checks cannot confirm provider trust.</p>
  <p v-if="error" class="hook-error" role="alert">{{error}}</p><p v-if="message" class="hook-message" role="status">{{message}}</p>
  <div v-if="repairing||hasFailures" class="hook-problems"><p v-for="t in repairTargets" :key="t.id">{{t.label}}: {{t.error||label(t.state)}}</p><p v-if="state?.migrationError">Project migration: {{state.migrationError}}</p></div>
- <div class="hook-dialog-actions"><button :disabled="busy" @click="dismiss">{{message?'Done':repairing?'Later':'Set up later'}}</button><button class="hook-primary" :disabled="busy||!selected.length||!state" @click="install(selected)">{{busy?'Installing…':repairing?'Update selected hooks':'Install selected hooks'}}</button></div>
+ <div class="hook-dialog-actions"><button :disabled="busy" @click="dismiss">{{allInstalled||message?'Done':repairing?'Later':'Set up later'}}</button><button v-if="!allInstalled" class="hook-primary" :disabled="busy||!selected.length||!state" @click="install(selected)">{{busy?'Installing…':repairing?'Update selected hooks':'Install selected hooks'}}</button></div>
 </DialogContent></DialogPortal></DialogRoot>
 <template v-else>
 <section id="settings-agents" class="hook-section" aria-labelledby="agents-heading" tabindex="-1">
