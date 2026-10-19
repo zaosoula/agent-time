@@ -70,6 +70,12 @@ for(const [key,expected] of [
  const actual=plistValue(widgetInfo,key);
  if(actual!==expected)throw new Error(`Widget ${key} mismatch: ${actual}`);
 }
+const archiveEntries=execFileSync('tar',['-tzf',archive],{encoding:'utf8'}).split('\n');
+for(const suffix of [
+ '/Contents/PlugIns/AgentTimeWidget.appex/Contents/MacOS/AgentTimeWidget',
+ '/Contents/MacOS/widget-snapshot',
+ '/Contents/Resources/icon.icns',
+])if(!archiveEntries.some(entry=>entry.endsWith(suffix)))throw new Error(`Updater archive is missing ${suffix}`);
 const bundledFiles=[];
 function visit(folder){for(const entry of readdirSync(folder,{withFileTypes:true})){
  const path=join(folder,entry.name);
