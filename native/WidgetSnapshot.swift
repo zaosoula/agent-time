@@ -9,6 +9,7 @@ struct TraySummary: Decodable {
     let agentSeconds: Double
     let workingAgents: Int
     let hooksNeedUpdate: Bool
+    let captureNeedsAttention: Bool
 }
 
 @main
@@ -32,7 +33,8 @@ do {
         humanSeconds: summary.available ? summary.humanSeconds : 0,
         agentSeconds: summary.available ? summary.agentSeconds : 0,
         workingAgents: summary.running && summary.available ? summary.workingAgents : 0,
-        hooksNeedUpdate: summary.running && summary.available && summary.hooksNeedUpdate
+        hooksNeedUpdate: summary.running && summary.available && summary.hooksNeedUpdate,
+        captureNeedsAttention: summary.running && summary.available && summary.captureNeedsAttention
     )
     guard let group = agentTimeWidgetGroup(),
           let container = FileManager.default.containerURL(forSecurityApplicationGroupIdentifier: group) else {

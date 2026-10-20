@@ -52,5 +52,12 @@
       "icons/icon.icns",
       "icons/icon.png"
     ]
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["agenttime"]
+      }
+    }
   }
 }

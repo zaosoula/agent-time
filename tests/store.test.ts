@@ -16,6 +16,16 @@ test('replays are idempotent and conflicting IDs are rejected', () => {
   assert.throws(() => store.put({ ...event, kind: 'stopped' }), /conflict/);
   assert.deepEqual(store.events(), [event]); store.close();
 });
+test('startup reads only capture setting boundaries without replaying activity',()=>{
+ const store=new EventStore(':memory:');
+ try{
+  store.put({...event,eventId:'activity',source:'macos',kind:'activity'});
+  store.put({...event,eventId:'later',source:'capture',kind:'capture_settings',observedAt:20});
+  store.put({...event,eventId:'start',source:'capture',kind:'capture_start',observedAt:15});
+  store.put({...event,eventId:'earlier',source:'capture',kind:'capture_settings',observedAt:12});
+  assert.deepEqual(store.settingsEvents().map(item=>item.eventId),['later','earlier']);
+ }finally{store.close();}
+});
 test('nonfinite timestamps are rejected and clock rollback is retained', () => {
   const store = new EventStore(':memory:');
   assert.throws(() => store.put({ ...event, observedAt: NaN }));

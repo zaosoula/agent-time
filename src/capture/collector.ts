@@ -1,6 +1,6 @@
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
-import { EventStore } from './store.ts';
+import { EventStore, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
@@ -15,15 +15,20 @@ import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityC
 import {WebsiteResolver,websiteKey,projectPathFromWorktree,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
 import {applyHumanDecisions,humanIntervalKey} from './human-review.ts';
-import {agents,browsers,pollers,agentById,sourceMetadata} from './sources/registry.ts';
+import {agents,browsers,pollers,agentById,sourceMetadata,browserByBundle} from './sources/registry.ts';
 import {outdatedHookTargets} from './hook-warning.ts';
 import {diagnosticSummary} from './diagnostics.ts';
+import {sourceStates} from './source-state.ts';
+import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
+import {weeklyReview} from './weekly.ts';
 import {release as osRelease} from 'node:os';
+import {randomUUID} from 'node:crypto';
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private running=false; private timer:ReturnType<typeof setTimeout>|undefined; private deadline:ReturnType<typeof setTimeout>|undefined;
   private activityProbe:MacActivityProbe; private inFlight:Promise<void>|undefined; private lastPoll:number|null=null;
   private lastError:string|null=null; private macos:Record<string,unknown>|null=null; private lockOwned=false;
+  private failedPoller:string|null=null; private macError:string|null=null;
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
@@ -35,11 +40,14 @@ export class Collector {
   private focusRefresh:Promise<void>|undefined;
   private websiteResolver:WebsiteResolver;private websiteMatches=new Map<string,WebsiteResolution>();private websiteApplied=new Map<string,number>();private websitePending=new Map<string,Promise<void>>();private websiteRevision=0;
   private linear:LinearConnection;
+  private privacy:PrivacyExclusions;
+  private activityEpoch:string|undefined;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
-    this.activityProbe=new MacActivityProbe(probe,()=>this.surfaces,()=>this.running,line=>this.onProbeLine(line),reason=>{this.lastError=reason;if(reason==='macOS helper exited')this.store.put(makeEvent('macos','coverage',{data:{reason}}));},()=>this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}})));
+    this.activityProbe=new MacActivityProbe(probe,()=>this.surfaces,()=>this.running,line=>this.onProbeLine(line),reason=>{this.lastError=reason;this.macError=reason;if(reason==='macOS helper exited')this.store.put(makeEvent('macos','coverage',{data:{reason}}));},()=>{this.macError='macOS activity helper not available';this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}}));});
     this.websiteResolver=new WebsiteResolver(output);
+    this.privacy=new PrivacyExclusions(output);
     this.linear=new LinearConnection(output,keychainHelper(keychainPath));
     const settings=join(output,'settings.json');
     if(existsSync(settings)) {
@@ -50,13 +58,13 @@ export class Collector {
         this.legacyHookSpools=[...new Set(candidates.filter((p):p is string=>typeof p==='string'&&isAbsolute(p)&&basename(p)==='spool').map(p=>resolve(p)).filter(p=>p!==resolve(output,'spool')))];
       }
     }
-    this.surfaceHistory=this.store.events().filter(e=>e.kind==='capture_settings').sort((a,b)=>a.observedAt-b.observedAt);
+    this.surfaceHistory=this.store.settingsEvents().sort((a,b)=>a.observedAt-b.observedAt);
     this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
   status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),macos:this.macos,output:this.output};}
-  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);const hooks=this.running?this.hookInstallation.status():null;const outdated=outdatedHookTargets({running:this.running,surfaces:this.surfaces},hooks);const hookWarning=outdated.length&&hooks?{key:hooks.runtimeVersion+':'+outdated.map(target=>target.id).sort().join(','),agents:[...new Set(outdated.map(target=>hooks.agents.find(agent=>agent.id===target.provider)?.name||target.provider))]}:null;const summary=this.summary(15000);return {date,running:this.running,...dailyTotals(summary,now),workingAgents:workingAgentCount(summary,now,this.running),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning};}
+  trayStatus(){const now=new Date(),date=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;const usage=this.usageReader.summary().days.filter(d=>d.date===date);const hooks=this.running?this.hookInstallation.status():null;const outdated=outdatedHookTargets({running:this.running,surfaces:this.surfaces},hooks);const hookWarning=outdated.length&&hooks?{key:hooks.runtimeVersion+':'+outdated.map(target=>target.id).sort().join(','),agents:[...new Set(outdated.map(target=>hooks.agents.find(agent=>agent.id===target.provider)?.name||target.provider))]}:null;const sourceWarning=this.running?this.captureHealth().sources.filter(source=>['stale','failed','repair-needed'].includes(source.state)).map(source=>source.name):[];const summary=this.summary(15000);return {date,running:this.running,...dailyTotals(summary,now),workingAgents:workingAgentCount(summary,now,this.running),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning,sourceWarning};}
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}
@@ -66,14 +74,22 @@ export class Collector {
     const hooks=(provider:HookProvider)=>{const own=targets.filter(t=>t.provider===provider);return {installed:own.filter(t=>t.state==='installed').length,total:own.length,needsAttention:own.some(t=>t.state==='needs-update'||t.state==='error')};};
     const currentUrl=typeof this.macos?.browserUrl==='string'?this.macos.browserUrl:null,currentKey=currentUrl?websiteKey(currentUrl,this.websiteResolver.rules()):null;
     const current=currentKey?{key:currentKey,observedAt:Number(this.macos?.observedAt)||0}:undefined;
-    return {checkedAt:Date.now()/1000,latest:{macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,hookEvents[agent.id][0]?.observedAt||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))},hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
+    const latest={macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,hookEvents[agent.id][0]?.observedAt||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))};
+    const checkedAt=Date.now()/1000;
+    return {checkedAt,latest,hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),sources:sourceStates({running:this.running,surfaces:this.surfaces,orcaAvailable:this.orcaAvailable(),lastPoll:this.lastPoll,failedPoller:this.failedPoller,latest,hooks:{targets},macosTrusted:typeof this.macos?.accessibilityTrusted==='boolean'?this.macos.accessibilityTrusted:null,macosExcluded:this.macos?.excluded===true,macError:this.macError!==null,foregroundBundleId:typeof this.macos?.foregroundBundleId==='string'?this.macos.foregroundBundleId:null,browserDetailAvailable:typeof this.macos?.browserDomain==='string'&&this.macos.browserDomain.length>0,now:checkedAt}),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
   }
   diagnostics(){
     const bytes=['events.sqlite','events.sqlite-wal'].reduce((total,file)=>{try{return total+statSync(join(this.output,file)).size;}catch{return total;}},0);
     return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
+  exportArchive(){return this.store.exportArchive(this.output);}
   verifyHooks(){return this.hookInstallation.verify();}
-  installHooks(provider:HookProvider){return this.hookInstallation.install(provider);}
+  privacyExclusions(){return this.privacy.list();}
+  setPrivacyExclusions(entries:PrivacyExclusion[]){
+    if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Change privacy exclusions in the app that owns capture');
+    return this.privacy.replace(entries);
+  }
+  installHooks(provider:HookProvider,targetIds?:string[]){return this.hookInstallation.install(provider,targetIds);}
   dismissHookSetup(){return this.hookInstallation.dismiss();}
   usage(){return this.usageReader.summary();}
   async linearStatus(){
@@ -163,8 +179,15 @@ export class Collector {
   private onProbeLine(line:string){
     try{
       const payload=JSON.parse(line);
+      if(this.privacy.matches(payload,browserByBundle.has(String(payload.foregroundBundleId)))){
+        // No excluded sample is stored. A new epoch prevents the next visible
+        // sample from crediting the gap across private foreground activity.
+        if(this.macos?.excluded!==true)this.activityEpoch=randomUUID();
+        this.macos={excluded:true,observedAt:Date.now()/1000};this.macError=null;return;
+      }
       if(!browserEnabled(this.surfaces,payload.foregroundBundleId)){delete payload.browserDomain;delete payload.browserUrl;delete payload.browserTitle;}
       const event=normalizeActivity(payload,{hostId:'local'});
+      if(this.activityEpoch)event.collectorEpoch=this.activityEpoch;
       const browserUrl=event.data?.browserUrl;
       if(typeof browserUrl==='string'){
         const key=websiteKey(browserUrl,this.websiteResolver.rules()),match=key?this.websiteMatches.get(key):undefined;
@@ -174,8 +197,8 @@ export class Collector {
       const foreground=pollers.map(source=>source.foreground?.(payload,event,this.focusedTabs,this.focusedTabsAt)).find(Boolean);
       this.macos={...payload,orcaAttribution:foreground?.attribution||null,websiteAttribution:event.data?.websiteAttribution||null};
       if(foreground?.accessibility)this.lastOrcaAccessibility=foreground.accessibility;
-      this.store.put(event);
-    }catch{this.lastError='Invalid macOS observation';}
+      this.store.put(event);this.macError=null;
+    }catch{this.lastError='Invalid macOS observation';this.macError=this.lastError;}
   }
   private refreshProbeTrust():Promise<void>|undefined{return this.activityProbe.refreshTrust(this.macos);}
   summary(maxAgeMs=0):Summary {
@@ -186,6 +209,11 @@ export class Collector {
     this.summaryCache={revision,at:Date.now(),value:summary};return summary;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
+  weeklyReview(startDate:string){return weeklyReview(this.summary(15000),startDate);}
+  manualNotes(date:string){return this.store.manualNotes(date);}
+  addManualNote(input:Omit<ManualNote,'id'|'createdAt'>){this.requireOwner();return this.store.addManualNote(input);}
+  removeManualNote(id:string){this.requireOwner();return this.store.removeManualNote(id);}
+  private requireOwner(){if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Edit manual notes in the app that owns capture');}
   async start(durationSeconds?:number) {
     if(durationSeconds!==undefined&&(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds>86400))throw new Error('Duration must be 1–86400 seconds');
     if(this.running)return this.status();
@@ -197,7 +225,7 @@ export class Collector {
       try{process.kill(pid,0);throw new Error('Another collector owns this data directory');}catch(error){if((error as NodeJS.ErrnoException).code!=='ESRCH')throw error;}
       unlinkSync(lock);
     }
-    writeFileSync(lock,String(process.pid),{mode:0o600,flag:'wx'});this.lockOwned=true;this.running=true;this.lastError=null;
+    writeFileSync(lock,String(process.pid),{mode:0o600,flag:'wx'});this.lockOwned=true;this.running=true;this.lastError=null;this.failedPoller=null;this.macError=null;
     this.store.put(makeEvent('capture','capture_start'));
     this.activityProbe.start();
     this.syncUsage();
@@ -218,7 +246,7 @@ export class Collector {
   }
   private async poll() {
     try{
-      let pollingError:string|null=null;
+      let pollingError:string|null=null,failedPoller:string|null=null;
       void this.refreshProbeTrust();
       const orcaAvailable=this.orcaAvailable();
       if(orcaAvailable)this.refreshFocusedTabs();
@@ -226,11 +254,11 @@ export class Collector {
       for(const source of pollers.filter(source=>this.surfaces[source.setting]&&(source.id!=='orca'||orcaAvailable))){
         const revision=this.revision,valid=()=>this.running&&this.surfaces[source.setting]===true&&this.revision===revision;
         const error=await source.poll({reader:this.reader,runId:this.runId,valid,store:this.store});
-        if(valid()&&error&&!pollingError)pollingError=error;
+        if(valid()&&error&&!pollingError){pollingError=error;failedPoller=source.id;}
       }
       for(const issue of this.drainHooks())this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
-      this.lastPoll=Date.now()/1000;this.lastError=pollingError;
-    }catch(error){this.lastError=String(error);this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}
+      this.lastPoll=Date.now()/1000;this.lastError=pollingError;this.failedPoller=failedPoller;
+    }catch(error){this.lastError=String(error);this.failedPoller=null;this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}
   }
   stop():Promise<ReturnType<Collector['status']>> {
     if(this.stopping)return this.stopping;

@@ -49,6 +49,22 @@ test('reinstalling unchanged Codex hooks does not replace trusted configuration 
   }
  }finally{f.close();}
 });
+test('repairing one Codex target preserves the trusted sibling configuration',async()=>{
+ const f=fixture();try{
+  const account=join(f.home,'Library/Application Support/orca/codex-accounts/account/home');mkdirSync(account,{recursive:true});
+  await f.manager.install('codex');
+  const user=join(f.home,'.codex/hooks.json'),accountHooks=join(account,'hooks.json');
+  const before={bytes:readFileSync(user,'utf8'),inode:statSync(user).ino,modified:statSync(user).mtimeMs};
+  writeFileSync(accountHooks,'{}');
+  const damaged=f.manager.status().targets.find(target=>target.path===accountHooks)!;
+  assert.equal(damaged.state,'needs-update');assert.ok(damaged.reason);
+  await f.manager.install('codex',[damaged.id]);
+  assert.equal(f.manager.status().targets.find(target=>target.id===damaged.id)?.state,'installed');
+  assert.equal(readFileSync(user,'utf8'),before.bytes);
+  assert.equal(statSync(user).ino,before.inode);
+  assert.equal(statSync(user).mtimeMs,before.modified);
+ }finally{f.close();}
+});
 test('an existing hashed command migrates once to the stable launcher',async()=>{
  const f=fixture();try{
   await f.manager.install('claude');const target=f.manager.status().targets.find(t=>t.provider==='claude')!;

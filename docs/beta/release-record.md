@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## Tracking reliability work — 2026-10-20, unreleased
+
+Branch `feat/tracking-reliability-roadmap` contains per-source capture states including browsers, bounded collector restart, targeted hook repair, first-event setup feedback, privacy exclusions that discard browser samples when a site exclusion cannot be checked, timed pause, bulk daily review, manual notes, weekly review/export, a previewable diagnostic summary, a verified SQLite archive, background update checks, and a widget route to capture health. Local verification passed 198 JavaScript tests, 12 locked Rust tests, the interface build, an Apple Silicon app build, nested signature verification, and packaged `agenttime` URL scheme inspection. That app build used local development signing and was **not notarized or published**. The current public beta remains `0.2.0-beta.4`.
+
+On a read-only 429 MB local store with about 553,000 events, the new indexed startup settings query read 179 relevant records in about 1 ms; the prior startup code loaded and parsed all events. Full summary replay still takes about 3 seconds and is a release performance limitation. A shorter date window happened to match sampled days but was not shipped because a valid observed span may cross its boundaries. No history retention or deletion was introduced.
+
+Before a new public version: complete safe daily projection work, build a versioned Developer ID signed and notarized candidate on Apple Silicon, verify widget deep-link navigation and timed pause on a real install, and record clean-Mac first run plus actual signed OTA update/recovery. Do not promote this branch's development build or change the public feed based on local tests alone.
+
 Status: **`0.2.0-beta.4` published on 2026-10-19** with a macOS daily summary widget and refreshed app icon. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation, visual widget gallery confirmation, Mac mini confirmation, and end-to-end OTA results are still pending.
 
 ## Release contract
