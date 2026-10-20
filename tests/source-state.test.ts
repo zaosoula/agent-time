@@ -14,12 +14,20 @@ const state=(data:SourceStateInput,id:string)=>sourceStates(data).find(item=>ite
 test('installed hooks wait for an actual event instead of claiming working capture',()=>{
  const data=input();assert.equal(state(data,'codex').state,'waiting');
  assert.equal(state(data,'codex').action,'start-session');
- data.latest.codex=900;assert.equal(state(data,'codex').state,'receiving');
+ data.latest.codex=900;assert.equal(state(data,'codex').state,'waiting');
+ data.hooks.targets[1].lastEvent=900;assert.equal(state(data,'codex').state,'verified');
+ data.hooks.targets[1].lastEvent=995;assert.equal(state(data,'codex').state,'receiving');
 });
 test('outdated hooks take precedence over past delivery and keep a repair action',()=>{
  const data=input();data.latest.claude=950;data.hooks.targets[0].state='needs-update';
  assert.equal(state(data,'claude').state,'repair-needed');
  assert.equal(state(data,'claude').action,'repair-hooks');
+});
+test('one delivered installation does not verify another installation',()=>{
+ const data=input();data.hooks.targets.push({...data.hooks.targets[1],id:'codex-2',lastEvent:null});
+ data.hooks.targets[1].lastEvent=995;
+ assert.equal(state(data,'codex').state,'waiting');
+ assert.match(state(data,'codex').detail,/1 of 2/);
 });
 test('paused and optional unavailable sources are distinct from failure',()=>{
  const data=input();assert.equal(state(data,'orca').state,'unavailable');

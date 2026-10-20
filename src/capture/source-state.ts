@@ -2,7 +2,7 @@ import type {CaptureSettings} from './settings.ts';
 import type {HookInstallationStatus} from './hook-installation.ts';
 import {sourceMetadata} from './sources/registry.ts';
 
-export type SourceState='off'|'paused'|'unavailable'|'excluded'|'repair-needed'|'waiting'|'receiving'|'permission-limited'|'stale'|'failed';
+export type SourceState='off'|'paused'|'unavailable'|'excluded'|'repair-needed'|'waiting'|'receiving'|'verified'|'permission-limited'|'stale'|'failed';
 export interface SourceSnapshot {id:string;name:string;state:SourceState;lastEvent:number|null;action:'none'|'resume'|'repair-hooks'|'start-session'|'open-browser'|'grant-accessibility'|'retry';detail:string;}
 export interface SourceStateInput {
  running:boolean;surfaces:CaptureSettings;orcaAvailable:boolean;lastPoll:number|null;failedPoller:string|null;
@@ -32,9 +32,12 @@ export function sourceStates(input:SourceStateInput):SourceSnapshot[]{
    const targets=input.hooks.targets.filter(target=>target.provider===source.id);
    if(targets.some(target=>target.state==='needs-update'||target.state==='error')||!targets.length||targets.some(target=>target.state==='not-installed'))
     return {...base,state:'repair-needed',action:'repair-hooks',detail:'Install or repair agent hooks'};
-   if(!lastEvent)return {...base,state:'waiting',action:'start-session',detail:'Start a new session; in Codex, trust Agent Time in /hooks'};
-   // An old event proves past delivery, but not that an agent is active now.
-   return {...base,state:'receiving',action:'none',detail:'Hook event received; no active session is implied'};
+   const delivered=targets.map(target=>target.lastEvent).filter((at):at is number=>typeof at==='number'&&Number.isFinite(at));
+   if(!delivered.length)return {...base,lastEvent:null,state:'waiting',action:'start-session',detail:'Start a new session; in Codex, trust Agent Time in /hooks'};
+   const currentLast=Math.max(...delivered);
+   if(delivered.length<targets.length)return {...base,lastEvent:currentLast,state:'waiting',action:'start-session',detail:`${delivered.length} of ${targets.length} hook installations delivered a current-runtime event. Start a new session in each installation.`};
+   if(input.now-currentLast>60)return {...base,lastEvent:currentLast,state:'verified',action:'none',detail:'Current runtime delivered an event earlier; start a new session to verify it still delivers'};
+   return {...base,lastEvent:currentLast,state:'receiving',action:'none',detail:'Recent hook event received; no active session is implied'};
   }
   const latest=source.id==='orca'?input.lastPoll:lastEvent;
   if(input.failedPoller===source.id)return {...base,state:'failed',action:'retry',detail:'Collector reported a poll error'};

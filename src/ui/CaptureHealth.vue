@@ -28,7 +28,7 @@ const cards=computed(()=>{
   const info=health?.hooks[provider],last=health?.latest[provider];
   const source=health?.sources.find(item=>item.id===provider);
   const state=source?.state;
-  return {key:provider,name:sourceName(provider),icon:Bot,state:!status?'Checking…':state==='repair-needed'?'Repair needed':state==='waiting'?'Waiting for first event':state==='receiving'?'Event received':state==='paused'?'Paused':state==='off'?'Off':'Checking…',tone:!live||!setting?'quiet':state==='receiving'?'good':'warning',primary:info?`${info.installed} of ${info.total} hook configurations installed`:'Checking hooks…',secondary:state==='waiting'?source!.detail:`Last event ${age(last)}`,repair:state==='repair-needed'};
+  return {key:provider,name:sourceName(provider),icon:Bot,state:!status?'Checking…':state==='repair-needed'?'Repair needed':state==='waiting'?'Waiting for first event':state==='receiving'?'Recent event received':state==='verified'?'Previously verified':state==='paused'?'Paused':state==='off'?'Off':'Checking…',tone:!live||!setting||state==='verified'?'quiet':state==='receiving'?'good':'warning',primary:info?`${info.installed} of ${info.total} hook configurations installed`:'Checking hooks…',secondary:state==='waiting'?source!.detail:`Last current-runtime event ${age(last)}`,repair:state==='repair-needed'};
  };
  const macLast=health?.latest.macos,macSource=health?.sources.find(source=>source.id==='macos');
  const macExcluded=macSource?.state==='excluded';

@@ -155,10 +155,20 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
 async fn capture_request(method:String,params:Value,bridge:State<'_,Arc<Bridge>>)->Result<Value,String>{
  let bridge=bridge.inner().clone();tauri::async_runtime::spawn_blocking(move||bridge.request(&method,params)).await.map_err(|e|e.to_string())?
 }
+#[cfg(unix)]
+fn available_bytes(path:&std::path::Path)->Result<u64,String>{
+ use std::os::unix::ffi::OsStrExt;
+ let name=std::ffi::CString::new(path.as_os_str().as_bytes()).map_err(|e|e.to_string())?;
+ let mut info=std::mem::MaybeUninit::<libc::statvfs>::uninit();
+ if unsafe{libc::statvfs(name.as_ptr(),info.as_mut_ptr())}!=0{return Err(std::io::Error::last_os_error().to_string());}
+ let info=unsafe{info.assume_init()};
+ Ok((info.f_bavail as u64).saturating_mul(info.f_frsize as u64))
+}
 fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<String,String>{
  use std::io::{Read,Seek,SeekFrom};
  let info=std::fs::symlink_metadata(source).map_err(|e|e.to_string())?;
  if !info.is_file()||info.file_type().is_symlink()||source.extension().and_then(|v|v.to_str())!=Some("sqlite"){return Err("Choose a regular SQLite archive".into());}
+ if info.len()>8*1024*1024*1024{return Err("Archive is larger than the 8 GB import limit".into());}
  let mut input=std::fs::File::open(source).map_err(|e|e.to_string())?;
  let mut header=[0u8;16];input.read_exact(&mut header).map_err(|e|e.to_string())?;
  if &header!=b"SQLite format 3\0"{return Err("Selected file is not a SQLite archive".into());}
@@ -166,6 +176,7 @@ fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<S
  let folder=output.join("exports");
  if folder.exists()&&std::fs::symlink_metadata(&folder).map_err(|e|e.to_string())?.file_type().is_symlink(){return Err("Export folder must not be a symlink".into());}
  std::fs::create_dir_all(&folder).map_err(|e|e.to_string())?;
+ #[cfg(unix)] if available_bytes(&folder)?<info.len().saturating_add(256*1024*1024){return Err("Not enough free space to stage this archive safely".into());}
  #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&folder,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;}
  let stamp=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
  let id=format!("agent-time-{stamp}-{}.sqlite",uuid::Uuid::new_v4());
@@ -174,6 +185,7 @@ fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<S
   let mut target=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e|e.to_string())?;
   #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;target.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
   std::io::copy(&mut input,&mut target).map_err(|e|e.to_string())?;
+  if target.metadata().map_err(|e|e.to_string())?.len()!=info.len(){return Err("Archive changed during copying".into());}
   target.sync_all().map_err(|e|e.to_string())
  })();
  if let Err(error)=result{let _=std::fs::remove_file(&path);return Err(error);}
@@ -362,6 +374,9 @@ mod archive_stage_tests {
   #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;assert_eq!(std::fs::metadata(root.join("exports")).unwrap().permissions().mode()&0o777,0o700);let file=std::fs::read_dir(root.join("exports")).unwrap().next().unwrap().unwrap().path();assert_eq!(std::fs::metadata(file).unwrap().permissions().mode()&0o777,0o600);}
   std::fs::write(&source,b"wrong").unwrap();
   assert!(stage_archive_copy(&source,&root).is_err());
+  let huge=std::fs::OpenOptions::new().write(true).open(&source).unwrap();
+  huge.set_len(8*1024*1024*1024+1).unwrap();
+  assert!(stage_archive_copy(&source,&root).unwrap_err().contains("8 GB"));
   std::fs::remove_dir_all(root).unwrap();
  }
 }

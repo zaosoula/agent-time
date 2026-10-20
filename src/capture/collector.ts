@@ -47,6 +47,7 @@ export class Collector {
   private activityEpoch:string|undefined;
   private clockSample:{wall:number;uptime:number}|undefined;
   private clockShiftSeconds=0;
+  private clockNoticeUntil=0;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
@@ -79,7 +80,7 @@ export class Collector {
     const hooks=(provider:HookProvider)=>{const own=targets.filter(t=>t.provider===provider);return {installed:own.filter(t=>t.state==='installed').length,total:own.length,needsAttention:own.some(t=>t.state==='needs-update'||t.state==='error')};};
     const currentUrl=typeof this.macos?.browserUrl==='string'?this.macos.browserUrl:null,currentKey=currentUrl?websiteKey(currentUrl,this.websiteResolver.rules()):null;
     const current=currentKey?{key:currentKey,observedAt:Number(this.macos?.observedAt)||0}:undefined;
-    const latest={macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,hookEvents[agent.id][0]?.observedAt||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))};
+    const latest={macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,Math.max(0,...targets.filter(target=>target.provider===agent.id).map(target=>target.lastEvent||0))||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))};
     const checkedAt=Date.now()/1000;
     return {checkedAt,latest,hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),sources:sourceStates({running:this.running,surfaces:this.surfaces,orcaAvailable:this.orcaAvailable(),lastPoll:this.lastPoll,failedPoller:this.failedPoller,latest,hooks:{targets},macosTrusted:typeof this.macos?.accessibilityTrusted==='boolean'?this.macos.accessibilityTrusted:null,macosExcluded:this.macos?.excluded===true,macError:this.macError!==null,foregroundBundleId:typeof this.macos?.foregroundBundleId==='string'?this.macos.foregroundBundleId:null,browserDetailAvailable:typeof this.macos?.browserDomain==='string'&&this.macos.browserDomain.length>0,now:checkedAt}),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
   }
@@ -87,7 +88,8 @@ export class Collector {
   diagnostics(){
     const bytes=['events.sqlite','events.sqlite-wal'].reduce((total,file)=>{try{return total+statSync(join(this.output,file)).size;}catch{return total;}},0);
     const wall=Date.now()/1000,uptime=process.uptime();
-    if(this.clockSample){const delta=(wall-this.clockSample.wall)-(uptime-this.clockSample.uptime);if(Math.abs(delta)>120)this.clockShiftSeconds=delta;}
+    if(this.clockSample){const delta=(wall-this.clockSample.wall)-(uptime-this.clockSample.uptime);if(Math.abs(delta)>120){this.clockShiftSeconds=delta;this.clockNoticeUntil=wall+600;}}
+    if(wall>this.clockNoticeUntil)this.clockShiftSeconds=0;
     this.clockSample={wall,uptime};
     let freeBytes:number|null=null;
     try{const fs=statfsSync(this.output);freeBytes=Number(fs.bavail)*Number(fs.bsize);}catch{/* Disk free space unavailable on this host. */}
