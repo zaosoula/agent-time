@@ -6,6 +6,7 @@ import HookSetup from './HookSetup.vue';
 import TrackingCleanup from './TrackingCleanup.vue';
 import PrivacyExclusions from './PrivacyExclusions.vue';
 import ArchiveExport from './ArchiveExport.vue';
+import StorageUsage from './StorageUsage.vue';
 import WebsiteRules from './WebsiteRules.vue';
 import LinearConnection from './LinearConnection.vue';
 import {native,openAccessibilitySettings,startupItem,type StartupItemStatus,type CaptureStatus} from './transport.ts';
@@ -60,6 +61,7 @@ onUnmounted(()=>window.removeEventListener('focus',refreshStartup));
    <div class="control-list startup-list"><div class="control-row"><div class="control-copy"><label id="startup-label" for="startup-item"><strong>Start capture when I sign in</strong></label><p>Start Agent Time in the menu bar with the dashboard hidden. Capture continues while the window is closed.</p><small>{{!native?'Available in the packaged Mac app':!startup?'Checking login item…':startup.status==='enabled'?'Enabled · starts at login':startup.status==='requiresApproval'?'Needs approval in macOS Login Items':'Off · open Agent Time to capture'}}</small></div><SwitchRoot id="startup-item" aria-labelledby="startup-label" class="surface-switch" :model-value="startup?.status==='enabled'" :disabled="!native||!startup||startupBusy" @update:model-value="changeStartup($event)"><SwitchThumb class="surface-thumb"/></SwitchRoot></div><div v-if="startup?.status==='requiresApproval'||startupError" class="startup-note"><p v-if="startupError" role="alert">{{startupError}}</p><button v-if="startup?.status==='requiresApproval'" @click="openStartupSettings">Open Login Items <ArrowUpRight :size="13"/></button></div></div>
    <div class="permission-card"><ShieldCheck :size="19"/><div><h3>Accessibility permission</h3><strong>{{!status?.surfaces.macosActivity?'Activity capture disabled':!status.macos?'Checking permission…':status.macos.accessibilityTrusted?'Granted':'Not granted · basic activity available'}}</strong><p>Foreground app and idle tracking work without Accessibility. Grant it to identify Orca’s selected terminal tab and the active website domain. Unmatched activity stays in the overall human total.</p><button v-if="native" class="permission-button" @click="openPermission">Open System Settings <ArrowUpRight :size="13"/></button><p v-else>Manage permission in System Settings → Privacy &amp; Security → Accessibility.</p></div></div>
    <PrivacyExclusions/>
+   <StorageUsage/>
    <ArchiveExport/>
    <TrackingCleanup/>
   </section>

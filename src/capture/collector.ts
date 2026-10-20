@@ -21,6 +21,7 @@ import {diagnosticSummary} from './diagnostics.ts';
 import {sourceStates} from './source-state.ts';
 import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {weeklyReview} from './weekly.ts';
+import {storageUsage} from './storage-usage.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
 export class Collector {
@@ -83,6 +84,7 @@ export class Collector {
     return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
   exportArchive(){return this.store.exportArchive(this.output);}
+  storageUsage(){return storageUsage(this.output);}
   verifyHooks(){return this.hookInstallation.verify();}
   privacyExclusions(){return this.privacy.list();}
   setPrivacyExclusions(entries:PrivacyExclusion[]){
