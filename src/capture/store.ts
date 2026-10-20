@@ -1,5 +1,5 @@
 import { DatabaseSync,backup } from 'node:sqlite';
-import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync } from 'node:fs';
+import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
 import type {HumanDecision} from './human-review.ts';
@@ -7,6 +7,8 @@ import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
+export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;}
+const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid manual note');
  const item=value as Record<string,unknown>;
@@ -111,6 +113,68 @@ export class EventStore {
       chmodSync(temp,0o600);renameSync(temp,path);
       return {path,bytes:statSync(path).size,events};
     }catch(error){if(existsSync(temp))rmSync(temp);throw error;}
+  }
+  listArchives(output:string):Array<{id:string;bytes:number}>{
+    const folder=join(output,'exports');
+    if(!existsSync(folder))return [];
+    if(lstatSync(folder).isSymbolicLink())throw new Error('Export folder must not be a symlink');
+    return readdirSync(folder).filter(id=>archiveName.test(id)).flatMap(id=>{
+      const info=lstatSync(join(folder,id));
+      return info.isFile()&&!info.isSymbolicLink()?[{id,bytes:info.size}]:[];
+    }).sort((a,b)=>b.id.localeCompare(a.id));
+  }
+  private withArchive<T>(output:string,id:string,run:(hasUsage:boolean)=>T):T{
+    if(!archiveName.test(id))throw new Error('Invalid archive ID');
+    const folder=join(output,'exports'),path=join(folder,id);
+    if(lstatSync(folder).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())throw new Error('Archive must be a regular file');
+    const check=new DatabaseSync(path,{readOnly:true});
+    try{
+      if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Archive integrity check failed');
+      for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
+        if(!check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Archive schema is incomplete');
+    }finally{check.close();}
+    this.db.prepare('ATTACH DATABASE ? AS archive').run(path);
+    try{
+      const hasUsage=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='usage_events'").get());
+      return run(hasUsage);
+    }finally{this.db.exec('DETACH DATABASE archive');}
+  }
+  previewArchive(output:string,id:string):ArchivePreview{
+    return this.withArchive(output,id,()=>this.previewAttachedArchive(id));
+  }
+  importArchive(output:string,id:string):{addedEvents:number;addedNotes:number;addedDecisions:number}{
+    return this.withArchive(output,id,hasUsage=>{
+      const preview=this.previewAttachedArchive(id);
+      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
+      for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)').iterate()){
+        const event=JSON.parse(String(row.payload)) as CaptureEvent;
+        validateEvent(event);
+        if(event.eventId!==row.event_id||event.observedAt!==row.observed_at)throw new Error('Archive event columns do not match the payload');
+      }
+      this.db.exec('BEGIN IMMEDIATE');
+      try{
+        this.db.exec('INSERT OR IGNORE INTO main.events SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid');
+        this.db.exec('INSERT OR IGNORE INTO main.observation_signatures SELECT identity,signature FROM archive.observation_signatures');
+        this.db.exec('INSERT OR IGNORE INTO main.human_decisions SELECT start_event_id,end_event_id,mode,project_path,decided_at FROM archive.human_decisions');
+        this.db.exec('INSERT OR IGNORE INTO main.manual_notes SELECT id,start,end,project,note,created_at FROM archive.manual_notes');
+        if(hasUsage){
+          this.db.exec('CREATE TABLE IF NOT EXISTS main.usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');
+          this.db.exec('INSERT OR IGNORE INTO main.usage_events SELECT id,timestamp,payload FROM archive.usage_events');
+        }
+        this.db.exec('COMMIT');this.generation++;
+      }catch(error){this.db.exec('ROLLBACK');throw error;}
+      return {addedEvents:preview.newEvents,addedNotes:preview.newNotes,addedDecisions:preview.newDecisions};
+    });
+  }
+  private previewAttachedArchive(id:string):ArchivePreview{
+    const count=(query:string)=>Number(this.db.prepare(query).get()?.n||0);
+    return {id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
+      newEvents:count('SELECT count(*) n FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)'),
+      eventConflicts:count('SELECT count(*) n FROM archive.events a JOIN main.events m ON m.event_id=a.event_id WHERE m.payload<>a.payload'),
+      newNotes:count('SELECT count(*) n FROM archive.manual_notes a WHERE NOT EXISTS (SELECT 1 FROM main.manual_notes m WHERE m.id=a.id)'),
+      noteConflicts:count('SELECT count(*) n FROM archive.manual_notes a JOIN main.manual_notes m ON m.id=a.id WHERE m.start<>a.start OR m.end<>a.end OR m.project<>a.project OR m.note<>a.note'),
+      newDecisions:count('SELECT count(*) n FROM archive.human_decisions a WHERE NOT EXISTS (SELECT 1 FROM main.human_decisions m WHERE m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id)'),
+      decisionConflicts:count('SELECT count(*) n FROM archive.human_decisions a JOIN main.human_decisions m ON m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id WHERE m.mode<>a.mode OR m.project_path IS NOT a.project_path')};
   }
   recent(source:string,limit:number,provider?:string):CaptureEvent[]{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid recent event limit');

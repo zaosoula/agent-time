@@ -8,7 +8,7 @@ import type {WebsiteResolution,WebsiteRule} from '../capture/website-resolver.ts
 import type {LinearStatus} from '../capture/linear.ts';
 import type {PrivacyExclusion} from '../capture/privacy-exclusions.ts';
 import type {WeeklyReview} from '../capture/weekly.ts';
-import type {ManualNote} from '../capture/store.ts';
+import type {ArchivePreview,ManualNote} from '../capture/store.ts';
 import type {StorageUsage} from '../capture/storage-usage.ts';
 export interface LinearConnectionStatus extends LinearStatus {repositoryMatches:Record<string,string[]>;}
 export interface WebsiteProjectStatus {rules:WebsiteRule[];projects:string[];matches:WebsiteResolution[];}
@@ -25,7 +25,13 @@ export async function request<T>(method:string,params:Record<string,unknown>={})
 export const privacyTransport={list:()=>request<PrivacyExclusion[]>('privacy_exclusions'),replace:(entries:PrivacyExclusion[])=>request<PrivacyExclusion[]>('privacy_exclusions_set',{entries})};
 export const weeklyTransport={review:(startDate:string)=>request<WeeklyReview>('weekly_review',{startDate})};
 export const manualNoteTransport={list:(date:string)=>request<ManualNote[]>('manual_notes',{date}),add:(note:Omit<ManualNote,'id'|'createdAt'>)=>request<ManualNote>('manual_note_add',note),remove:(id:string)=>request<boolean>('manual_note_remove',{id})};
-export const archiveTransport={export:()=>request<{path:string;bytes:number;events:number}>('export_archive')};
+export const archiveTransport={
+ export:()=>request<{path:string;bytes:number;events:number}>('export_archive'),
+ choose:async()=>{if(!native)throw new Error('Archive file picker requires the desktop app');const {invoke}=await import('@tauri-apps/api/core');return invoke<string|null>('stage_archive');},
+ list:()=>request<Array<{id:string;bytes:number}>>('archive_list'),
+ preview:(id:string)=>request<ArchivePreview>('archive_preview',{id}),
+ import:(id:string)=>request<{addedEvents:number;addedNotes:number;addedDecisions:number}>('archive_import',{id}),
+};
 export const storageTransport={usage:()=>request<StorageUsage>('storage_usage')};
 export const transport={cleanupPreview:()=>request<TrackingCleanupPreview>('tracking_cleanup_preview'),cleanupTracking:()=>request<TrackingCleanupResult>('tracking_cleanup',{confirmed:true}),hooksStatus:()=>request<HookInstallationStatus>('hooks_status'),verifyHooks:()=>request<HookInstallationStatus>('hooks_verify'),installHooks:(provider:HookProvider,targetIds?:string[])=>request<HookInstallationStatus>('hooks_install',{provider,...(targetIds?{targetIds}:{})}),dismissHookSetup:()=>request<HookInstallationStatus>('hooks_dismiss'),status:()=>request<CaptureStatus>('status'),summary:(date:string)=>request<Summary>('summary',{date}),captureHealth:()=>request<CaptureHealth>('capture_health'),diagnostics:()=>request<DiagnosticSummary>('diagnostics'),usage:()=>request<UsageSummary>('usage'),websiteProjects:()=>request<WebsiteProjectStatus>('website_projects'),setWebsiteRule:(pattern:string,projectPath:string)=>request<WebsiteProjectStatus>('website_rule_set',{pattern,projectPath}),removeWebsiteRule:(pattern:string)=>request<WebsiteProjectStatus>('website_rule_remove',{pattern}),setHumanDecision:(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string)=>request<Summary>('human_decision_set',{pairs,mode,...(projectPath===undefined?{}:{projectPath})}),linearStatus:()=>request<LinearConnectionStatus>('linear_status'),linearConnect:(clientId:string)=>request<LinearStatus>('linear_connect',{clientId}),linearSync:(workspaceId?:string)=>request<LinearStatus>('linear_sync',workspaceId?{workspaceId}:undefined),linearDisconnect:(workspaceId?:string)=>request<LinearStatus>('linear_disconnect',workspaceId?{workspaceId}:undefined),start:()=>request<CaptureStatus>('start'),stop:()=>request<CaptureStatus>('stop'),settings:(settings:Partial<CaptureSettings>)=>request<CaptureStatus>('settings',settings)};
 export async function openAccessibilitySettings(){if(native){const {invoke}=await import('@tauri-apps/api/core');await invoke('open_accessibility_settings');}}

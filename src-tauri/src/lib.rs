@@ -3,6 +3,7 @@ use tauri::{Manager, State};
 use tauri_plugin_updater::UpdaterExt;
 use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_deep_link::DeepLinkExt;
+use tauri_plugin_dialog::DialogExt;
 mod tray;
 mod widget;
 #[cfg(unix)] use std::os::unix::process::CommandExt;
@@ -130,7 +131,8 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
  let source_setting=|key:&str|key.len()<=64&&key!="browserTracking"&&key.bytes().all(|b|b.is_ascii_alphanumeric())&&(key.starts_with("browser")&&key.as_bytes().get(7).map(|b|b.is_ascii_uppercase()).unwrap_or(false)||key.ends_with("Hooks")||key.ends_with("TokenUsage")||key.ends_with("Polling"));
  match method {
-  "status"|"summary"|"capture_health"|"diagnostics"|"privacy_exclusions"|"export_archive"|"storage_usage"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect" if p.is_empty()=>Ok(()),
+  "status"|"summary"|"capture_health"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect" if p.is_empty()=>Ok(()),
+  "archive_preview"|"archive_import" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "privacy_exclusions_set" if p.len()==1 && p.get("entries").and_then(Value::as_array).map(|entries|entries.len()<=100&&entries.iter().all(|entry|entry.as_object().map(|item|item.len()==2&&["app","site"].contains(&item.get("kind").and_then(Value::as_str).unwrap_or(""))&&item.get("value").and_then(Value::as_str).map(|value|!value.is_empty()&&value.len()<=253).unwrap_or(false)).unwrap_or(false))).unwrap_or(false)=>Ok(()),
   "summary" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "weekly_review" if p.len()==1 && p.get("startDate").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
@@ -151,6 +153,40 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
 #[tauri::command]
 async fn capture_request(method:String,params:Value,bridge:State<'_,Arc<Bridge>>)->Result<Value,String>{
  let bridge=bridge.inner().clone();tauri::async_runtime::spawn_blocking(move||bridge.request(&method,params)).await.map_err(|e|e.to_string())?
+}
+fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<String,String>{
+ use std::io::{Read,Seek,SeekFrom};
+ let info=std::fs::symlink_metadata(source).map_err(|e|e.to_string())?;
+ if !info.is_file()||info.file_type().is_symlink()||source.extension().and_then(|v|v.to_str())!=Some("sqlite"){return Err("Choose a regular SQLite archive".into());}
+ let mut input=std::fs::File::open(source).map_err(|e|e.to_string())?;
+ let mut header=[0u8;16];input.read_exact(&mut header).map_err(|e|e.to_string())?;
+ if &header!=b"SQLite format 3\0"{return Err("Selected file is not a SQLite archive".into());}
+ input.seek(SeekFrom::Start(0)).map_err(|e|e.to_string())?;
+ let folder=output.join("exports");
+ if folder.exists()&&std::fs::symlink_metadata(&folder).map_err(|e|e.to_string())?.file_type().is_symlink(){return Err("Export folder must not be a symlink".into());}
+ std::fs::create_dir_all(&folder).map_err(|e|e.to_string())?;
+ #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&folder,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;}
+ let stamp=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
+ let id=format!("agent-time-{stamp}-{}.sqlite",uuid::Uuid::new_v4());
+ let path=folder.join(&id);
+ let result=(||->Result<(),String>{
+  let mut target=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e|e.to_string())?;
+  #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;target.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
+  std::io::copy(&mut input,&mut target).map_err(|e|e.to_string())?;
+  target.sync_all().map_err(|e|e.to_string())
+ })();
+ if let Err(error)=result{let _=std::fs::remove_file(&path);return Err(error);}
+ Ok(id)
+}
+#[tauri::command]
+async fn stage_archive(app:tauri::AppHandle,bridge:State<'_,Arc<Bridge>>)->Result<Option<String>,String>{
+ let output=bridge.launch.output.clone();
+ let (sender,receiver)=std::sync::mpsc::channel();
+ app.dialog().file().add_filter("Agent Time archive",&["sqlite"]).pick_file(move |selection|{let _=sender.send(selection);});
+ let selection=tauri::async_runtime::spawn_blocking(move||receiver.recv().map_err(|e|e.to_string())).await.map_err(|e|e.to_string())??;
+ let Some(selection)=selection else{return Ok(None);};
+ let source=selection.into_path().map_err(|e|e.to_string())?;
+ tauri::async_runtime::spawn_blocking(move||stage_archive_copy(&source,&output).map(Some)).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 fn open_accessibility_settings()->Result<(),String>{
@@ -176,7 +212,7 @@ async fn prepare_update(bridge:State<'_,Arc<Bridge>>)->Result<(),String>{
  Ok(())
 }
 pub fn run(){
- tauri::Builder::default().plugin(tauri_plugin_deep_link::init()).plugin(tauri_plugin_notification::init()).plugin(tauri_plugin_process::init()).setup(|app|{
+  tauri::Builder::default().plugin(tauri_plugin_deep_link::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_notification::init()).plugin(tauri_plugin_process::init()).setup(|app|{
   let deep_handle=app.handle().clone();
   app.deep_link().on_open_url(move |event|{
    if event.urls().iter().any(|url|url.scheme()=="agenttime"&&["today","capture-health"].contains(&url.host_str().unwrap_or(""))&&url.path()=="/"&&url.query().is_none()&&url.fragment().is_none()){
@@ -218,7 +254,7 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .invoke_handler(tauri::generate_handler![capture_request,stage_archive,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);tray.publish_stopped();}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("diagnostics",&json!({})).is_ok());assert!(validate_method("diagnostics",&json!({"includeRawEvents":true})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["0123456789abcdef"]})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["../other"]})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
@@ -307,5 +343,24 @@ mod browser_settings_tests {
   assert!(validate_method("settings",&json!({"browserChrome":true,"browserBrave":false})).is_ok());
   assert!(validate_method("settings",&json!({"browserTracking":true})).is_err());
   assert!(validate_method("settings",&json!({"browserSafari":"false"})).is_err());
+ }
+}
+
+#[cfg(test)]
+mod archive_stage_tests {
+ use super::*;
+ #[test]
+ fn staged_archive_is_private_and_rejects_non_sqlite_input(){
+  let root=std::env::temp_dir().join(format!("agent-time-stage-{}",uuid::Uuid::new_v4()));
+  std::fs::create_dir_all(&root).unwrap();
+  let source=root.join("backup.sqlite");
+  std::fs::write(&source,b"SQLite format 3\0example").unwrap();
+  let staged=stage_archive_copy(&source,&root).unwrap();
+  assert!(staged.starts_with("agent-time-"));
+  assert_eq!(std::fs::read(root.join("exports").join(staged)).unwrap(),b"SQLite format 3\0example");
+  #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;assert_eq!(std::fs::metadata(root.join("exports")).unwrap().permissions().mode()&0o777,0o700);let file=std::fs::read_dir(root.join("exports")).unwrap().next().unwrap().unwrap().path();assert_eq!(std::fs::metadata(file).unwrap().permissions().mode()&0o777,0o600);}
+  std::fs::write(&source,b"wrong").unwrap();
+  assert!(stage_archive_copy(&source,&root).is_err());
+  std::fs::remove_dir_all(root).unwrap();
  }
 }

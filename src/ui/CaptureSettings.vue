@@ -62,7 +62,7 @@ onUnmounted(()=>window.removeEventListener('focus',refreshStartup));
    <div class="permission-card"><ShieldCheck :size="19"/><div><h3>Accessibility permission</h3><strong>{{!status?.surfaces.macosActivity?'Activity capture disabled':!status.macos?'Checking permission…':status.macos.accessibilityTrusted?'Granted':'Not granted · basic activity available'}}</strong><p>Foreground app and idle tracking work without Accessibility. Grant it to identify Orca’s selected terminal tab and the active website domain. Unmatched activity stays in the overall human total.</p><button v-if="native" class="permission-button" @click="openPermission">Open System Settings <ArrowUpRight :size="13"/></button><p v-else>Manage permission in System Settings → Privacy &amp; Security → Accessibility.</p></div></div>
    <PrivacyExclusions/>
    <StorageUsage/>
-   <ArchiveExport/>
+   <ArchiveExport :running="Boolean(status?.running)"/>
    <TrackingCleanup/>
   </section>
   <footer class="settings-footnote"><p>Changes apply immediately. Existing history is kept. Events received from disabled hooks are discarded.</p><p>Closing the window keeps capture running. Quit Agent Time to stop it.</p></footer>

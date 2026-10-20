@@ -84,6 +84,16 @@ export class Collector {
     return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
   exportArchive(){return this.store.exportArchive(this.output);}
+  listArchives(){return this.store.listArchives(this.output);}
+  previewArchive(id:string){return this.store.previewArchive(this.output,id);}
+  importArchive(id:string){
+    this.requireOwner();
+    if(this.running)throw new Error('Pause capture before restoring an archive');
+    const result=this.store.importArchive(this.output,id);
+    this.surfaceHistory=this.store.settingsEvents().sort((a,b)=>a.observedAt-b.observedAt);
+    this.summaryCache=undefined;
+    return result;
+  }
   storageUsage(){return storageUsage(this.output);}
   verifyHooks(){return this.hookInstallation.verify();}
   privacyExclusions(){return this.privacy.list();}
