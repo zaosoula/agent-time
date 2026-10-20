@@ -1,4 +1,4 @@
-import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync } from 'node:fs';
+import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
 import { EventStore, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
@@ -23,6 +23,7 @@ import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {weeklyReview} from './weekly.ts';
 import {storageUsage} from './storage-usage.ts';
 import {captureChecks} from './capture-checks.ts';
+import {recoveryNotices} from './recovery.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
 export class Collector {
@@ -44,6 +45,8 @@ export class Collector {
   private linear:LinearConnection;
   private privacy:PrivacyExclusions;
   private activityEpoch:string|undefined;
+  private clockSample:{wall:number;uptime:number}|undefined;
+  private clockShiftSeconds=0;
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
@@ -83,7 +86,14 @@ export class Collector {
   captureChecks(){return captureChecks(this.captureHealth(),this.hookInstallation.status());}
   diagnostics(){
     const bytes=['events.sqlite','events.sqlite-wal'].reduce((total,file)=>{try{return total+statSync(join(this.output,file)).size;}catch{return total;}},0);
-    return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
+    const wall=Date.now()/1000,uptime=process.uptime();
+    if(this.clockSample){const delta=(wall-this.clockSample.wall)-(uptime-this.clockSample.uptime);if(Math.abs(delta)>120)this.clockShiftSeconds=delta;}
+    this.clockSample={wall,uptime};
+    let freeBytes:number|null=null;
+    try{const fs=statfsSync(this.output);freeBytes=Number(fs.bavail)*Number(fs.bsize);}catch{/* Disk free space unavailable on this host. */}
+    const databaseHealthy=this.store.quickCheck(),health=this.captureHealth();
+    const recovery=recoveryNotices({databaseHealthy,freeBytes,sources:health.sources,clockShiftSeconds:this.clockShiftSeconds});
+    return {...diagnosticSummary({status:this.status(),health,hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy,now:wall,recovery}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
   exportArchive(){return this.store.exportArchive(this.output);}
   listArchives(){return this.store.listArchives(this.output);}

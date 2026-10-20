@@ -4,12 +4,14 @@ import {Activity,Bot,Check,CircleHelp,GitBranch,Globe2,Monitor,Radio} from '@luc
 import {transport,native,relaunchHookSetup,type CaptureStatus} from './transport.ts';
 import type {CaptureHealth,HealthSource} from '../capture/health.ts';
 import type {CaptureCheck} from '../capture/capture-checks.ts';
+import type {RecoveryNotice} from '../capture/recovery.ts';
 
 const props=defineProps<{status:CaptureStatus|null;issues:string[]}>();
 const emit=defineEmits<{reviewSite:[key:string]}>();
 const snapshot=ref<CaptureHealth|null>(null),error=ref(''),now=ref(Date.now()/1000),diagnosticMessage=ref(''),diagnosticPreview=ref('');
 const checks=ref<CaptureCheck[]|null>(null),checksBusy=ref(false),checksError=ref('');
-let poller:ReturnType<typeof setInterval>|undefined,clock:ReturnType<typeof setInterval>|undefined,loading=false,unmounted=false;
+const recovery=ref<RecoveryNotice[]>([]);
+let poller:ReturnType<typeof setInterval>|undefined,clock:ReturnType<typeof setInterval>|undefined,recoveryPoller:ReturnType<typeof setInterval>|undefined,loading=false,unmounted=false;
 const age=(at:number|null|undefined)=>{
  if(!at)return 'No event yet';const seconds=Math.max(0,Math.floor(now.value-at));
  return seconds<5?'Just now':seconds<60?`${seconds}s ago`:seconds<3600?`${Math.floor(seconds/60)}m ago`:`${Math.floor(seconds/3600)}h ago`;
@@ -43,6 +45,7 @@ const cards=computed(()=>{
 });
 async function refresh(){if(loading)return;loading=true;try{const next=await transport.captureHealth();if(!unmounted){snapshot.value=next;error.value='';now.value=Date.now()/1000;}}catch(e){if(!unmounted)error.value=String(e);}finally{loading=false;}}
 async function runChecks(){checksBusy.value=true;checksError.value='';try{checks.value=await transport.captureChecks();}catch(cause){checksError.value=String(cause);}finally{checksBusy.value=false;}}
+async function refreshRecovery(){try{const report=await transport.diagnostics();if(!unmounted)recovery.value=report.recovery;}catch{/* Source cards continue to show collector availability. */}}
 async function previewDiagnostics(){
  try{const summary=await transport.diagnostics();const version=native?(await import('@tauri-apps/api/app')).getVersion():Promise.resolve('development');diagnosticPreview.value=JSON.stringify({appVersion:await version,...summary},null,2);diagnosticMessage.value='Review the summary before sharing it.';}catch(e){diagnosticMessage.value=`Could not prepare summary: ${String(e)}`;}
 }
@@ -50,13 +53,14 @@ async function copyDiagnostics(){
  if(!diagnosticPreview.value)return;
  try{await navigator.clipboard.writeText(diagnosticPreview.value);diagnosticMessage.value='Diagnostic summary copied.';}catch(e){diagnosticMessage.value=`Could not copy summary: ${String(e)}`;}
 }
-onMounted(()=>{void refresh();poller=setInterval(()=>{void refresh();},3000);clock=setInterval(()=>{now.value=Date.now()/1000;},1000);});
-onUnmounted(()=>{unmounted=true;clearInterval(poller);clearInterval(clock);});
+onMounted(()=>{void refresh();void refreshRecovery();poller=setInterval(()=>{void refresh();},3000);recoveryPoller=setInterval(()=>{void refreshRecovery();},30000);clock=setInterval(()=>{now.value=Date.now()/1000;},1000);});
+onUnmounted(()=>{unmounted=true;clearInterval(poller);clearInterval(recoveryPoller);clearInterval(clock);});
 </script>
 <template>
 <section class="capture-health">
  <div class="health-top">
   <div class="health-heading"><div><div class="eyebrow"><Radio :size="13"/> LIVE MONITOR</div><h1>Capture health</h1><p>See what Agent Time is recording as it happens.</p><button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button><small v-if="diagnosticMessage" role="status">{{diagnosticMessage}}</small><div v-if="diagnosticPreview" class="diagnostic-preview"><pre>{{diagnosticPreview}}</pre><button @click="copyDiagnostics">Copy reviewed summary</button></div></div><div :class="['live-badge',{paused:status&&!status.running}]"><span class="pulse"></span>{{!status?'Checking capture…':status.running?'Capture running':'Capture paused'}}<small>Updated {{age(snapshot?.checkedAt)}}</small></div></div>
+  <div v-if="recovery.length" class="recovery-list" role="status" aria-label="Capture recovery guidance"><article v-for="notice in recovery" :key="notice.id"><strong>{{notice.title}}</strong><p>{{notice.detail}}</p><span>{{notice.action}}</span><button v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</button></article></div>
   <div class="source-cards"><article v-for="card in cards" :key="card.key" :class="['source-card',card.tone]"><div class="card-head"><component :is="card.icon" :size="18"/><span>{{card.name}}</span><i></i></div><strong>{{card.state}}</strong><p>{{card.primary}}</p><small>{{card.secondary}}</small><button v-if="'repair' in card && card.repair" class="source-repair" @click="relaunchHookSetup">Review hook setup</button></article></div>
   <div class="check-controls"><button :disabled="checksBusy" @click="runChecks">{{checksBusy?'Checking sources…':'Run capture checks'}}</button><span>Checks use current configuration and actual delivered events.</span></div>
   <p v-if="checksError" class="health-error" role="alert">{{checksError}}</p>
@@ -77,6 +81,7 @@ onUnmounted(()=>{unmounted=true;clearInterval(poller);clearInterval(clock);});
 </section>
 </template>
 <style scoped>
+.recovery-list{display:grid;gap:8px;margin:0 0 18px}.recovery-list article{border:1px solid #d4954260;border-radius:8px;padding:12px 14px;background:#d4954214;font-size:11px}.recovery-list strong{font-size:12px}.recovery-list p{margin:5px 0}.recovery-list span{color:var(--muted)}.recovery-list button{margin-left:10px;color:var(--blue);text-decoration:underline}
 .source-repair{margin-top:10px;padding:6px 8px;border-radius:6px;background:var(--hover);font-size:11px}.diagnostic-button{margin-top:10px;padding:7px 10px;border-radius:6px;background:var(--hover);font-size:12px}
 .check-controls{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:11px;color:var(--muted)}.check-controls button,.capture-checks button{padding:7px 10px;border-radius:6px;background:var(--hover);color:var(--text)}.check-controls button:disabled{opacity:.5}.capture-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.capture-checks details{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:10px 12px;font-size:11px}.capture-checks summary{cursor:pointer;display:flex;justify-content:space-between;gap:8px}.capture-checks ol{margin:10px 0;padding-left:20px}.capture-checks li{margin:6px 0}.capture-checks li span{margin-left:8px}.capture-checks small{display:block;color:var(--muted);margin-top:3px}.capture-checks .pass{color:#31a783}.capture-checks .fail{color:#d07878}.capture-checks .waiting{color:#d49542}.capture-checks .skip{color:var(--muted)}@media(max-width:680px){.capture-checks{grid-template-columns:1fr}}
 .diagnostic-preview{margin-top:10px;max-width:560px}.diagnostic-preview pre{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:10px;font-size:10px}.diagnostic-preview button{padding:7px 10px;border-radius:6px;background:var(--blue);color:white;font-size:11px}
