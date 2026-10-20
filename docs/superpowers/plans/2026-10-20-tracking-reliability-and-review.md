@@ -54,6 +54,8 @@ The follow-on branch adds an on-demand source check, actionable recovery notices
 
 The full reducer still replays historical events. A bounded daily checkpoint must preserve open turns, tools, child spans, and late events across day boundaries before it can replace that replay. The app therefore does not offer live database replacement or event retention yet. The compactor only writes a separate verified copy. A signed/notarized candidate, clean-Mac first install, actual widget click, and OTA recovery need release-machine proof before publication.
 
+The local 558,638-event store showed 41,782 copies of one static Orca host-scope notice. New capture stores this notice at most once per UTC day. On a read-only source and disposable copy, the offline compactor retained the notice on each of nine observed days, preserved all timing and other coverage output, and passed its order, review and integrity checks. The copy was 413,798,400 bytes versus 434,417,664 bytes before (20,619,264 bytes, about 4.7% smaller); it was deleted after measurement. No live evidence was replaced.
+
 ## Candidate improvements after this branch
 
 These are options for the next roadmap review, not claims of shipped behavior.

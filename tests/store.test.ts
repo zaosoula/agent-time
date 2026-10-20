@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { EventStore } from '../src/capture/store.ts';
 import {retainedObservationRows} from '../src/capture/observation-retention.ts';
+import {staticOrcaScopeReason} from '../src/capture/observation-retention.ts';
 const event = { eventId: 'e1', source: 'test', kind: 'running', observedAt: 10, monotonicAt: 1, collectorEpoch: 'a' };
 test('support integrity check reports a healthy local database without exposing rows',()=>{
  const store=new EventStore(':memory:');
@@ -87,4 +88,13 @@ test('historical retention keeps first and last state observations plus every ac
  const events=[worker('first',1),worker('middle',2),worker('last',3),worker('changed',4,'failed'),worker('changed-last',5,'failed'),worker('active',6,'in_progress',true),worker('active-2',7,'in_progress',true)];
  const retained=retainedObservationRows(events.map((entry,index)=>({rowid:index+1,event:entry})));
  assert.deepEqual([...retained].sort((a,b)=>a-b),[1,3,4,5,6,7]);
+});
+test('repeated static host-scope notice is stored once per UTC day',()=>{
+ const store=new EventStore(':memory:');
+ const coverage=(id:string,at:number)=>({...event,eventId:id,source:'orca',kind:'coverage',observedAt:at,data:{reason:staticOrcaScopeReason}});
+ try{
+  assert.equal(store.putObservations([coverage('first',100),coverage('same-day',200)]),1);
+  assert.equal(store.putObservations([coverage('next-day',90000)]),1);
+  assert.deepEqual(store.events().map(item=>item.eventId),['first','next-day']);
+ }finally{store.close();}
 });

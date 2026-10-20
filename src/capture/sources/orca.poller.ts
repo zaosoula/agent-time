@@ -1,5 +1,6 @@
 import {readWorkers,readFleet,workerEvent,terminalEvents} from '../orca.ts';
 import {makeEvent} from '../events.ts';
+import {staticOrcaScopeReason} from '../observation-retention.ts';
 import {resolveOrcaTab} from '../orca-focus.ts';
 import type {PollSource} from './types.ts';
 
@@ -8,7 +9,7 @@ export default {kind:'poller',id:'orca',name:'Orca',setting:'orcaPolling',defaul
   const {workers,coverage}=runId?await readWorkers(reader,runId,valid):await readFleet(reader,valid);
   if(!valid())return null;
   store.putObservations(workers.map(workerEvent));
-  for(const issue of coverage)store.put(makeEvent('orca','coverage',{data:{reason:issue.reason}}));
+  for(const issue of coverage){const event=makeEvent('orca','coverage',{data:{reason:issue.reason}});if(issue.reason===staticOrcaScopeReason)store.putObservations([event]);else store.put(event);}
   try{const terminals=await terminalEvents(reader);if(valid())store.putObservations(terminals);}catch(error){if(valid())store.put(makeEvent('orca','coverage',{data:{reason:String(error)}}));}
   return coverage.find(issue=>!issue.reason.startsWith('Only this Orca host'))?.reason||null;
  },

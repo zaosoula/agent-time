@@ -184,7 +184,7 @@ fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<S
  let result=(||->Result<(),String>{
   let mut target=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e|e.to_string())?;
   #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;target.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
-  std::io::copy(&mut input,&mut target).map_err(|e|e.to_string())?;
+  std::io::copy(&mut input.take(info.len().saturating_add(1)),&mut target).map_err(|e|e.to_string())?;
   if target.metadata().map_err(|e|e.to_string())?.len()!=info.len(){return Err("Archive changed during copying".into());}
   target.sync_all().map_err(|e|e.to_string())
  })();
