@@ -141,6 +141,14 @@ test('browser time belongs to a page only while its URL stays foreground',()=>{
  assert.deepEqual(human.map(i=>i.browserUrl),['https://github.com/a',undefined,undefined]);
  assert.equal(human[0]?.browserBundleId,'com.apple.Safari');
 });
+test('human project attribution explains stable website evidence and flags conflicts',()=>{
+ const activity=(id:string,time:number,project:string)=>e(id,time,'activity',{source:'macos',workspaceId:`web::${project}`,data:{foregroundBundleId:'com.apple.Safari',browserDomain:'example.test',browserUrl:'https://example.test/page',idleSeconds:0,websiteAttribution:{source:'port_process',projectPath:project,detail:'Local port owner'}}});
+ const intervals=summarize([activity('a',0,'/project/a'),activity('b',2,'/project/a'),activity('c',4,'/project/b')]).intervals.filter(i=>i.state==='human');
+ assert.equal(intervals[0]?.attributionReason,'Local port owner');
+ assert.equal(intervals[0]?.attributionSource,'port_process');
+ assert.equal(intervals[1]?.workspaceId,undefined);
+ assert.equal(intervals[1]?.attributionReason,'Conflicting project observations');
+});
 test('one-minute credit groups short bursts once, and separates bursts beyond one minute',()=>{
  const root={sessionId:'s1',terminalHandle:'t1',hostId:'local'};
  const burst=(id:string,start:number)=>[e(id+'-start',start,'tool_start',{...root,data:{toolId:id}}),e(id+'-end',start+2,'tool_end',{...root,data:{toolId:id}})];

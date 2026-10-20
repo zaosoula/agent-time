@@ -18,6 +18,7 @@ export class UsageReader{
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }
  configureProviders(providers:Record<string,boolean>){this.providers={...providers};}
+ rebindPricing(){this.pricing.bindExisting();}
  start(){if(this.enabled)return;this.enabled=true;void this.refresh();}
  async stop(){this.enabled=false;clearTimeout(this.timer);await this.job;}
  async close(){await this.stop();this.db.close();}

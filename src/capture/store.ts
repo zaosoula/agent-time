@@ -1,5 +1,5 @@
 import { DatabaseSync,backup } from 'node:sqlite';
-import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync } from 'node:fs';
+import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
 import type {HumanDecision} from './human-review.ts';
@@ -7,7 +7,7 @@ import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
-export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;}
+export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newUsageEvents:number;usageConflicts:number;}
 const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid manual note');
@@ -128,6 +128,17 @@ export class EventStore {
       return info.isFile()&&!info.isSymbolicLink()?[{id,bytes:info.size}]:[];
     }).sort((a,b)=>b.id.localeCompare(a.id));
   }
+  deleteArchive(output:string,id:string):boolean{
+    if(!archiveName.test(id))throw new Error('Invalid archive ID');
+    const folder=join(output,'exports');
+    if(!existsSync(folder)||lstatSync(folder).isSymbolicLink())throw new Error('Archive folder is unavailable');
+    const path=join(folder,id);
+    if(!existsSync(path))return false;
+    const info=lstatSync(path);
+    if(!info.isFile()||info.isSymbolicLink())throw new Error('Archive must be a regular file');
+    unlinkSync(path);
+    return true;
+  }
   private withArchive<T>(output:string,id:string,run:(hasUsage:boolean)=>T):T{
     if(!archiveName.test(id))throw new Error('Invalid archive ID');
     const folder=join(output,'exports'),path=join(folder,id);
@@ -145,16 +156,20 @@ export class EventStore {
     }finally{this.db.exec('DETACH DATABASE archive');}
   }
   previewArchive(output:string,id:string):ArchivePreview{
-    return this.withArchive(output,id,()=>this.previewAttachedArchive(id));
+    return this.withArchive(output,id,hasUsage=>this.previewAttachedArchive(id,hasUsage));
   }
   importArchive(output:string,id:string):{addedEvents:number;addedNotes:number;addedDecisions:number}{
     return this.withArchive(output,id,hasUsage=>{
-      const preview=this.previewAttachedArchive(id);
-      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
+      const preview=this.previewAttachedArchive(id,hasUsage);
+      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.usageConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
       for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)').iterate()){
         const event=JSON.parse(String(row.payload)) as CaptureEvent;
         validateEvent(event);
         if(event.eventId!==row.event_id||event.observedAt!==row.observed_at)throw new Error('Archive event columns do not match the payload');
+      }
+      if(hasUsage)for(const row of this.db.prepare('SELECT id,timestamp,payload FROM archive.usage_events').iterate()){
+        const payload=JSON.parse(String(row.payload)) as Record<string,unknown>;
+        if(payload.id!==row.id||payload.timestamp!==row.timestamp||typeof payload.provider!=='string'||!Number.isFinite(payload.timestamp))throw new Error('Archive usage record is invalid');
       }
       this.db.exec('BEGIN IMMEDIATE');
       try{
@@ -171,15 +186,18 @@ export class EventStore {
       return {addedEvents:preview.newEvents,addedNotes:preview.newNotes,addedDecisions:preview.newDecisions};
     });
   }
-  private previewAttachedArchive(id:string):ArchivePreview{
+  private previewAttachedArchive(id:string,hasUsage:boolean):ArchivePreview{
     const count=(query:string)=>Number(this.db.prepare(query).get()?.n||0);
+    const mainUsage=Boolean(this.db.prepare("SELECT name FROM main.sqlite_master WHERE type='table' AND name='usage_events'").get());
     return {id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
       newEvents:count('SELECT count(*) n FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)'),
       eventConflicts:count('SELECT count(*) n FROM archive.events a JOIN main.events m ON m.event_id=a.event_id WHERE m.payload<>a.payload'),
       newNotes:count('SELECT count(*) n FROM archive.manual_notes a WHERE NOT EXISTS (SELECT 1 FROM main.manual_notes m WHERE m.id=a.id)'),
       noteConflicts:count('SELECT count(*) n FROM archive.manual_notes a JOIN main.manual_notes m ON m.id=a.id WHERE m.start<>a.start OR m.end<>a.end OR m.project<>a.project OR m.note<>a.note'),
       newDecisions:count('SELECT count(*) n FROM archive.human_decisions a WHERE NOT EXISTS (SELECT 1 FROM main.human_decisions m WHERE m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id)'),
-      decisionConflicts:count('SELECT count(*) n FROM archive.human_decisions a JOIN main.human_decisions m ON m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id WHERE m.mode<>a.mode OR m.project_path IS NOT a.project_path')};
+      decisionConflicts:count('SELECT count(*) n FROM archive.human_decisions a JOIN main.human_decisions m ON m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id WHERE m.mode<>a.mode OR m.project_path IS NOT a.project_path'),
+      newUsageEvents:hasUsage?mainUsage?count('SELECT count(*) n FROM archive.usage_events a WHERE NOT EXISTS (SELECT 1 FROM main.usage_events m WHERE m.id=a.id)'):count('SELECT count(*) n FROM archive.usage_events'):0,
+      usageConflicts:hasUsage&&mainUsage?count('SELECT count(*) n FROM archive.usage_events a JOIN main.usage_events m ON m.id=a.id WHERE m.payload<>a.payload OR m.timestamp<>a.timestamp'):0};
   }
   recent(source:string,limit:number,provider?:string):CaptureEvent[]{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid recent event limit');

@@ -154,7 +154,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
      }
      const selected=prev.data?.orcaSelectedTabTitle;
      if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&typeof selected==='string'&&selected===e.data?.orcaSelectedTabTitle)interval.tabTitle=selected;
-     if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&prev.workspaceId&&prev.workspaceId===e.workspaceId)interval.workspaceId=prev.workspaceId;
+     if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&prev.workspaceId&&prev.workspaceId===e.workspaceId){interval.workspaceId=prev.workspaceId;interval.attributionSource='orca-worktree';interval.attributionReason='Same Orca worktree in both foreground observations';}
      const domain=prev.data?.browserDomain;
      if(typeof domain==='string'&&domain===e.data?.browserDomain&&prev.data?.foregroundBundleId===e.data?.foregroundBundleId){
       interval.browserDomain=domain;interval.browserBundleId=String(e.data?.foregroundBundleId);
@@ -162,7 +162,12 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
       const previousOrigin=origin(prev.data),nextOrigin=origin(e.data);
       if(previousOrigin&&previousOrigin===nextOrigin){
        interval.browserOrigin=previousOrigin;
-       if(prev.workspaceId&&prev.workspaceId===e.workspaceId)interval.workspaceId=prev.workspaceId;
+       if(prev.workspaceId&&prev.workspaceId===e.workspaceId){
+        interval.workspaceId=prev.workspaceId;
+        const first=prev.data?.websiteAttribution as Record<string,unknown>|undefined,second=e.data?.websiteAttribution as Record<string,unknown>|undefined;
+        if(first&&second&&first.source===second.source&&first.projectPath===second.projectPath){interval.attributionSource=String(first.source||'website');interval.attributionReason=String(first.detail||'Same website project in both observations');}
+        else{interval.attributionSource='website';interval.attributionReason='Same website project in both observations';}
+       }else if(prev.workspaceId&&e.workspaceId&&prev.workspaceId!==e.workspaceId){interval.attributionSource='conflict';interval.attributionReason='Conflicting project observations';}
       }
       if(typeof prev.data?.browserUrl==='string'&&prev.data.browserUrl===e.data?.browserUrl){
        interval.browserUrl=prev.data.browserUrl;

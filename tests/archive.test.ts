@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync,statSync,mkdirSync,copyFileSync,symlinkSync} from 'node:fs';
+import {mkdtempSync,rmSync,statSync,mkdirSync,copyFileSync,symlinkSync,existsSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {EventStore} from '../src/capture/store.ts';
@@ -23,6 +23,18 @@ test('archive is an independently readable verified snapshot with decisions and 
   assert.equal(store.manualNotes('2026-10-19')[0]?.note,'User entered');
   assert.equal(store.quickCheck(),true);
  }finally{store.close();rmSync(output,{recursive:true});}
+});
+test('archive cleanup only deletes an explicitly selected app-owned copy',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-archive-delete-'));
+ const store=new EventStore(join(root,'events.sqlite'));
+ try{
+  store.put(makeEvent('capture','capture_start'));
+  const archive=await store.exportArchive(root),id=archive.path.split('/').at(-1)!;
+  assert.throws(()=>store.deleteArchive(root,'../events.sqlite'),/Invalid archive/);
+  assert.equal(store.deleteArchive(root,id),true);
+  assert.equal(existsSync(archive.path),false);
+  assert.equal(store.count(),1);
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
 
 test('an owned archive previews and restores missing evidence without overwriting live events',async()=>{
@@ -71,4 +83,18 @@ test('restore rejects a structurally valid archive with an invalid event payload
    assert.equal(fresh.count(),0);
   }finally{fresh.close();}
  }finally{rmSync(root,{recursive:true});}
+});
+test('archive preview refuses conflicting usage records before writing',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-usage-conflict-'));
+ const store=new EventStore(join(root,'events.sqlite'));
+ try{
+  const archive=await store.exportArchive(root),id=archive.path.split('/').at(-1)!;
+  for(const [path,tokens] of [[archive.path,10],[join(root,'events.sqlite'),20]] as const){
+   const db=new DatabaseSync(path);
+   try{db.exec('CREATE TABLE usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');db.prepare('INSERT INTO usage_events VALUES (?,?,?)').run('usage-1',100,JSON.stringify({id:'usage-1',timestamp:100,provider:'claude',input:tokens}));}
+   finally{db.close();}
+  }
+  assert.equal(store.previewArchive(root,id).usageConflicts,1);
+  assert.throws(()=>store.importArchive(root,id),/conflicts/i);
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });

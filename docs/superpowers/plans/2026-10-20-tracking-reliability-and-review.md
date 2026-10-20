@@ -48,6 +48,12 @@ Make first run, daily tracking, diagnosis, review, and recovery understandable a
 
 On a read-only snapshot of a 429 MB local store with about 553,000 events, loading and parsing the whole history took about 1.1–1.3 seconds and replaying it took about 1.8 seconds with roughly 870 MB of Node heap used. An indexed query for 179 capture setting records took about 1 ms; startup now uses that query instead of loading all events. A three-day replay matched the full daily intervals and totals for the sampled October 17 and 20 days, but it is **not** used in the app because a legitimately observed turn or child span may cross that window. The full summary replay remains a scaling limitation; no historical rows are deleted or silently truncated.
 
+## Implementation update
+
+The follow-on branch adds an on-demand source check, actionable recovery notices, a redacted diagnostic summary with version information, a storage breakdown and growth view, verified archive import, explicit archive deletion, WAL space reclamation, daily trends, reviewed-time project goals, attribution evidence and conflict wording, a troubleshooting guide, and source adapter documentation. The offline copy compactor checks causal event order, full summaries, review decisions, notes, and SQLite integrity after its final vacuum. `npm test` now runs files sequentially because parallel Mac helper and hook self-tests timed out under load; the sequential full suite passed 207 tests.
+
+The full reducer still replays historical events. A bounded daily checkpoint must preserve open turns, tools, child spans, and late events across day boundaries before it can replace that replay. The app therefore does not offer live database replacement or event retention yet. The compactor only writes a separate verified copy. A signed/notarized candidate, clean-Mac first install, actual widget click, and OTA recovery need release-machine proof before publication.
+
 ## Candidate improvements after this branch
 
 These are options for the next roadmap review, not claims of shipped behavior.

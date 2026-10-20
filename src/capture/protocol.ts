@@ -3,7 +3,7 @@ import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {validateManualNote,type ManualNote} from './store.ts';
-interface Controller {storageUsage?():unknown;reclaimWal?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;captureChecks?():unknown;}
+interface Controller {storageUsage?():unknown;reclaimWal?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
@@ -79,6 +79,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       const handler=request.method==='archive_preview'?controller.previewArchive:controller.importArchive;
       if(!handler)throw new Error('Archive operation unavailable');
       return {id,result:handler.call(controller,params.id)};
+    }
+    if(request.method==='archive_delete'){
+      if(Object.keys(params).length!==2||typeof params.id!=='string'||params.confirmed!==true||!controller.deleteArchive)throw new Error('Archive deletion requires confirmation');
+      return {id,result:controller.deleteArchive(params.id)};
     }
     if(Object.keys(params).length)throw new Error('Unsupported parameter');
     if(request.method==='tracking_cleanup_preview'&&controller.cleanupPreview)return {id,result:controller.cleanupPreview()};

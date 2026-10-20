@@ -14,6 +14,7 @@ export interface Interval {
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
   tabId?: string; terminalHandle?: string; tabTitle?: string; browserDomain?: string; browserOrigin?: string; browserBundleId?: string; browserUrl?: string; browserTitle?: string;
   foregroundName?: string; foregroundBundleId?: string; userAttribution?: 'assigned' | 'unassigned';
+  attributionSource?:string;attributionReason?:string;
 }
 export interface Issue { reason: string; eventId?: string; source?: string; }
 export interface Session {

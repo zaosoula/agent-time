@@ -4,12 +4,13 @@ import {archiveTransport,native} from './transport.ts';
 import type {ArchivePreview} from '../capture/store.ts';
 defineProps<{running:boolean}>();
 const busy=ref(false),error=ref(''),result=ref<{path:string;bytes:number;events:number}|null>(null);
-const archives=ref<Array<{id:string;bytes:number}>>([]),selected=ref(''),preview=ref<ArchivePreview|null>(null),restored=ref('');
+const archives=ref<Array<{id:string;bytes:number}>>([]),selected=ref(''),preview=ref<ArchivePreview|null>(null),restored=ref(''),confirmDelete=ref('');
 async function refresh(){archives.value=await archiveTransport.list();if(!archives.value.some(item=>item.id===selected.value))selected.value=archives.value[0]?.id||'';}
 async function exportArchive(){busy.value=true;error.value='';try{result.value=await archiveTransport.export();await refresh();}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
 async function chooseArchive(){busy.value=true;error.value='';try{const id=await archiveTransport.choose();if(id){await refresh();selected.value=id;preview.value=null;await inspect();}}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
 async function inspect(){if(!selected.value)return;busy.value=true;error.value='';preview.value=null;restored.value='';try{preview.value=await archiveTransport.preview(selected.value);}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
 async function restore(){if(!preview.value||selected.value!==preview.value.id)return;busy.value=true;error.value='';try{const result=await archiveTransport.import(selected.value);restored.value=`Added ${result.addedEvents} events, ${result.addedNotes} notes and ${result.addedDecisions} review decisions.`;preview.value=null;}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
+async function removeArchive(){if(confirmDelete.value!==selected.value){confirmDelete.value=selected.value;return;}busy.value=true;error.value='';try{const id=selected.value;await archiveTransport.remove(id);if(result.value?.path.endsWith('/'+id))result.value=null;confirmDelete.value='';preview.value=null;await refresh();}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
 onMounted(()=>{void refresh().catch(cause=>{error.value=String(cause);});});
 </script>
 <template>
@@ -21,11 +22,12 @@ onMounted(()=>{void refresh().catch(cause=>{error.value=String(cause);});});
  <div v-if="result" role="status"><strong>{{result.events.toLocaleString()}} events · {{Math.round(result.bytes/1024/1024)}} MB</strong><code>{{result.path}}</code><small>Keep this file somewhere protected. It may include project paths and active website URLs.</small></div>
  <div v-if="archives.length" class="archive-restore">
   <strong>Restore a local archive</strong><p>Preview an archive saved by this installation. Restoration only adds missing records; it stops if any evidence or review decision conflicts with current data.</p>
-  <label>Archive <select v-model="selected" :disabled="busy" @change="preview=null"><option v-for="item in archives" :key="item.id" :value="item.id">{{item.id}} · {{Math.round(item.bytes/1024/1024)}} MB</option></select></label>
+  <label>Archive <select v-model="selected" :disabled="busy" @change="preview=null;confirmDelete=''"><option v-for="item in archives" :key="item.id" :value="item.id">{{item.id}} · {{Math.round(item.bytes/1024/1024)}} MB</option></select></label>
   <button :disabled="busy||!selected" @click="inspect">Preview restore</button>
-  <p v-if="preview">Adds {{preview.newEvents}} events, {{preview.newNotes}} notes and {{preview.newDecisions}} review decisions. Conflicts: {{preview.eventConflicts+preview.noteConflicts+preview.decisionConflicts}}.</p>
-  <button v-if="preview" :disabled="busy||running||Boolean(preview.eventConflicts+preview.noteConflicts+preview.decisionConflicts)" @click="restore">Restore missing records</button>
+  <p v-if="preview">Adds {{preview.newEvents}} events, {{preview.newNotes}} notes, {{preview.newDecisions}} review decisions and {{preview.newUsageEvents}} usage records. Conflicts: {{preview.eventConflicts+preview.noteConflicts+preview.decisionConflicts+preview.usageConflicts}}.</p>
+  <button v-if="preview" :disabled="busy||running||Boolean(preview.eventConflicts+preview.noteConflicts+preview.decisionConflicts+preview.usageConflicts)" @click="restore">Restore missing records</button>
   <small v-if="running">Pause capture to restore an archive.</small><small v-if="restored" role="status">{{restored}}</small>
+  <div class="archive-cleanup"><button :disabled="busy||!selected" @click="removeArchive">{{confirmDelete===selected?'Confirm permanent archive deletion':'Delete selected archive…'}}</button><small v-if="confirmDelete===selected" role="alert">This permanently removes this local archive. The live database is kept. Keep another protected backup before confirming.</small></div>
  </div>
 </section>
 </template>
