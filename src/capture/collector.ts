@@ -107,6 +107,7 @@ export class Collector {
     return result;
   }
   storageUsage(){return storageUsage(this.output);}
+  reclaimWal(){this.requireOwner();this.store.checkpointWal();return this.storageUsage();}
   verifyHooks(){return this.hookInstallation.verify();}
   privacyExclusions(){return this.privacy.list();}
   setPrivacyExclusions(entries:PrivacyExclusion[]){

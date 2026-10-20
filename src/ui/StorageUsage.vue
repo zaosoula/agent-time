@@ -20,6 +20,7 @@ const recent=computed(()=>{
  return [...days].sort((a,b)=>b[0].localeCompare(a[0])).slice(0,7);
 });
 async function refresh(){busy.value=true;error.value='';try{usage.value=await storageTransport.usage();}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
+async function reclaim(){busy.value=true;error.value='';try{usage.value=await storageTransport.reclaim();}catch(cause){error.value=String(cause);}finally{busy.value=false;}}
 onMounted(()=>{void refresh();});
 </script>
 <template>
@@ -32,9 +33,11 @@ onMounted(()=>{void refresh();});
   <p>Database indexes occupy about {{size(usage.indexes.bytes)}} within the event database. Recent captured payload, excluding database and index overhead:</p>
   <ul><li v-for="[date,day] in recent" :key="date"><span>{{date}}</span><span>{{day.events.toLocaleString()}} events · {{size(day.bytes)}}</span></li></ul>
   <p v-if="!recent.length">No events recorded in the last 30 days.</p>
+  <div v-if="usage.wal.bytes>0" class="storage-action"><p>Reclaim the SQLite write-ahead log after saved events are checkpointed. This keeps all observations and review decisions.</p><button :disabled="busy" @click="reclaim">Reclaim {{size(usage.wal.bytes)}} of temporary space</button></div>
  </template>
 </section>
 </template>
 <style scoped>
 .storage-usage{margin-top:16px;padding:19px 20px;border:1px solid var(--border);border-radius:10px;background:var(--panel);font-size:11px}.storage-head{display:flex;align-items:start;justify-content:space-between;gap:16px}.storage-head h3{font-size:13px;margin:0 0 6px}.storage-usage p{color:var(--muted);line-height:1.5;margin:6px 0 12px}.storage-head button{background:var(--hover);border-radius:6px;padding:7px 10px;white-space:nowrap}.storage-head button:disabled{opacity:.5}.storage-total{display:block;font-size:13px;margin:12px 0}.storage-usage dl{margin:0}.storage-usage dl div,.storage-usage li{display:flex;justify-content:space-between;gap:12px;padding:7px 0;border-top:1px solid var(--border)}.storage-usage dd{margin:0;font-variant-numeric:tabular-nums}.storage-usage ul{padding:0;margin:0;list-style:none}.storage-error{color:#d07878!important}
+.storage-action{border-top:1px solid var(--border);padding-top:10px}.storage-action button{padding:8px 10px;border-radius:6px;background:var(--blue);color:white}.storage-action button:disabled{opacity:.5}
 </style>

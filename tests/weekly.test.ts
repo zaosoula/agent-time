@@ -16,6 +16,8 @@ test('weekly totals keep concurrent agent work separate from union elapsed time'
  assert.equal(week.totals.elapsedSeconds,60);
  assert.equal(week.reviewedEntries.length,1);
  assert.equal(week.projects.find(row=>row.project==='/projects/a')?.reviewedSeconds,60);
+ assert.equal(week.days.length,7);
+ assert.deepEqual(week.days[0],{date:'2026-10-19',humanSeconds:60,agentSeconds:120,elapsedSeconds:60});
  assert.throws(()=>weeklyReview(summary,'2026-02-30'),/Invalid week start/);
 });
 test('reviewed export quotes fields and neutralizes spreadsheet formulas',()=>{

@@ -28,3 +28,16 @@ test('storage report separates database, spool, runtimes and exports without fol
   assert.equal(report.byDay[0].source,'macos');
  }finally{store.close();rmSync(root,{recursive:true,force:true});}
 });
+test('checkpoint frees the write-ahead log without changing captured events',()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-checkpoint-'));
+ const store=new EventStore(join(root,'events.sqlite'));
+ try{
+  for(let i=0;i<100;i++)store.put({eventId:`event-${i}`,source:'macos',kind:'activity',observedAt:1000+i,monotonicAt:i,collectorEpoch:'a'});
+  const before=JSON.stringify(store.events()),walBefore=storageUsage(root).wal.bytes;
+  assert.ok(walBefore>0);
+  store.checkpointWal();
+  assert.equal(JSON.stringify(store.events()),before);
+  assert.equal(store.quickCheck(),true);
+  assert.ok(storageUsage(root).wal.bytes<walBefore);
+ }finally{store.close();rmSync(root,{recursive:true,force:true});}
+});
