@@ -53,13 +53,17 @@ async function copyDiagnostics(){
  if(!diagnosticPreview.value)return;
  try{await navigator.clipboard.writeText(diagnosticPreview.value);diagnosticMessage.value='Diagnostic summary copied.';}catch(e){diagnosticMessage.value=`Could not copy summary: ${String(e)}`;}
 }
+async function saveDiagnostics(){
+ if(!diagnosticPreview.value||!native)return;
+ try{const {invoke}=await import('@tauri-apps/api/core');const saved=await invoke<boolean>('save_support_bundle');diagnosticMessage.value=saved?'Redacted support bundle saved.':'Save cancelled.';}catch(e){diagnosticMessage.value=`Could not save support bundle: ${String(e)}`;}
+}
 onMounted(()=>{void refresh();void refreshRecovery();poller=setInterval(()=>{void refresh();},3000);recoveryPoller=setInterval(()=>{void refreshRecovery();},30000);clock=setInterval(()=>{now.value=Date.now()/1000;},1000);});
 onUnmounted(()=>{unmounted=true;clearInterval(poller);clearInterval(recoveryPoller);clearInterval(clock);});
 </script>
 <template>
 <section class="capture-health">
  <div class="health-top">
-  <div class="health-heading"><div><div class="eyebrow"><Radio :size="13"/> LIVE MONITOR</div><h1>Capture health</h1><p>See what Agent Time is recording as it happens.</p><button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button><small v-if="diagnosticMessage" role="status">{{diagnosticMessage}}</small><div v-if="diagnosticPreview" class="diagnostic-preview"><pre>{{diagnosticPreview}}</pre><button @click="copyDiagnostics">Copy reviewed summary</button></div></div><div :class="['live-badge',{paused:status&&!status.running}]"><span class="pulse"></span>{{!status?'Checking capture…':status.running?'Capture running':'Capture paused'}}<small>Updated {{age(snapshot?.checkedAt)}}</small></div></div>
+ <div class="health-heading"><div><div class="eyebrow"><Radio :size="13"/> LIVE MONITOR</div><h1>Capture health</h1><p>See what Agent Time is recording as it happens.</p><button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button><small v-if="diagnosticMessage" role="status">{{diagnosticMessage}}</small><div v-if="diagnosticPreview" class="diagnostic-preview"><pre>{{diagnosticPreview}}</pre><button @click="copyDiagnostics">Copy reviewed summary</button><button v-if="native" @click="saveDiagnostics">Save redacted support bundle…</button></div></div><div :class="['live-badge',{paused:status&&!status.running}]"><span class="pulse"></span>{{!status?'Checking capture…':status.running?'Capture running':'Capture paused'}}<small>Updated {{age(snapshot?.checkedAt)}}</small></div></div>
   <div v-if="recovery.length" class="recovery-list" role="status" aria-label="Capture recovery guidance"><article v-for="notice in recovery" :key="notice.id"><strong>{{notice.title}}</strong><p>{{notice.detail}}</p><span>{{notice.action}}</span><button v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</button></article></div>
   <div class="source-cards"><article v-for="card in cards" :key="card.key" :class="['source-card',card.tone]"><div class="card-head"><component :is="card.icon" :size="18"/><span>{{card.name}}</span><i></i></div><strong>{{card.state}}</strong><p>{{card.primary}}</p><small>{{card.secondary}}</small><button v-if="'repair' in card && card.repair" class="source-repair" @click="relaunchHookSetup">Review hook setup</button></article></div>
   <div class="check-controls"><button :disabled="checksBusy" @click="runChecks">{{checksBusy?'Checking sources…':'Run capture checks'}}</button><span>Checks use current configuration and actual delivered events.</span></div>

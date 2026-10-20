@@ -35,4 +35,4 @@ Review the timeline around the gap. A missing interval is unknown time, not proo
 
 ## Share a support summary
 
-In **Capture health**, select **Preview diagnostic summary**, inspect it, then copy it. It contains source states, counts, coarse errors, version and platform information. It excludes event contents, project paths, URLs, window titles, and raw errors. Sharing is optional.
+In **Capture health**, select **Preview diagnostic summary** and inspect it. You can copy the text or save a redacted JSON support bundle to a location you choose. It contains source states, counts, coarse errors, version and platform information. It excludes event contents, project paths, URLs, window titles, and raw errors. Sharing is optional.

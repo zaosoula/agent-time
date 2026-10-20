@@ -201,6 +201,36 @@ async fn stage_archive(app:tauri::AppHandle,bridge:State<'_,Arc<Bridge>>)->Resul
  let source=selection.into_path().map_err(|e|e.to_string())?;
  tauri::async_runtime::spawn_blocking(move||stage_archive_copy(&source,&output).map(Some)).await.map_err(|e|e.to_string())?
 }
+fn support_payload(version:&str,diagnostics:&Value)->Value{
+ let sources=diagnostics["sources"].as_array().map(|items|items.iter().map(|source|json!({
+  "id":source["id"],"kind":source["kind"],"enabled":source["enabled"],
+  "lastEventAgeSeconds":source["lastEventAgeSeconds"],"hooks":source["hooks"]
+ })).collect::<Vec<_>>()).unwrap_or_default();
+ let recovery=diagnostics["recovery"].as_array().map(|items|items.iter().map(|notice|json!({"id":notice["id"],"title":notice["title"],"detail":notice["detail"],"action":notice["action"]})).collect::<Vec<_>>()).unwrap_or_default();
+ json!({"appVersion":version,"checkedAt":diagnostics["checkedAt"],"running":diagnostics["running"],"eventCount":diagnostics["eventCount"],"lastPollAgeSeconds":diagnostics["lastPollAgeSeconds"],"errorCategory":diagnostics["errorCategory"],"runtimeReady":diagnostics["runtimeReady"],"databaseBytes":diagnostics["databaseBytes"],"databaseHealth":diagnostics["databaseHealth"],"nodeVersion":diagnostics["nodeVersion"],"platform":diagnostics["platform"],"architecture":diagnostics["architecture"],"osVersion":diagnostics["osVersion"],"sources":sources,"recovery":recovery})
+}
+#[cfg(test)]mod support_tests{use super::*;#[test]fn bundle_fields_exclude_captured_content(){
+ let report=json!({"eventCount":5,"sources":[{"id":"claude","kind":"agent","enabled":true,"lastEventAgeSeconds":2,"hooks":"installed","path":"/private/TOP_SECRET"}],"rawError":"TOP_SECRET","windowTitle":"TOP_SECRET","recovery":[]});
+ let body=support_payload("0.2.0",&report).to_string();
+ assert!(body.contains("claude"));assert!(!body.contains("TOP_SECRET"));assert!(!body.contains("/private/"));
+}}
+#[tauri::command]
+async fn save_support_bundle(app:tauri::AppHandle,bridge:State<'_,Arc<Bridge>>)->Result<bool,String>{
+ let bridge=bridge.inner().clone();
+ let diagnostics=tauri::async_runtime::spawn_blocking(move||bridge.request("diagnostics",json!({}))).await.map_err(|e|e.to_string())??;
+ let body=serde_json::to_vec_pretty(&support_payload(&app.package_info().version.to_string(),&diagnostics)).map_err(|e|e.to_string())?;
+ let (sender,receiver)=std::sync::mpsc::channel();
+ app.dialog().file().add_filter("JSON",&["json"]).set_file_name("agent-time-support.json").save_file(move |selection|{let _=sender.send(selection);});
+ let selection=tauri::async_runtime::spawn_blocking(move||receiver.recv().map_err(|e|e.to_string())).await.map_err(|e|e.to_string())??;
+ let Some(selection)=selection else{return Ok(false);};
+ let path=selection.into_path().map_err(|e|e.to_string())?;
+ tauri::async_runtime::spawn_blocking(move||{
+  if let Ok(info)=std::fs::symlink_metadata(&path){if !info.is_file()||info.file_type().is_symlink(){return Err("Choose a regular file for the support bundle".to_string());}}
+  std::fs::write(&path,body).map_err(|e|e.to_string())?;
+  #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&path,std::fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
+  Ok(true)
+ }).await.map_err(|e|e.to_string())?
+}
 #[tauri::command]
 fn open_accessibility_settings()->Result<(),String>{
  std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").status().map_err(|e|e.to_string()).and_then(|s|if s.success(){Ok(())}else{Err("Could not open System Settings".into())})
@@ -267,7 +297,7 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,stage_archive,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);tray.publish_stopped();}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("diagnostics",&json!({})).is_ok());assert!(validate_method("diagnostics",&json!({"includeRawEvents":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite","confirmed":true})).is_ok());assert!(validate_method("archive_delete",&json!({"id":"../events.sqlite","confirmed":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite"})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["0123456789abcdef"]})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["../other"]})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
