@@ -3,7 +3,7 @@ import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {validateManualNote,type ManualNote} from './store.ts';
-interface Controller {storageUsage?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;}
+interface Controller {storageUsage?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;captureChecks?():unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
@@ -88,6 +88,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='status')return {id,result:controller.status()};
     if(request.method==='summary')return {id,result:controller.summary(15000)};
     if(request.method==='capture_health'&&controller.captureHealth)return {id,result:controller.captureHealth()};
+    if(request.method==='capture_checks'&&controller.captureChecks)return {id,result:controller.captureChecks()};
     if(request.method==='diagnostics'&&controller.diagnostics)return {id,result:controller.diagnostics()};
     if(request.method==='export_archive'&&controller.exportArchive)return {id,result:await controller.exportArchive()};
     if(request.method==='archive_list'&&controller.listArchives)return {id,result:controller.listArchives()};

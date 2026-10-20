@@ -22,6 +22,7 @@ import {sourceStates} from './source-state.ts';
 import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {weeklyReview} from './weekly.ts';
 import {storageUsage} from './storage-usage.ts';
+import {captureChecks} from './capture-checks.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
 export class Collector {
@@ -79,6 +80,7 @@ export class Collector {
     const checkedAt=Date.now()/1000;
     return {checkedAt,latest,hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),sources:sourceStates({running:this.running,surfaces:this.surfaces,orcaAvailable:this.orcaAvailable(),lastPoll:this.lastPoll,failedPoller:this.failedPoller,latest,hooks:{targets},macosTrusted:typeof this.macos?.accessibilityTrusted==='boolean'?this.macos.accessibilityTrusted:null,macosExcluded:this.macos?.excluded===true,macError:this.macError!==null,foregroundBundleId:typeof this.macos?.foregroundBundleId==='string'?this.macos.foregroundBundleId:null,browserDetailAvailable:typeof this.macos?.browserDomain==='string'&&this.macos.browserDomain.length>0,now:checkedAt}),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
   }
+  captureChecks(){return captureChecks(this.captureHealth(),this.hookInstallation.status());}
   diagnostics(){
     const bytes=['events.sqlite','events.sqlite-wal'].reduce((total,file)=>{try{return total+statSync(join(this.output,file)).size;}catch{return total;}},0);
     return {...diagnosticSummary({status:this.status(),health:this.captureHealth(),hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy:this.store.quickCheck(),now:Date.now()/1000}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
