@@ -16,7 +16,7 @@ export interface Interval {
   foregroundName?: string; foregroundBundleId?: string; userAttribution?: 'assigned' | 'unassigned';
   attributionSource?:string;attributionReason?:string;
 }
-export interface Issue { reason: string; eventId?: string; source?: string; }
+export interface Issue { reason: string; eventId?: string; source?: string; observedAt?: number; }
 export interface Session {
   key: string; hostId?: string; workspaceId?: string; cwd?: string; runId?: string; taskId?: string; dispatchId?: string;
   sessionId?: string; agentId?: string; provider?: string; title: string; state: string;

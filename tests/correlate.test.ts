@@ -3,6 +3,11 @@ import { unionSeconds, summarize } from '../src/capture/correlate.ts';
 import type { CaptureEvent } from '../src/capture/events.ts';
 const e=(id:string,time:number,kind:string,fields:Partial<CaptureEvent>={}):CaptureEvent=>({eventId:id,source:'hook',kind,observedAt:time,monotonicAt:time,collectorEpoch:'a',...fields});
 const worker=(id:string,time:number,dispatchId='d1',runId='r1',state='working',outcome='in_progress')=>e(id,time,'worker',{source:'orca',hostId:'local',terminalHandle:'t1',workspaceId:'ws',dispatchId,runId,taskId:'task-'+dispatchId,data:{state,outcome,fresh:true}});
+test('capture caveats retain the observation time for daily review',()=>{
+ const summary=summarize([e('gap',123,'coverage',{source:'orca',data:{reason:'Poll failed'}}),e('end',456,'tool_end',{sessionId:'s',terminalHandle:'t',hostId:'local'})]);
+ assert.deepEqual(summary.coverage.map(issue=>issue.observedAt),[123]);
+ assert.deepEqual(summary.unresolved.map(issue=>issue.observedAt),[456]);
+});
 test('a completed prompt-to-response turn includes reasoning gaps without double-counting tool execution',()=>{
  const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',provider:'codex'};
  const s=summarize([e('prompt',0,'prompt_submitted',root),e('tool-start',10,'tool_start',{...root,data:{toolId:'a'}}),e('tool-end',20,'tool_end',{...root,data:{toolId:'a'}}),e('stop',60,'response_stop',root)]);

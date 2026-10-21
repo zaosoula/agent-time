@@ -1,5 +1,9 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {dailyTotals,summaryForDate,workingAgentCount} from '../src/capture/daily.ts';import type {Summary,Interval,Session} from '../src/capture/events.ts';
+import {dailyCaptureIssues,dailyTotals,summaryForDate,workingAgentCount} from '../src/capture/daily.ts';import type {Summary,Interval,Session} from '../src/capture/events.ts';
+test('daily caveats show only this day and omit the static Orca scope notice',()=>{
+ const base:Summary={intervals:[],sessions:[],coverage:[{reason:'Poll failed',observedAt:100},{reason:'Old failure',observedAt:99},{reason:'Only this Orca host is observed; remote execution has not been verified',observedAt:101}],unresolved:[{reason:'Open tool',observedAt:199},{reason:'Tomorrow',observedAt:200}],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
+ assert.deepEqual(dailyCaptureIssues(base,100,200).map(issue=>issue.reason),['Poll failed','Open tool']);
+});
 test('working agent snapshot matches My day recency and stops on pause',()=>{
  const now=new Date(2026,9,19,12),at=now.getTime()/1000;
  const session=(state:string,lastObservedAt:number,seconds=60):Session=>({key:state+lastObservedAt,title:'Agent',state,lastObservedAt,seconds,observedSeconds:seconds,child:false,proof:'observed'});

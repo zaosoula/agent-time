@@ -107,7 +107,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  for(const original of events) {
   const e=original.source==='hook'?resolve(original):original;
-  if(e.kind==='coverage'){coverage.push({reason:String(e.data?.reason||'Missing observations'),source:e.source});continue;}
+  if(e.kind==='coverage'){coverage.push({reason:String(e.data?.reason||'Missing observations'),source:e.source,eventId:e.eventId});continue;}
   if(e.kind==='capture_settings'){
    const previous=e.data?.previous as Record<string,boolean>|undefined,next=e.data?.surfaces as Record<string,boolean>|undefined;
    const changed=(key:string)=>previous?.[key]!==next?.[key];
@@ -271,5 +271,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  const groupedActivity=[...roots,...children].flatMap(([key,ranges])=>grouped(key,ranges));
  const humanRanges=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);
- return {intervals,unresolved,coverage,sessions:[...sessions.values()],humanSeconds:minuteCreditSeconds(humanRanges),agentSeconds:[...roots].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),childAgentSeconds:[...children].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),elapsedSeconds:minuteCreditSeconds([...groupedActivity,...humanRanges])};
+ const observedAt=new Map(unique.map(event=>[event.eventId,event.observedAt]));
+ const dated=(issues:Issue[])=>issues.map(issue=>({...issue,observedAt:issue.eventId?observedAt.get(issue.eventId):undefined}));
+ return {intervals,unresolved:dated(unresolved),coverage:dated(coverage),sessions:[...sessions.values()],humanSeconds:minuteCreditSeconds(humanRanges),agentSeconds:[...roots].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),childAgentSeconds:[...children].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),elapsedSeconds:minuteCreditSeconds([...groupedActivity,...humanRanges])};
 }
