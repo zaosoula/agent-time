@@ -14,6 +14,7 @@ import BetaUpdates from './BetaUpdates.vue';
 import HumanReview from './HumanReview.vue';
 import WeeklyReview from './WeeklyReview.vue';
 import ManualNotes from './ManualNotes.vue';
+import SetupVerification from './SetupVerification.vue';
 import type { CaptureSettings } from '../capture/settings.ts';
 import type { Summary,Session,Interval } from '../capture/events.ts';
 import { unionSeconds, minuteCreditSeconds } from '../capture/correlate.ts';
@@ -28,9 +29,7 @@ const summary=ref<Summary>(empty),status=ref<CaptureStatus|null>(null),error=ref
 const hookStatus=ref<HookInstallationStatus|null>(null);
 const captureHealth=ref<CaptureHealth|null>(null);
 const sourceProblems=computed(()=>captureHealth.value?.sources.filter(source=>source.state==='stale'||source.state==='failed')||[]);
-const waitingAgents=computed(()=>summary.value.sessions.length===0?captureHealth.value?.sources.filter(source=>source.state==='waiting'&&source.action==='start-session')||[]:[]);
 const sourceProblemNames=computed(()=>sourceProblems.value.map(source=>source.name).join(', '));
-const waitingAgentNames=computed(()=>waitingAgents.value.map(source=>source.name).join(', '));
 const outdatedHooks=computed(()=>outdatedHookTargets(status.value,hookStatus.value));
 const outdatedAgents=computed(()=>[...new Set(outdatedHooks.value.map(target=>hookStatus.value?.agents.find(agent=>agent.id===target.provider)?.name||target.provider))].join(', '));
 const timelineLimit=ref(40),tableLimit=ref(100);
@@ -305,12 +304,12 @@ onUnmounted(()=>{unmounted=true;unlistenNavigation?.();unlistenDeepLink?.();clea
   <div v-if="error||status?.lastError" class="error-banner"><CircleHelp :size="16"/><span>{{error||status?.lastError}}</span><button @click="refresh">Retry</button></div>
   <div v-if="outdatedHooks.length" class="error-banner" role="alert"><CircleHelp :size="16"/><span><strong>Agent tracking may be idle.</strong> {{outdatedAgents}} {{outdatedHooks.length===1?'hook needs':'hooks need'}} updating. Time from affected sessions may be missing.</span><button @click="relaunchHookSetup">Update hooks</button></div>
   <div v-if="sourceProblems.length" class="error-banner" role="alert"><CircleHelp :size="16"/><span><strong>Capture needs attention.</strong> {{sourceProblemNames}} {{sourceProblems.length===1?'has':'have'}} no recent observations.</span><button @click="navigate('health')">Capture health</button></div>
-  <div v-if="waitingAgents.length&&status?.running&&!outdatedHooks.length" class="error-banner"><CircleHelp :size="16"/><span>Hooks are installed for {{waitingAgentNames}}. Start a new agent session to confirm events are reaching Agent Time.</span><button @click="navigate('health')">Check setup</button></div>
   <BetaUpdates v-if="betaUpdatesEnabled"/>
   <UsagePage v-if="page==='usage'" :status="status"/>
   <CaptureSettingsPage v-else-if="page==='settings'" :status="status" :busy="busy" @change="updateSettings" @error="error=$event"/>
   <section v-else-if="page!=='health'" class="day-content">
    <div class="day-heading"><div><h1>{{page==='sessions'?'Agent sessions':fullDate}}</h1><p>{{page==='sessions'?'Independent sessions, grouped by project and orchestration run.': 'A clear view of your work, and the agents working alongside you.'}}</p></div><div class="date-controls"><button class="icon-button" aria-label="Previous day" @click="changeDay(-1)"><ChevronLeft :size="16"/></button><input type="date" aria-label="Choose day" v-model="selectedDate"/><button class="icon-button" aria-label="Next day" @click="changeDay(1)"><ChevronRight :size="16"/></button><button class="today-button" @click="selectedDate=dateString(new Date())">Today</button></div></div>
+   <SetupVerification v-if="page==='today'&&isToday" :status="status" :hooks="hookStatus" :health="captureHealth" @health="navigate('health')" @settings="navigate('settings')" @hooks="relaunchHookSetup"/>
    <div class="metrics-strip"><div class="metric"><span><Monitor :size="14"/>Mac activity <span class="estimate">Estimated</span></span><strong>{{duration(humanTime)}}</strong><small>{{project==='all'?'Active foreground time across apps':'Attributed activity in this project'}}</small></div><div class="metric"><span><Bot :size="14"/>Agent time</span><strong>{{duration(agentTime)}}</strong><small>Grouped activity, one-minute minimum</small></div><div class="metric"><span><Clock3 :size="14"/>Elapsed activity</span><strong>{{duration(elapsedTime)}}</strong><small>Overlapping activity counted once</small></div><div class="metric compact"><span><Radio :size="14"/>Working now</span><strong>{{runningCount}}<span> agents</span></strong><small>{{runs}} orchestration {{runs===1?'run':'runs'}}</small></div></div>
    <details v-if="humanTabs.length||websites.length||humanUnassigned" class="human-tabs"><summary class="human-tabs-summary"><span><strong>Human activity details</strong><small>{{humanTabs.length}} Orca tabs · {{websites.length}} websites</small></span><b>{{duration(humanTime)}}</b></summary><div v-for="tab in humanTabs" :key="tab.workspaceId+tab.tabId" class="human-tab-row"><span><strong>{{tab.title}}</strong><small>Orca · {{projectFromWorkspace(tab.workspaceId)}} · {{tab.workspaceId.split('::').at(-1)?.split('/').at(-1)}}</small></span><b>{{duration(tab.seconds)}}</b></div><details v-for="site in websites" :key="site.domain+'::'+site.project" class="human-site"><summary class="human-tab-row website-row"><span><strong>{{site.domain}}</strong><small>{{[...site.browsers].join(', ')}} · {{site.project==='Unassigned'?'Website':site.project}} · {{site.pages.length}} pages</small></span><b>{{duration(site.seconds)}}</b></summary><div v-for="sitePage in site.pages" :key="sitePage.url" class="human-tab-row web-page-row"><span><strong>{{sitePage.title}}</strong><small :title="sitePage.url">{{sitePage.url}}</small></span><b>{{duration(sitePage.seconds)}}</b></div></details><div v-if="humanUnassigned" class="human-tab-row"><span><strong>Activity without a site or tab match</strong><small>Includes worktree-attributed Orca time shown on project rows and activity in other apps</small></span><b>{{duration(humanUnassigned)}}</b></div></details>
    <HumanReview v-if="page==='today'&&project==='all'" id="human-review" :intervals="dayIntervals" :site-filter="reviewSiteFilter" @changed="applyReviewedSummary" @clear-filter="reviewSiteFilter=''"/>

@@ -58,6 +58,8 @@ The local 558,638-event store showed 41,782 copies of one static Orca host-scope
 
 Capture health now shows hook spool counts and oldest pending age without file names. A stalled or unreadable queue produces recovery guidance. Invalid spool directories are rejected, and repeated unreadable-file coverage reports are deduplicated within a collector run.
 
+My day now guides first-run verification from enabled sources through hook configuration to a real current-runtime agent or recent Mac event, then shows a dismissible success state.
+
 On 2026-10-21, a disposable snapshot of the same live source completed the app's prepare and restart-time replacement path. It reduced 558,638 rows to 516,870, saved 17,047,552 bytes relative to that already-vacuumed snapshot, reopened with the expected row count, and passed SQLite quick-check. The rehearsal directory was removed. The installed app's live database was not changed.
 
 ## Candidate improvements after this branch
