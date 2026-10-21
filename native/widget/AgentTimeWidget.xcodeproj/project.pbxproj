@@ -104,7 +104,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = "0.2.0-beta.4";
+				CURRENT_PROJECT_VERSION = "0.2.0-beta.5";
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -112,7 +112,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = "0.2.0-beta.4";
+				MARKETING_VERSION = "0.2.0-beta.5";
 				PRODUCT_BUNDLE_IDENTIFIER = studio.ezyo.agenttime.widget;
 				PRODUCT_NAME = AgentTimeWidget;
 				SDKROOT = macosx;
@@ -183,7 +183,7 @@
 				APPLICATION_EXTENSION_API_ONLY = YES;
 				CODE_SIGNING_ALLOWED = NO;
 				COMBINE_HIDPI_IMAGES = YES;
-				CURRENT_PROJECT_VERSION = "0.2.0-beta.4";
+				CURRENT_PROJECT_VERSION = "0.2.0-beta.5";
 				INFOPLIST_FILE = Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
 					"$(inherited)",
@@ -191,7 +191,7 @@
 					"@executable_path/../../../../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 13.5;
-				MARKETING_VERSION = "0.2.0-beta.4";
+				MARKETING_VERSION = "0.2.0-beta.5";
 				PRODUCT_BUNDLE_IDENTIFIER = studio.ezyo.agenttime.widget;
 				PRODUCT_NAME = AgentTimeWidget;
 				SDKROOT = macosx;
