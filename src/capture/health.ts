@@ -2,12 +2,13 @@ import type {CaptureEvent} from './events.ts';
 import type {WebsiteResolution,WebsiteSuggestion} from './website-resolver.ts';
 import {agentById,agents,pollers,pollerById} from './sources/registry.ts';
 import type {SourceSnapshot} from './source-state.ts';
+import type {SpoolStatus} from './hooks.ts';
 
 export type HealthSource=string;
 export interface HealthEvent {id:string;source:HealthSource;kind:string;observedAt:number;title:string;detail:string;project:string|null;}
 export interface AccessibilityCapture {observedAt:number;windowTitle:string|null;selectedTabTitle:string|null;selectedWorktreeId:string|null;resolved:{workspaceId:string;tabId:string;leafId:string;terminalHandle:string}|null;}
 export interface WebsiteHealth {key:string;observedAt:number;state:'matched'|'suggested'|'unmatched'|'checking';projectPath:string|null;source:string|null;detail:string|null;appliedAt:number|null;suggestions:WebsiteSuggestion[];}
-export interface CaptureHealth {checkedAt:number;latest:Record<HealthSource,number|null>;hooks:Record<string,{installed:number;total:number;needsAttention:boolean}>;sources:SourceSnapshot[];accessibility:AccessibilityCapture|null;websites:WebsiteHealth[];events:HealthEvent[];}
+export interface CaptureHealth {checkedAt:number;latest:Record<HealthSource,number|null>;hooks:Record<string,{installed:number;total:number;needsAttention:boolean}>;sources:SourceSnapshot[];spool:SpoolStatus;accessibility:AccessibilityCapture|null;websites:WebsiteHealth[];events:HealthEvent[];}
 
 export function websiteHealth(resolutions:WebsiteResolution[],applied:Map<string,number>,current?:{key:string;observedAt:number},now=Date.now()/1000):WebsiteHealth[]{
  const rows:WebsiteHealth[]=resolutions.filter(item=>now-item.observedAt<=600).map(item=>({

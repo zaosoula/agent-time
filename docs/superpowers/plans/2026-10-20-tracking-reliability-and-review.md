@@ -56,6 +56,8 @@ The full reducer still replays historical events. A bounded daily checkpoint mus
 
 The local 558,638-event store showed 41,782 copies of one static Orca host-scope notice. New capture stores this notice at most once per UTC day. On a read-only source and disposable copy, the offline compactor retained the notice on each of nine observed days, preserved all timing and other coverage output, and passed its order, review and integrity checks. The copy was 413,798,400 bytes versus 434,417,664 bytes before (20,619,264 bytes, about 4.7% smaller); it was deleted after measurement. No live evidence was replaced.
 
+Capture health now shows hook spool counts and oldest pending age without file names. A stalled or unreadable queue produces recovery guidance. Invalid spool directories are rejected, and repeated unreadable-file coverage reports are deduplicated within a collector run.
+
 On 2026-10-21, a disposable snapshot of the same live source completed the app's prepare and restart-time replacement path. It reduced 558,638 rows to 516,870, saved 17,047,552 bytes relative to that already-vacuumed snapshot, reopened with the expected row count, and passed SQLite quick-check. The rehearsal directory was removed. The installed app's live database was not changed.
 
 ## Candidate improvements after this branch

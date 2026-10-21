@@ -5,7 +5,7 @@ import type {CaptureHealth} from '../src/capture/health.ts';
 import type {HookInstallationStatus} from '../src/capture/hook-installation.ts';
 
 const source=(id:string,state:'receiving'|'waiting'|'repair-needed'='waiting')=>({id,name:id,state,lastEvent:null,action:'start-session' as const,detail:'Start a session'});
-const health=():CaptureHealth=>({checkedAt:1000,latest:{},hooks:{},sources:[source('macos'),source('claude'),source('safari')],accessibility:null,websites:[],events:[]});
+const health=():CaptureHealth=>({checkedAt:1000,latest:{},hooks:{},sources:[source('macos'),source('claude'),source('safari')],spool:{pending:0,temporary:0,invalid:0,oldestAgeSeconds:null,truncated:false},accessibility:null,websites:[],events:[]});
 const hooks=():HookInstallationStatus=>({setupSeen:true,runtimeVersion:'abcd',runtimeReady:true,agents:[{id:'claude',name:'Claude',setting:'claudeHooks',usageSetting:'claudeTokenUsage'}],targets:[{id:'target',provider:'claude',label:'User',path:'/tmp/hook',state:'installed',lastEvent:null,error:null}],legacyPaths:[],migrationError:null});
 
 test('capture check separates installed hooks from observed current-runtime delivery',()=>{

@@ -21,6 +21,10 @@ Orca is optional. Agent hooks and Mac activity work without it. Install Orca onl
 
 Use **Retry** or **Resume capture** in the app and verify a new event in Capture health. Automatic collector restarts are bounded. A deliberately stopped app or update does not restart capture until the app runs again.
 
+## Agent events stay in the queue
+
+Capture health shows how many hook events are waiting, the oldest age, and unreadable record counts. Keep Agent Time running so it can retry. If the queue does not drain, run capture checks and save a redacted support bundle; raw queued events remain on this Mac.
+
 ## Updater cannot fetch release information
 
 Check your connection to `https://agent-time.ezyostudio.com/latest.json`, then use **Retry update check**. The app installs updates only when you choose to. If the feed is unavailable, capture should still run; check Capture health separately. Send the diagnostic summary and app version if the error continues.

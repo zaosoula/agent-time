@@ -25,3 +25,9 @@ test('recovery notices identify storage and hook repair without captured content
  assert.match(notices[1].action,/space/i);
  assert.match(notices[3].action,/hook/i);
 });
+test('stalled hook events show a count without exposing spool file names',()=>{
+ const notices=recoveryNotices({databaseHealthy:true,freeBytes:null,sources:[],spool:{pending:3,temporary:1,invalid:1,oldestAgeSeconds:180,truncated:false},running:true,clockShiftSeconds:0});
+ assert.equal(notices[0]?.id,'spool');
+ assert.match(notices[0].detail,/3 pending events; 1 unreadable/);
+ assert.equal(JSON.stringify(notices).includes('.json'),false);
+});

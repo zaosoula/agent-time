@@ -4,7 +4,7 @@ import { EventStore, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
-import { importSpool } from './hooks.ts';
+import { importSpool,spoolStatus } from './hooks.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -49,6 +49,7 @@ export class Collector {
   private clockSample:{wall:number;uptime:number}|undefined;
   private clockShiftSeconds=0;
   private clockNoticeUntil=0;
+  private seenSpoolIssues=new Set<string>();
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
@@ -83,7 +84,8 @@ export class Collector {
     const current=currentKey?{key:currentKey,observedAt:Number(this.macos?.observedAt)||0}:undefined;
     const latest={macos:macos[0]?.observedAt||null,...Object.fromEntries(agents.map(agent=>[agent.id,Math.max(0,...targets.filter(target=>target.provider===agent.id).map(target=>target.lastEvent||0))||null])),...Object.fromEntries(pollers.map(source=>[source.id,pollerEvents[source.id][0]?.observedAt||null]))};
     const checkedAt=Date.now()/1000;
-    return {checkedAt,latest,hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),sources:sourceStates({running:this.running,surfaces:this.surfaces,orcaAvailable:this.orcaAvailable(),lastPoll:this.lastPoll,failedPoller:this.failedPoller,latest,hooks:{targets},macosTrusted:typeof this.macos?.accessibilityTrusted==='boolean'?this.macos.accessibilityTrusted:null,macosExcluded:this.macos?.excluded===true,macError:this.macError!==null,foregroundBundleId:typeof this.macos?.foregroundBundleId==='string'?this.macos.foregroundBundleId:null,browserDetailAvailable:typeof this.macos?.browserDomain==='string'&&this.macos.browserDomain.length>0,now:checkedAt}),accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
+    const spool=spoolStatus(join(this.output,'spool'),checkedAt);spool.invalid=Math.max(spool.invalid,this.seenSpoolIssues.size);
+    return {checkedAt,latest,hooks:Object.fromEntries(agents.map(agent=>[agent.id,hooks(agent.id)])),sources:sourceStates({running:this.running,surfaces:this.surfaces,orcaAvailable:this.orcaAvailable(),lastPoll:this.lastPoll,failedPoller:this.failedPoller,latest,hooks:{targets},macosTrusted:typeof this.macos?.accessibilityTrusted==='boolean'?this.macos.accessibilityTrusted:null,macosExcluded:this.macos?.excluded===true,macError:this.macError!==null,foregroundBundleId:typeof this.macos?.foregroundBundleId==='string'?this.macos.foregroundBundleId:null,browserDetailAvailable:typeof this.macos?.browserDomain==='string'&&this.macos.browserDomain.length>0,now:checkedAt}),spool,accessibility:this.lastOrcaAccessibility,websites:websiteHealth([...this.websiteMatches.values()],this.websiteApplied,current),events:compactHealthEvents([...macos,...Object.values(hookEvents).flat(),...Object.values(pollerEvents).flat(),...capture])};
   }
   captureChecks(){return captureChecks(this.captureHealth(),this.hookInstallation.status());}
   diagnostics(){
@@ -95,7 +97,7 @@ export class Collector {
     let freeBytes:number|null=null;
     try{const fs=statfsSync(this.output);freeBytes=Number(fs.bavail)*Number(fs.bsize);}catch{/* Disk free space unavailable on this host. */}
     const databaseHealthy=this.store.quickCheck(),health=this.captureHealth();
-    const recovery=recoveryNotices({databaseHealthy,freeBytes,sources:health.sources,clockShiftSeconds:this.clockShiftSeconds});
+    const recovery=recoveryNotices({databaseHealthy,freeBytes,sources:health.sources,spool:health.spool,running:this.running,clockShiftSeconds:this.clockShiftSeconds});
     return {...diagnosticSummary({status:this.status(),health,hooks:this.hookInstallation.status(),databaseBytes:bytes,databaseHealthy,now:wall,recovery}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
   exportArchive(){return this.store.exportArchive(this.output);}
@@ -298,7 +300,9 @@ export class Collector {
         const error=await source.poll({reader:this.reader,runId:this.runId,valid,store:this.store});
         if(valid()&&error&&!pollingError){pollingError=error;failedPoller=source.id;}
       }
-      for(const issue of this.drainHooks())this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
+      const spoolIssues=this.drainHooks(),currentIssues=new Set(spoolIssues.map(issue=>issue.reason));
+      for(const issue of spoolIssues)if(!this.seenSpoolIssues.has(issue.reason))this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
+      this.seenSpoolIssues=currentIssues;
       this.lastPoll=Date.now()/1000;this.lastError=pollingError;this.failedPoller=failedPoller;
     }catch(error){this.lastError=String(error);this.failedPoller=null;this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}
   }
