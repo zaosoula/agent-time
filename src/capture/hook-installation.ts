@@ -3,6 +3,7 @@ import {homedir} from 'node:os';import {join,dirname,resolve,basename} from 'nod
 import {DatabaseSync} from 'node:sqlite';
 import {prepareConfig,applyConfig,restoreConfig,hookEvents,type Manifest} from './hook-config.ts';
 import {agents,agentById} from './sources/agent-registry.ts';
+import {pruneHookRuntimes} from './hook-runtime-prune.ts';
 export type HookProvider=string;
 export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;reason?:string|null;}
 export interface HookInstallationStatus {setupSeen:boolean;runtimeVersion:string;runtimeReady:boolean;agents:Array<{id:string;name:string;setting:string;usageSetting:string;trustNote?:string}>;targets:HookTarget[];legacyPaths:string[];migrationError:string|null;}
@@ -70,6 +71,7 @@ export class HookInstallation{
   if(!existsSync(launchPath)||readFileSync(launchPath,'utf8')!==launcher)privateWrite(launchPath,launcher);
   if(!existsSync(currentPath)||readFileSync(currentPath,'utf8')!==runtimeVersion+'\n')privateWrite(currentPath,runtimeVersion+'\n');
   const launched=JSON.parse(execFileSync('/bin/sh',[launchPath,'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(launched.ok!==true||launched.node!==process.version)throw new Error('Hook launcher verification failed');
+  void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});
  }
  verify(){
   if(this.ready()){const check=JSON.parse(execFileSync('/bin/sh',[join(dirname(this.runtime),'launch.sh'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Installed hook runtime verification failed');}
