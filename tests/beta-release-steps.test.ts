@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {betaBundleEnvironment, notarizeBetaDmg} from '../scripts/beta-release-steps.mjs';
+import {betaBundleEnvironment, notarizeBetaDmg, validateStaple} from '../scripts/beta-release-steps.mjs';
 
 const credentials = {
   APPLE_API_KEY: 'key-id',
@@ -50,6 +50,33 @@ test('transient Apple ticket connection loss retries stapling without resubmitti
   notarizeBetaDmg('/release/Agent Time.dmg', credentials, run, delay => delays.push(delay));
   assert.deepEqual(calls, ['notarytool', 'stapler', 'stapler']);
   assert.deepEqual(delays, [5000]);
+});
+
+test('transient Apple ticket connection loss retries staple validation', () => {
+  const calls: string[][] = [];
+  const delays: number[] = [];
+  const run = (_command: string, args: string[]) => {
+    calls.push(args);
+    if (calls.length === 1) {
+      const error = new Error('Apple ticket service unavailable');
+      (error as Error & {stderr: string}).stderr = 'NSURLErrorDomain Code=-1005 The network connection was lost';
+      throw error;
+    }
+    return '';
+  };
+  validateStaple('/release/Agent Time.app', run, delay => delays.push(delay));
+  assert.deepEqual(calls, [
+    ['stapler', 'validate', '/release/Agent Time.app'],
+    ['stapler', 'validate', '/release/Agent Time.app'],
+  ]);
+  assert.deepEqual(delays, [5000]);
+});
+
+test('staple validation fails immediately on a permanent error', () => {
+  let calls = 0;
+  const run = () => { calls++; throw new Error('Ticket not found'); };
+  assert.throws(() => validateStaple('/release/Agent Time.app', run), /Ticket not found/);
+  assert.equal(calls, 1);
 });
 
 test('Apple ID notarization requires a Keychain profile so its password is not passed on the command line', () => {
