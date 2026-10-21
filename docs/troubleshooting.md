@@ -27,7 +27,7 @@ Check your connection to `https://agent-time.ezyostudio.com/latest.json`, then u
 
 ## Low disk space or database warning
 
-Open **Settings → Storage** for database, write-ahead log, hook spool, runtime, and archive sizes. **Reclaim temporary space** checkpoints the SQLite write-ahead log and keeps all observations. Free space elsewhere on the Mac if needed. Do not delete the live `events.sqlite` file. Export an archive before a restore; use the app's preview and integrity check when importing a saved archive. The app does not silently remove old capture evidence.
+Open **Settings → Storage** for database, write-ahead log, hook spool, runtime, and archive sizes. **Reclaim temporary space** checkpoints the SQLite write-ahead log and keeps all observations. To reduce redundant records, pause capture and select **Prepare compacted database**. Agent Time verifies a copy; quit and reopen the app to replace the database. The original becomes a local archive that can be selected for exact replacement if you need to roll back. Total disk use initially increases because that backup remains; after confirming capture works, you can explicitly delete the backup in **Local archive**. If tracking data changes before restart, replacement is cancelled. Free space elsewhere on the Mac if needed. Do not delete the live `events.sqlite` file. The app does not silently remove old capture evidence.
 
 ## Sleep, wake, or clock change
 

@@ -24,6 +24,7 @@ import {weeklyReview} from './weekly.ts';
 import {storageUsage} from './storage-usage.ts';
 import {captureChecks} from './capture-checks.ts';
 import {recoveryNotices} from './recovery.ts';
+import {prepareCompaction,prepareRestore,cancelPendingReplacement,pendingReplacement,replacementResult} from './storage-migration.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
 export class Collector {
@@ -99,7 +100,7 @@ export class Collector {
   }
   exportArchive(){return this.store.exportArchive(this.output);}
   listArchives(){return this.store.listArchives(this.output);}
-  deleteArchive(id:string){this.requireOwner();return this.store.deleteArchive(this.output,id);}
+  deleteArchive(id:string){this.requireOwner();if(pendingReplacement(this.output)?.candidate===id)throw new Error('Cancel the pending replacement before deleting its archive');return this.store.deleteArchive(this.output,id);}
   previewArchive(id:string){return this.store.previewArchive(this.output,id);}
   importArchive(id:string){
     this.requireOwner();
@@ -112,6 +113,18 @@ export class Collector {
   }
   storageUsage(){return storageUsage(this.output);}
   reclaimWal(){this.requireOwner();this.store.checkpointWal();return this.storageUsage();}
+  prepareStorageCompaction(){
+    if(this.running||this.stopping)throw new Error('Pause capture before preparing storage recovery');
+    this.requireOwner();
+    return prepareCompaction(this.output,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60},()=>this.store.revision());
+  }
+  prepareStorageRestore(id:string){
+    if(this.running||this.stopping)throw new Error('Pause capture before replacing storage');
+    this.requireOwner();return prepareRestore(this.output,id);
+  }
+  cancelStorageReplacement(){this.requireOwner();return cancelPendingReplacement(this.output);}
+  storageReplacementStatus(){const pending=pendingReplacement(this.output);return pending?{candidate:pending.candidate,backup:pending.backup,kind:pending.kind}:null;}
+  storageReplacementResult(){return replacementResult(this.output);}
   verifyHooks(){return this.hookInstallation.verify();}
   privacyExclusions(){return this.privacy.list();}
   setPrivacyExclusions(entries:PrivacyExclusion[]){
