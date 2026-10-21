@@ -4,8 +4,8 @@ import {CheckCircle2,CircleHelp} from '@lucide/vue';
 import type {CaptureStatus} from './transport.ts';
 import type {HookInstallationStatus} from '../capture/hook-installation.ts';
 import type {CaptureHealth} from '../capture/health.ts';
-const props=defineProps<{status:CaptureStatus|null;hooks:HookInstallationStatus|null;health:CaptureHealth|null}>();
-const emit=defineEmits<{health:[];settings:[];hooks:[]}>();
+const props=defineProps<{status:CaptureStatus|null;hooks:HookInstallationStatus|null;health:CaptureHealth|null;busy:boolean}>();
+const emit=defineEmits<{health:[];settings:[];hooks:[];start:[]}>();
 const dismissed=ref(false);
 const key=computed(()=>`agent-time.capture-verified:${props.hooks?.runtimeVersion||'mac'}`);
 watch(key,value=>{dismissed.value=localStorage.getItem(value)==='1';},{immediate:true});
@@ -39,6 +39,7 @@ function dismiss(){dismissed.value=true;localStorage.setItem(key.value,'1');}
   <p v-else>Start a new agent session or use your Mac for a few seconds. A configured hook alone does not confirm delivery.</p>
  </div>
  <button v-if="stage==='verified'" @click="dismiss">Done</button>
+ <button v-else-if="stage==='paused'" :disabled="busy" @click="emit('start')">Start capture</button>
  <button v-else-if="stage==='disabled'" @click="emit('settings')">Open Settings</button>
  <button v-else-if="stage==='hooks'" @click="emit('hooks')">Review hooks</button>
  <button v-else @click="emit('health')">Check capture</button>

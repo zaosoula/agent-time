@@ -60,6 +60,8 @@ Capture health now shows hook spool counts and oldest pending age without file n
 
 My day now guides first-run verification from enabled sources through hook configuration to a real current-runtime agent or recent Mac event, then shows a dismissible success state.
 
+The selected day's totals now show dated capture caveats from coverage and unresolved events, with the static local-only Orca scope notice omitted. Human review has a dedicated unresolved-conflicts view; existing assignment and undo actions apply there. The first-run guide can start paused capture directly.
+
 On 2026-10-21, a disposable snapshot of the same live source completed the app's prepare and restart-time replacement path. It reduced 558,638 rows to 516,870, saved 17,047,552 bytes relative to that already-vacuumed snapshot, reopened with the expected row count, and passed SQLite quick-check. The rehearsal directory was removed. The installed app's live database was not changed.
 
 ## Candidate improvements after this branch
