@@ -19,6 +19,7 @@ struct WidgetSnapshot: Codable, Equatable {
     let agentSeconds: Double
     let workingAgents: Int
     let hooksNeedUpdate: Bool?
+    let captureNeedsAttention: Bool?
 
     static func dayString(_ date: Date) -> String {
         let formatter = DateFormatter()

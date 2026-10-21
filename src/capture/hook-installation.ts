@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {prepareConfig,applyConfig,restoreConfig,hookEvents,type Manifest} from './hook-config.ts';
 import {agents,agentById} from './sources/agent-registry.ts';
 export type HookProvider=string;
-export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;}
+export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;reason?:string|null;}
 export interface HookInstallationStatus {setupSeen:boolean;runtimeVersion:string;runtimeReady:boolean;agents:Array<{id:string;name:string;setting:string;usageSetting:string;trustNote?:string}>;targets:HookTarget[];legacyPaths:string[];migrationError:string|null;}
 export interface TrackingCleanupPreview {configurations:string[];helpers:string[];errors:string[];}
 export interface TrackingCleanupResult {removedConfigurations:string[];removedHelpers:string[];errors:string[];}
@@ -89,7 +89,7 @@ export class HookInstallation{
   let lastEvents:Map<string,number>=new Map();
   try{const db=new DatabaseSync(join(this.output,'events.sqlite'),{readOnly:true});try{for(const row of db.prepare("SELECT json_extract(payload,'$.runtimeId') runtime,MAX(observed_at) at FROM events WHERE json_extract(payload,'$.source')='hook' GROUP BY 1").all() as Array<{runtime:string;at:number}>)lastEvents.set(row.runtime,row.at);}finally{db.close();}}catch{}
   const ready=this.ready(),discovered=this.targets(),targets=discovered.map(t=>{
-   let state:HookTarget['state']='not-installed',error:string|null=null;
+   let state:HookTarget['state']='not-installed',error:string|null=null,reason:string|null=null;
    let matchedId:string|undefined;
    try{
     const command=this.command(t.provider,t.id),owned=this.commands(t.id);
@@ -101,18 +101,19 @@ export class HookInstallation{
     if(desired.existed){const current=JSON.parse(desired.original);const all=Object.values(current.hooks||{}).flatMap((groups:any)=>groups.flatMap((group:any)=>group.hooks));
      const managed=all.filter((h:any)=>recognized.includes(h.command));
      if(managed.length){
-      state='needs-update';
+      state='needs-update';reason=ready?'Managed hook configuration changed':'Hook runtime needs repair';
       if(ready)for(const candidate of candidates){
        const candidateCommand=this.command(candidate.provider,candidate.id);
        const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(JSON.stringify(current)===JSON.stringify(JSON.parse(equivalent.updated))){state='installed';matchedId=candidate.id;break;}
+       if(JSON.stringify(current)===JSON.stringify(JSON.parse(equivalent.updated))){state='installed';reason=null;matchedId=candidate.id;break;}
       }
      }
     }
-    if(state==='not-installed'&&owned.length)state='needs-update';
-   }catch(e){state='error';error=String(e);}
-   if(this.installErrors.has(t.id)){state='error';error=this.installErrors.get(t.id)!;}
-   return {...t,state,error,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
+    if(state==='not-installed'&&owned.length){state='needs-update';reason='Previously managed hook is missing';}
+    if(state==='not-installed')reason='No Agent Time hook is installed';
+   }catch(e){state='error';error=String(e);reason='Configuration could not be read safely';}
+   if(this.installErrors.has(t.id)){state='error';error=this.installErrors.get(t.id)!;reason='Last repair failed';}
+   return {...t,state,error,reason,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
   });
   let legacyPaths:string[]=[];try{legacyPaths=this.legacy().map(l=>l.path);}catch(e){this.migrationError=String(e);}
   return {setupSeen:existsSync(join(this.stateRoot,'hook-setup.json')),runtimeVersion,runtimeReady:ready,agents:agents.map(({id,name,setting,usageSetting,trustNote})=>({id,name,setting,usageSetting,trustNote})),targets,legacyPaths,migrationError:this.migrationError};
@@ -197,15 +198,19 @@ export class HookInstallation{
    this.installErrors.clear();return result;
   }finally{this.busy=false;}
  }
- async install(provider:HookProvider){
+ async install(provider:HookProvider,targetIds?:string[]){
   if(!agentById.has(provider))throw new Error('Invalid provider');if(this.busy)throw new Error('Hook installation is already running');this.busy=true;
   try{
    this.installErrors.clear();this.installRuntime();
-   const providerTargets=this.targets().filter(t=>t.provider===provider);
+   const allProviderTargets=this.targets().filter(t=>t.provider===provider);
+   if(targetIds!==undefined&&(!Array.isArray(targetIds)||!targetIds.length||targetIds.length>100||targetIds.some(id=>typeof id!=='string'||!allProviderTargets.some(t=>t.id===id))))throw new Error('Invalid hook target selection');
+   const selected=new Set(targetIds||allProviderTargets.map(t=>t.id));
+   const states=new Map(this.status().targets.map(t=>[t.id,t.state]));
+   const providerTargets=allProviderTargets.filter(t=>selected.has(t.id)&&states.get(t.id)!=='installed');
    for(const t of providerTargets){
     try{
      const command=this.command(provider,t.id),owned=this.commands(t.id);
-     const recognized=this.recognizedCommands(provider,providerTargets);
+     const recognized=this.recognizedCommands(provider,allProviderTargets);
      const manifest=prepareConfig(t.path,provider,command,hookEvents(provider),recognized);
      const backup=join(this.stateRoot,'hook-installations',t.id,'original.json');if(!existsSync(backup))privateWrite(backup,JSON.stringify(manifest,null,2)+'\n');
      // Record ownership before applying, so an interrupted install remains repairable.

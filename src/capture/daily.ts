@@ -1,5 +1,9 @@
-import type { Summary } from './events.ts';
+import type { Issue, Summary } from './events.ts';
 import { groupIntervals, minuteCreditSeconds } from './correlate.ts';
+import { staticOrcaScopeReason } from './observation-retention.ts';
+export function dailyCaptureIssues(summary:Summary,from:number,to:number):Issue[] {
+ return [...summary.coverage,...summary.unresolved].filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to&&issue.reason!==staticOrcaScopeReason);
+}
 export function dailyTotals(summary:Summary,now=new Date()){
  const start=new Date(now);start.setHours(0,0,0,0);const end=new Date(start);end.setDate(end.getDate()+1);
  const intervals=summary.intervals.filter(i=>i.end>start.getTime()/1000&&i.start<end.getTime()/1000).map(i=>({...i,start:Math.max(i.start,start.getTime()/1000),end:Math.min(i.end,end.getTime()/1000)}));

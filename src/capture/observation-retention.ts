@@ -1,8 +1,11 @@
 import type {CaptureEvent} from './events.ts';
 
 const settled=new Set(['succeeded','failed','completed','cancelled','abandoned']);
+export const staticOrcaScopeReason='Only this Orca host is observed; remote execution has not been verified';
 
 export function observationKey(event:CaptureEvent):string|null {
+ if(event.source==='orca'&&event.kind==='coverage'&&event.data?.reason===staticOrcaScopeReason)
+  return JSON.stringify(['orca-host-scope',new Date(event.observedAt*1000).toISOString().slice(0,10)]);
  if(event.source!=='orca'||!event.hostId)return null;
  if(event.kind==='worker'&&event.dispatchId&&settled.has(String(event.data?.outcome))&&event.data?.fresh!==true)
   return JSON.stringify(['worker',event.hostId,event.dispatchId]);

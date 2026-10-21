@@ -1,7 +1,10 @@
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
-interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown; captureHealth?():unknown; diagnostics?():unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
+import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
+import {validateManualNote,type ManualNote} from './store.ts';
+interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;}
+interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -38,8 +41,12 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:controller.cleanupTracking()};
     }
     if(request.method==='hooks_install'){
-      if(!controller.installHooks||!request.params||Object.keys(params).length!==1||typeof params.provider!=='string'||!agentById.has(params.provider))throw new Error('Invalid hook installation request');
-      return {id,result:await controller.installHooks(params.provider)};
+      if(!controller.installHooks||!request.params||Object.keys(params).some(key=>!['provider','targetIds'].includes(key))||typeof params.provider!=='string'||!agentById.has(params.provider)||params.targetIds!==undefined&&(!Array.isArray(params.targetIds)||!params.targetIds.length||params.targetIds.length>100||params.targetIds.some(value=>typeof value!=='string'||!/^[a-f0-9]{16}$/.test(value))))throw new Error('Invalid hook installation request');
+      return {id,result:await controller.installHooks(params.provider,params.targetIds as string[]|undefined)};
+    }
+    if(request.method==='privacy_exclusions_set'){
+      if(!controller.setPrivacyExclusions||Object.keys(params).length!==1||!('entries' in params))throw new Error('Invalid privacy exclusion request');
+      return {id,result:controller.setPrivacyExclusions(validateExclusions(params.entries))};
     }
     if(request.method==='start') {
       if(Object.keys(params).some(k=>k!=='durationSeconds'))throw new Error('Unsupported parameter');
@@ -51,6 +58,36 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       if(Object.keys(params).length!==1||typeof params.date!=='string'||!controller.summaryForDate)throw new Error('Invalid summary date');
       return {id,result:controller.summaryForDate(params.date,15000)};
     }
+    if(request.method==='weekly_review'){
+      if(!controller.weeklyReview||Object.keys(params).length!==1||typeof params.startDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.startDate))throw new Error('Invalid week start');
+      return {id,result:controller.weeklyReview(params.startDate)};
+    }
+    if(request.method==='manual_notes'){
+      if(!controller.manualNotes||Object.keys(params).length!==1||typeof params.date!=='string')throw new Error('Invalid manual note date');
+      return {id,result:controller.manualNotes(params.date)};
+    }
+    if(request.method==='manual_note_add'){
+      if(!controller.addManualNote||Object.keys(params).length!==4)throw new Error('Invalid manual note');
+      return {id,result:controller.addManualNote(validateManualNote(params))};
+    }
+    if(request.method==='manual_note_remove'){
+      if(!controller.removeManualNote||Object.keys(params).length!==1||typeof params.id!=='string')throw new Error('Invalid manual note ID');
+      return {id,result:controller.removeManualNote(params.id)};
+    }
+    if(request.method==='archive_preview'||request.method==='archive_import'){
+      if(Object.keys(params).length!==1||typeof params.id!=='string')throw new Error('Invalid archive request');
+      const handler=request.method==='archive_preview'?controller.previewArchive:controller.importArchive;
+      if(!handler)throw new Error('Archive operation unavailable');
+      return {id,result:handler.call(controller,params.id)};
+    }
+    if(request.method==='archive_delete'){
+      if(Object.keys(params).length!==2||typeof params.id!=='string'||params.confirmed!==true||!controller.deleteArchive)throw new Error('Archive deletion requires confirmation');
+      return {id,result:controller.deleteArchive(params.id)};
+    }
+    if(request.method==='storage_restore_prepare'){
+      if(Object.keys(params).length!==2||typeof params.id!=='string'||params.confirmed!==true||!controller.prepareStorageRestore)throw new Error('Storage replacement requires confirmation');
+      return {id,result:controller.prepareStorageRestore(params.id)};
+    }
     if(Object.keys(params).length)throw new Error('Unsupported parameter');
     if(request.method==='tracking_cleanup_preview'&&controller.cleanupPreview)return {id,result:controller.cleanupPreview()};
     if(request.method==='hooks_status'&&controller.hooksStatus)return {id,result:controller.hooksStatus()};
@@ -59,7 +96,17 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='status')return {id,result:controller.status()};
     if(request.method==='summary')return {id,result:controller.summary(15000)};
     if(request.method==='capture_health'&&controller.captureHealth)return {id,result:controller.captureHealth()};
+    if(request.method==='capture_checks'&&controller.captureChecks)return {id,result:controller.captureChecks()};
     if(request.method==='diagnostics'&&controller.diagnostics)return {id,result:controller.diagnostics()};
+    if(request.method==='export_archive'&&controller.exportArchive)return {id,result:await controller.exportArchive()};
+    if(request.method==='archive_list'&&controller.listArchives)return {id,result:controller.listArchives()};
+    if(request.method==='storage_usage'&&controller.storageUsage)return {id,result:controller.storageUsage()};
+    if(request.method==='storage_reclaim'&&controller.reclaimWal)return {id,result:controller.reclaimWal()};
+    if(request.method==='storage_compact_prepare'&&controller.prepareStorageCompaction)return {id,result:controller.prepareStorageCompaction()};
+    if(request.method==='storage_replacement_cancel'&&controller.cancelStorageReplacement)return {id,result:controller.cancelStorageReplacement()};
+    if(request.method==='storage_replacement_status'&&controller.storageReplacementStatus)return {id,result:controller.storageReplacementStatus()};
+    if(request.method==='storage_replacement_result'&&controller.storageReplacementResult)return {id,result:controller.storageReplacementResult()};
+    if(request.method==='privacy_exclusions'&&controller.privacyExclusions)return {id,result:controller.privacyExclusions()};
     if(request.method==='tray_status'&&controller.trayStatus)return {id,result:controller.trayStatus()};
     if(request.method==='usage'&&controller.usage)return {id,result:controller.usage()};
     if(request.method==='website_projects'&&controller.websiteProjects)return {id,result:controller.websiteProjects()};

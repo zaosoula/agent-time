@@ -27,7 +27,12 @@ const settled=(e:CaptureEvent)=>['succeeded','failed','completed','cancelled','a
 export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;agentIdleThreshold?:number;maxGap?:number}={}):Summary {
  const maxGap=options.maxGap??15,idle=options.idleThreshold??300,agentIdle=options.agentIdleThreshold??300;
  if(!Number.isFinite(idle)||idle<=0||!Number.isFinite(agentIdle)||agentIdle<=0)throw new Error('invalid idle threshold');
- const unique=[...new Map(input.map(e=>[e.eventId,e])).values()];
+ const unique:CaptureEvent[]=[],byId=new Map<string,number>();
+ for(const event of input){
+  const index=byId.get(event.eventId);
+  if(index===undefined){byId.set(event.eventId,unique.length);unique.push(event);}
+  else unique[index]=event;
+ }
  // Preserve per-epoch causal order even when wall time rolls backwards, with a transitive global ordering.
  const epochGroups=new Map<string,CaptureEvent[]>();
  for(const e of unique){const group=epochGroups.get(e.collectorEpoch)||[];group.push(e);epochGroups.set(e.collectorEpoch,group);}
@@ -107,7 +112,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  for(const original of events) {
   const e=original.source==='hook'?resolve(original):original;
-  if(e.kind==='coverage'){coverage.push({reason:String(e.data?.reason||'Missing observations'),source:e.source});continue;}
+  if(e.kind==='coverage'){coverage.push({reason:String(e.data?.reason||'Missing observations'),source:e.source,eventId:e.eventId});continue;}
   if(e.kind==='capture_settings'){
    const previous=e.data?.previous as Record<string,boolean>|undefined,next=e.data?.surfaces as Record<string,boolean>|undefined;
    const changed=(key:string)=>previous?.[key]!==next?.[key];
@@ -154,7 +159,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
      }
      const selected=prev.data?.orcaSelectedTabTitle;
      if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&typeof selected==='string'&&selected===e.data?.orcaSelectedTabTitle)interval.tabTitle=selected;
-     if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&prev.workspaceId&&prev.workspaceId===e.workspaceId)interval.workspaceId=prev.workspaceId;
+     if(prev.data?.foregroundBundleId==='com.stablyai.orca'&&e.data?.foregroundBundleId==='com.stablyai.orca'&&prev.workspaceId&&prev.workspaceId===e.workspaceId){interval.workspaceId=prev.workspaceId;interval.attributionSource='orca-worktree';interval.attributionReason='Same Orca worktree in both foreground observations';}
      const domain=prev.data?.browserDomain;
      if(typeof domain==='string'&&domain===e.data?.browserDomain&&prev.data?.foregroundBundleId===e.data?.foregroundBundleId){
       interval.browserDomain=domain;interval.browserBundleId=String(e.data?.foregroundBundleId);
@@ -162,7 +167,12 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
       const previousOrigin=origin(prev.data),nextOrigin=origin(e.data);
       if(previousOrigin&&previousOrigin===nextOrigin){
        interval.browserOrigin=previousOrigin;
-       if(prev.workspaceId&&prev.workspaceId===e.workspaceId)interval.workspaceId=prev.workspaceId;
+       if(prev.workspaceId&&prev.workspaceId===e.workspaceId){
+        interval.workspaceId=prev.workspaceId;
+        const first=prev.data?.websiteAttribution as Record<string,unknown>|undefined,second=e.data?.websiteAttribution as Record<string,unknown>|undefined;
+        if(first&&second&&first.source===second.source&&first.projectPath===second.projectPath){interval.attributionSource=String(first.source||'website');interval.attributionReason=String(first.detail||'Same website project in both observations');}
+        else{interval.attributionSource='website';interval.attributionReason='Same website project in both observations';}
+       }else if(prev.workspaceId&&e.workspaceId&&prev.workspaceId!==e.workspaceId){interval.attributionSource='conflict';interval.attributionReason='Conflicting project observations';}
       }
       if(typeof prev.data?.browserUrl==='string'&&prev.data.browserUrl===e.data?.browserUrl){
        interval.browserUrl=prev.data.browserUrl;
@@ -266,5 +276,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  const groupedActivity=[...roots,...children].flatMap(([key,ranges])=>grouped(key,ranges));
  const humanRanges=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);
- return {intervals,unresolved,coverage,sessions:[...sessions.values()],humanSeconds:minuteCreditSeconds(humanRanges),agentSeconds:[...roots].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),childAgentSeconds:[...children].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),elapsedSeconds:minuteCreditSeconds([...groupedActivity,...humanRanges])};
+ const observedAt=new Map(unique.map(event=>[event.eventId,event.observedAt]));
+ const dated=(issues:Issue[])=>issues.map(issue=>({...issue,observedAt:issue.eventId?observedAt.get(issue.eventId):undefined}));
+ return {intervals,unresolved:dated(unresolved),coverage:dated(coverage),sessions:[...sessions.values()],humanSeconds:minuteCreditSeconds(humanRanges),agentSeconds:[...roots].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),childAgentSeconds:[...children].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),elapsedSeconds:minuteCreditSeconds([...groupedActivity,...humanRanges])};
 }

@@ -3,6 +3,11 @@ import { unionSeconds, summarize } from '../src/capture/correlate.ts';
 import type { CaptureEvent } from '../src/capture/events.ts';
 const e=(id:string,time:number,kind:string,fields:Partial<CaptureEvent>={}):CaptureEvent=>({eventId:id,source:'hook',kind,observedAt:time,monotonicAt:time,collectorEpoch:'a',...fields});
 const worker=(id:string,time:number,dispatchId='d1',runId='r1',state='working',outcome='in_progress')=>e(id,time,'worker',{source:'orca',hostId:'local',terminalHandle:'t1',workspaceId:'ws',dispatchId,runId,taskId:'task-'+dispatchId,data:{state,outcome,fresh:true}});
+test('capture caveats retain the observation time for daily review',()=>{
+ const summary=summarize([e('gap',123,'coverage',{source:'orca',data:{reason:'Poll failed'}}),e('end',456,'tool_end',{sessionId:'s',terminalHandle:'t',hostId:'local'})]);
+ assert.deepEqual(summary.coverage.map(issue=>issue.observedAt),[123]);
+ assert.deepEqual(summary.unresolved.map(issue=>issue.observedAt),[456]);
+});
 test('a completed prompt-to-response turn includes reasoning gaps without double-counting tool execution',()=>{
  const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',provider:'codex'};
  const s=summarize([e('prompt',0,'prompt_submitted',root),e('tool-start',10,'tool_start',{...root,data:{toolId:'a'}}),e('tool-end',20,'tool_end',{...root,data:{toolId:'a'}}),e('stop',60,'response_stop',root)]);
@@ -140,6 +145,14 @@ test('browser time belongs to a page only while its URL stays foreground',()=>{
  assert.deepEqual(human.map(i=>i.browserDomain),['github.com','github.com',undefined]);
  assert.deepEqual(human.map(i=>i.browserUrl),['https://github.com/a',undefined,undefined]);
  assert.equal(human[0]?.browserBundleId,'com.apple.Safari');
+});
+test('human project attribution explains stable website evidence and flags conflicts',()=>{
+ const activity=(id:string,time:number,project:string)=>e(id,time,'activity',{source:'macos',workspaceId:`web::${project}`,data:{foregroundBundleId:'com.apple.Safari',browserDomain:'example.test',browserUrl:'https://example.test/page',idleSeconds:0,websiteAttribution:{source:'port_process',projectPath:project,detail:'Local port owner'}}});
+ const intervals=summarize([activity('a',0,'/project/a'),activity('b',2,'/project/a'),activity('c',4,'/project/b')]).intervals.filter(i=>i.state==='human');
+ assert.equal(intervals[0]?.attributionReason,'Local port owner');
+ assert.equal(intervals[0]?.attributionSource,'port_process');
+ assert.equal(intervals[1]?.workspaceId,undefined);
+ assert.equal(intervals[1]?.attributionReason,'Conflicting project observations');
 });
 test('one-minute credit groups short bursts once, and separates bursts beyond one minute',()=>{
  const root={sessionId:'s1',terminalHandle:'t1',hostId:'local'};

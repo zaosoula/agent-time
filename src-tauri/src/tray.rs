@@ -1,13 +1,14 @@
-use super::Bridge;
+use super::{Bridge,pause_deadline};
 use serde_json::{json,Value};
-use std::sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}};
+use std::{sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}},time::{Duration,SystemTime,UNIX_EPOCH},path::PathBuf};
 use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem},tray::TrayIconBuilder};
 use tauri_plugin_notification::NotificationExt;
 use crate::widget::WidgetPublisher;
 
 pub struct TrayState {
- status:MenuItem<tauri::Wry>,today:MenuItem<tauri::Wry>,detail:MenuItem<tauri::Wry>,tokens:MenuItem<tauri::Wry>,toggle:MenuItem<tauri::Wry>,
+ status:MenuItem<tauri::Wry>,today:MenuItem<tauri::Wry>,detail:MenuItem<tauri::Wry>,tokens:MenuItem<tauri::Wry>,toggle:MenuItem<tauri::Wry>,timed_pause:MenuItem<tauri::Wry>,
  busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,widget:WidgetPublisher,last_summary:Mutex<Option<Value>>,
+ pause_until:Mutex<Option<SystemTime>>,pause_file:PathBuf,
 }
 fn hook_warning_body(value:&Value,last:&mut Option<String>)->Option<String>{
  if value["running"].as_bool()!=Some(true){return None;}
@@ -42,17 +43,20 @@ impl TrayState {
     self.widget.publish(&value,false);
     if let Ok(mut last)=self.last_summary.lock(){*last=Some(value.clone());}
     let running=value["running"].as_bool().unwrap_or(false);
+    if running{if let Ok(mut deadline)=self.pause_until.lock(){*deadline=None;}let _=std::fs::remove_file(&self.pause_file);}
     if let Some(body)=hook_warning_body(&value,&mut self.last_warning.lock().unwrap()){
      let _=app.notification().builder().title("Agent tracking may be idle").body(body).show();
     }
-    let _=self.status.set_text(if running{"Capture running"}else{"Capture paused"});
+    let remaining=self.pause_until.lock().ok().and_then(|until|until.as_ref().and_then(|at|at.duration_since(SystemTime::now()).ok().map(|remaining|remaining.as_secs()/60+1)));
+    let needs_attention=value["sourceWarning"].as_array().is_some_and(|sources|!sources.is_empty());
+    let _=self.status.set_text(if running&&needs_attention{"Capture needs attention — open dashboard".into()}else if running{"Capture running".into()}else if let Some(minutes)=remaining{format!("Paused · resumes in {minutes}m")}else{"Capture paused".into()});
     let _=self.today.set_text(format!("Today: {} activity",duration(value["elapsedSeconds"].as_f64().unwrap_or(0.0))));
     let _=self.detail.set_text(format!("Agents: {} · Mac: {}",duration(value["agentSeconds"].as_f64().unwrap_or(0.0)),duration(value["humanSeconds"].as_f64().unwrap_or(0.0))));
     let n=value["tokensToday"].as_f64().unwrap_or(0.0);let count=if n>=1e6{format!("{:.1}M",n/1e6)}else if n>=1e3{format!("{:.1}K",n/1e3)}else{format!("{:.0}",n)};
     let _=self.tokens.set_text(format!("Tokens: {} · ${:.2} API equivalent{}",count,value["apiUsdToday"].as_f64().unwrap_or(0.0),if value["unpricedToday"].as_f64().unwrap_or(0.0)>0.0{" (partial)"}else{""}));
-    let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);
+    let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);let _=self.timed_pause.set_enabled(running);
    },
-   Err(_)=>{if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);}
+   Err(_)=>{if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);let _=self.timed_pause.set_enabled(false);}
   }
  }
  pub fn publish_stopped(&self){
@@ -68,16 +72,23 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let detail=MenuItem::with_id(app,"tray-detail","Agents: — · Mac: —",false,None::<&str>)?;
  let tokens=MenuItem::with_id(app,"tray-tokens","Tokens: —",false,None::<&str>)?;
  let toggle=MenuItem::with_id(app,"tray-toggle","Pause capture",false,None::<&str>)?;
+ let timed_pause=MenuItem::with_id(app,"tray-pause-15","Pause for 15 minutes",false,None::<&str>)?;
  let dashboard=MenuItem::with_id(app,"tray-dashboard","Open dashboard",true,None::<&str>)?;
  let settings=MenuItem::with_id(app,"tray-settings","Settings…",true,None::<&str>)?;
  let usage=MenuItem::with_id(app,"tray-usage","Tokens and limits…",true,None::<&str>)?;
  let quit=MenuItem::with_id(app,"tray-quit","Quit Agent Time",true,None::<&str>)?;
- let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&dashboard,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
+ let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
  TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true).build(app)?;
- let state=Arc::new(TrayState{status,today,detail,tokens,toggle,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None)});
+ let pause_file=bridge.launch.output.join("pause-until");
+ let pause_until=pause_deadline(&pause_file);
+ let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file});
  app.manage(state.clone());
  let handle=app.handle().clone();
- std::thread::spawn(move||{while !state.stopped.load(Ordering::Acquire){state.refresh(&bridge,&handle);std::thread::sleep(std::time::Duration::from_secs(5));}});
+ std::thread::spawn(move||{while !state.stopped.load(Ordering::Acquire){
+  let due=state.pause_until.lock().ok().and_then(|mut deadline|{if deadline.as_ref().is_some_and(|at|SystemTime::now()>=*at){deadline.take()}else{None}});
+  if due.is_some(){if bridge.request("start",json!({})).is_err(){if let Ok(mut deadline)=state.pause_until.lock(){*deadline=Some(SystemTime::now()+Duration::from_secs(60));}}else{let _=std::fs::remove_file(&state.pause_file);}}
+  state.refresh(&bridge,&handle);std::thread::sleep(Duration::from_secs(5));
+ }});
  Ok(())
 }
 fn open_page(app:&tauri::AppHandle,page:&str){
@@ -96,7 +107,22 @@ pub fn handle(app:&tauri::AppHandle,id:&str){match id{
   std::thread::spawn(move||{
    let result=bridge.request("tray_status",json!({})).and_then(|v|if v["running"].as_bool()==Some(true){bridge.request("stop",json!({}))}else{bridge.request("start",json!({}))});
    state.busy.store(false,Ordering::Release);
-   if result.is_err(){let _=state.status.set_text("Capture change failed — open dashboard");let _=state.toggle.set_enabled(true);}else{state.refresh(&bridge,&handle);}
+   if result.is_err(){let _=state.status.set_text("Capture change failed — open dashboard");let _=state.toggle.set_enabled(true);}else{if let Ok(mut deadline)=state.pause_until.lock(){*deadline=None;}let _=std::fs::remove_file(&state.pause_file);state.refresh(&bridge,&handle);}
+  });
+ },
+ "tray-pause-15"=>{
+  let Some(state)=app.try_state::<Arc<TrayState>>() else{return;};let state=state.inner().clone();
+  if state.busy.swap(true,Ordering::AcqRel){return;}
+  let bridge=app.state::<Arc<Bridge>>().inner().clone();let handle=app.clone();
+  std::thread::spawn(move||{
+   let result=bridge.request("stop",json!({}));
+   let mut save_failed=false;
+   if result.is_ok(){let until=SystemTime::now()+Duration::from_secs(15*60);if let Ok(seconds)=until.duration_since(UNIX_EPOCH){
+    if std::fs::write(&state.pause_file,seconds.as_secs().to_string()).is_ok(){if let Ok(mut deadline)=state.pause_until.lock(){*deadline=Some(until);}}
+    else{save_failed=true;let _=bridge.request("start",json!({}));}
+   }}
+   state.busy.store(false,Ordering::Release);state.refresh(&bridge,&handle);
+   if save_failed{let _=state.status.set_text("Timed pause failed — check capture in dashboard");}
   });
  },_=>{}
 }}

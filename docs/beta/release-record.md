@@ -1,5 +1,23 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.5` preparation — 2026-10-21
+
+The prior reliability and review branch revision passed its Apple Silicon pull-request checks and has been versioned to `0.2.0-beta.5` for a build-only release candidate. The final beta.5 revision still needs its own check. The public version remains `0.2.0-beta.4`. Signed artifacts, notarization, a clean install, actual OTA completion, and publication are not yet recorded for beta.5.
+
+On the local 558,638-event, 434,417,664-byte database, a read-only benchmark after streaming event rows and removing an intermediate deduplication array took 1.2 seconds to read and parse, 2.0 seconds to summarize, and reported about 841 MB of heap with a 1.5 GB Node heap cap. It produced 182,512 intervals. This is a measured large-history performance limit, not a bounded daily reducer checkpoint. The app's cached summary and indexed startup settings query reduce repeated work, but an uncached summary still replays full history. No historical observations were pruned from the live database.
+
+The release gate remains open until the exact candidate is signed and tested on the Mac mini `ezyostudio` account, including first-run capture, widget navigation, OTA update and recovery, and a capture soak. The release owner authorized clearing Agent Time data only in that test account; the local release Mac's history remains untouched.
+
+## Tracking reliability work — 2026-10-20, unreleased
+
+Branch `feat/tracking-reliability-roadmap` contains per-source capture states including browsers, bounded collector restart, targeted hook repair, first-event setup feedback, privacy exclusions that discard browser samples when a site exclusion cannot be checked, timed pause, bulk daily review, manual notes, weekly review/export, an opt-in redacted JSON support bundle, verified SQLite archive import and explicit deletion, storage breakdown and WAL reclamation, background update checks, and a widget route to capture health. Latest local verification passed 215 JavaScript tests, 15 locked Rust tests, and the interface build. The prior Apple Silicon app build passed strict nested signature verification and packaged `agenttime` URL scheme inspection; it predates the 2026-10-21 storage changes. That build used local development signing and was **not notarized or published**. The current public beta remains `0.2.0-beta.4`.
+
+On a read-only local store with 558,638 events and a 434,417,664-byte database, the new indexed startup settings query read 179 relevant records in about 1 ms; the prior startup code loaded and parsed all events. The offline compactor verified a disposable copy with 516,870 events and 413,798,400 bytes, preserving timing, other coverage, review decisions, integrity, and the static Orca host-scope notice on all nine observed days. The copy saved 20,619,264 bytes (about 4.7%) and was deleted after measurement. Full summary replay still takes about 3 seconds and is a release performance limitation. A shorter date window happened to match sampled days but was not shipped because a valid observed span may cross its boundaries. No live history retention or deletion was introduced.
+
+Before a new public version: complete safe daily projection work, build a versioned Developer ID signed and notarized candidate on Apple Silicon, verify widget deep-link navigation and timed pause on a real install, and record clean-Mac first run plus actual signed OTA update/recovery. Do not promote this branch's development build or change the public feed based on local tests alone.
+
+On 2026-10-21, the branch added explicit restart-time storage replacement. A disposable snapshot of the 558,638-event store completed the prepare, verify, replace, reopen, and integrity-check path, reducing to 516,870 rows and saving 17,047,552 bytes relative to the already-vacuumed snapshot. Focused tests cover rollback to the original archive, stale-source rejection, interrupted replacement, and malformed archive rejection. The installed app's live database was unchanged. This rehearsal does not establish release-machine behavior or a supported automatic retention policy.
+
 Status: **`0.2.0-beta.4` published on 2026-10-19** with a macOS daily summary widget and refreshed app icon. The public site offers its signed and notarized Apple Silicon DMG, and the HTTPS updater feed serves its signed update. Clean-Mac installation, visual widget gallery confirmation, Mac mini confirmation, and end-to-end OTA results are still pending.
 
 ## Release contract
@@ -15,7 +33,7 @@ Status: **`0.2.0-beta.4` published on 2026-10-19** with a macOS daily summary wi
 | Signing identity and team | Developer ID Application: EZYOSTUDIO (`XSA5KG6XNB`) signed the local candidate on 2026-10-16. Certificate expires 2027-02-01. |
 | Notary credentials | EzyoStudio team API key authenticated with `xcrun notarytool history`; Apple accepted both the app and DMG on 2026-10-16. Private key is outside Git with user-only file permissions. |
 | Updater key custody and backup | Private key generated in a user-only local folder outside Git on 2026-10-16; release owner confirmed a password-manager backup. End-to-end in-app signature acceptance remains pending. |
-| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify. Deployment `tvk0vltj71bkops4n4y66vbk` from `12b0b7f` changed the empty feed to HTTP 204. The promoted feed now serves `0.2.0-beta.3` for `darwin-aarch64` with a signature. External in-app update testing remains pending. |
+| Beta update endpoint and access | `https://agent-time.ezyostudio.com/beta/latest.json` on Coolify. Deployment `tvk0vltj71bkops4n4y66vbk` from `12b0b7f` changed the empty feed to HTTP 204. The 2026-10-19 publication record below identifies `0.2.0-beta.4` as the promoted version for `darwin-aarch64`. External in-app update testing remains pending. |
 | Feedback contact and owner | `zao.soula@ezyostudio.com`; supplied by release owner on 2026-10-16. Feedback workflow remains untested. |
 | Public withdrawal channel | The landing page and source repository can carry a notice; support email is `zao.soula@ezyostudio.com`. Incident communication has not been tested. |
 

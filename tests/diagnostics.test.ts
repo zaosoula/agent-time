@@ -1,6 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {diagnosticSummary} from '../src/capture/diagnostics.ts';
+import {recoveryNotices} from '../src/capture/recovery.ts';
 test('support diagnostics exclude captured work, paths, URLs, and raw errors',()=>{
  const secret='TOP_SECRET_PROMPT';
  const input={
@@ -16,4 +17,17 @@ test('support diagnostics exclude captured work, paths, URLs, and raw errors',()
  assert.equal(summary.databaseHealth,'ok');
  assert.equal(summary.sources[0].lastEventAgeSeconds,10);
  assert.equal(summary.sources[0].hooks,'installed');
+});
+test('recovery notices identify storage and hook repair without captured content',()=>{
+ const notices=recoveryNotices({databaseHealthy:false,freeBytes:40*1024*1024,sources:[{id:'claude',name:'Claude Code',state:'repair-needed',action:'repair-hooks',detail:'Install hooks',lastEvent:null}],clockShiftSeconds:180});
+ assert.deepEqual(notices.map(item=>item.id),['database','disk','clock','hook-claude']);
+ assert.match(notices[0].action,/export|restore/i);
+ assert.match(notices[1].action,/space/i);
+ assert.match(notices[3].action,/hook/i);
+});
+test('stalled hook events show a count without exposing spool file names',()=>{
+ const notices=recoveryNotices({databaseHealthy:true,freeBytes:null,sources:[],spool:{pending:3,temporary:1,invalid:1,oldestAgeSeconds:180,truncated:false},running:true,clockShiftSeconds:0});
+ assert.equal(notices[0]?.id,'spool');
+ assert.match(notices[0].detail,/3 pending events; 1 unreadable/);
+ assert.equal(JSON.stringify(notices).includes('.json'),false);
 });

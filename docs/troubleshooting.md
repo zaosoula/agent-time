@@ -1,0 +1,42 @@
+# Troubleshooting Agent Time capture
+
+Open **Capture health** and select **Run capture checks** first. The check separates an enabled source, its current configuration, and an event actually delivered to Agent Time. A configured hook alone does not prove capture works.
+
+## No agent events
+
+1. Open **Settings → Connect agents** and install or update only the affected Claude Code or Codex installation.
+2. Start a *new* agent session. An existing session can keep an older hook runtime.
+3. In Codex, open `/hooks` and trust the Agent Time hook if Codex asks. Agent Time cannot grant that trust on your behalf.
+4. Return to **Capture health**. The source check should show an event from the current runtime. If it stays at “waiting”, use **Preview diagnostic summary** and send the reviewed text to `zao.soula@ezyostudio.com`.
+
+## Mac activity or websites are missing
+
+Enable **Mac activity** in Settings. Grant Accessibility access when the app prompts for it if you want browser tab details. macOS foreground app activity may still be captured when optional tab detail is unavailable. Open a supported browser in the foreground, then run capture checks again. App and site exclusions intentionally omit details.
+
+## Orca says “Not installed”
+
+Orca is optional. Agent hooks and Mac activity work without it. Install Orca only if you want its orchestration and worktree context. Agent Time will stop polling Orca while its CLI is unavailable.
+
+## Collector exited or capture is paused
+
+Use **Retry** or **Resume capture** in the app and verify a new event in Capture health. Automatic collector restarts are bounded. A deliberately stopped app or update does not restart capture until the app runs again.
+
+## Agent events stay in the queue
+
+Capture health shows how many hook events are waiting, the oldest age, and unreadable record counts. Keep Agent Time running so it can retry. If the queue does not drain, run capture checks and save a redacted support bundle; raw queued events remain on this Mac.
+
+## Updater cannot fetch release information
+
+Check your connection to `https://agent-time.ezyostudio.com/latest.json`, then use **Retry update check**. The app installs updates only when you choose to. If the feed is unavailable, capture should still run; check Capture health separately. Send the diagnostic summary and app version if the error continues.
+
+## Low disk space or database warning
+
+Open **Settings → Storage** for database, write-ahead log, hook spool, runtime, and archive sizes. **Reclaim temporary space** checkpoints the SQLite write-ahead log and keeps all observations. To reduce redundant records, pause capture and select **Prepare compacted database**. Agent Time verifies a copy; quit and reopen the app to replace the database. The original becomes a local archive that can be selected for exact replacement if you need to roll back. Total disk use initially increases because that backup remains; after confirming capture works, you can explicitly delete the backup in **Local archive**. If tracking data changes before restart, replacement is cancelled. Free space elsewhere on the Mac if needed. Do not delete the live `events.sqlite` file. The app does not silently remove old capture evidence.
+
+## Sleep, wake, or clock change
+
+Review the timeline around the gap. A missing interval is unknown time, not proof of work or idleness. If you know what happened, add a labelled manual note; Agent Time keeps it separate from observations.
+
+## Share a support summary
+
+In **Capture health**, select **Preview diagnostic summary** and inspect it. You can copy the text or save a redacted JSON support bundle to a location you choose. It contains source states, counts, coarse errors, version and platform information. It excludes event contents, project paths, URLs, window titles, and raw errors. Sharing is optional.

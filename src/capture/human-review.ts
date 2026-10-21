@@ -25,7 +25,7 @@ export function applyHumanDecisions(summary:Summary,decisions:HumanDecision[]):S
 
 export interface HumanReviewGroup {
  key:string;start:number;end:number;seconds:number;label:string;detail:string;
- browserUrl?:string;browserOrigin?:string;browserDomain?:string;projectPath?:string;userAttribution?:'assigned'|'unassigned';
+ browserUrl?:string;browserOrigin?:string;browserDomain?:string;projectPath?:string;userAttribution?:'assigned'|'unassigned';attributionSource?:string;attributionReason?:string;
  pairs:Array<[string,string]>;
 }
 
@@ -40,14 +40,14 @@ export function groupHumanReview(intervals:Interval[]):HumanReviewGroup[] {
   const path=interval.workspaceId?.split('::').at(-1);
   const label=interval.browserTitle||interval.tabTitle||interval.foregroundName||interval.browserDomain||'Unknown app';
   const detail=interval.browserUrl||interval.browserDomain||interval.foregroundBundleId||'Foreground activity';
-  const matchKey=JSON.stringify([identity(interval),path||'',interval.userAttribution||'']);
+  const matchKey=JSON.stringify([identity(interval),path||'',interval.userAttribution||'',interval.attributionSource||'',interval.attributionReason||'']);
   const last=groups.at(-1);
   if(last&&last.key===matchKey&&last.pairs.length<500&&interval.start-last.end<=60){
    last.end=Math.max(last.end,interval.end);last.seconds+=interval.end-interval.start;
    last.pairs.push(interval.sourceEventIds as [string,string]);
   }else groups.push({key:matchKey,start:interval.start,end:interval.end,seconds:interval.end-interval.start,
    label,detail,browserUrl:interval.browserUrl,browserOrigin:interval.browserOrigin,browserDomain:interval.browserDomain,projectPath:path,
-   userAttribution:interval.userAttribution,pairs:[interval.sourceEventIds as [string,string]]});
+   userAttribution:interval.userAttribution,attributionSource:interval.attributionSource,attributionReason:interval.attributionReason,pairs:[interval.sourceEventIds as [string,string]]});
  }
  return groups.reverse();
 }

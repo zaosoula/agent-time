@@ -12,6 +12,7 @@ import { dispatchRequest } from './protocol.ts';
 import { defaultSettings, storedSettings } from './settings.ts';
 import { prepareConfig, applyConfig, restoreConfig, hookEvents } from './hook-config.ts';
 import {agentById} from './sources/agent-registry.ts';
+import {applyPendingReplacement} from './storage-migration.ts';
 const args=process.argv.slice(2),command=args.shift();
 if(command==='hook') {
   try{
@@ -39,6 +40,8 @@ if(command==='hook') {
     }else if(command==='collect'||command==='protocol'){
       const interval=Number(values.interval||5),duration=Number(values.duration||300);
       if(!Number.isFinite(interval)||interval<1||interval>60||!Number.isFinite(duration)||duration<1||duration>86400)throw new Error('Invalid duration or interval');
+      const replacement=applyPendingReplacement(output);
+      if(replacement==='stale')console.error('Pending storage replacement was cancelled because tracking data changed');
       const collector=new Collector(output,values.probe||process.env.ADE_ACTIVITY_PROBE||resolve('.capture/bin/activity-probe'),interval,values.run,undefined,values.keychain||resolve('.capture/bin/linear-keychain'));
       let closing=false;async function shutdown(){if(closing)return;closing=true;await collector.close();process.exit(0);}
       process.on('SIGTERM',()=>{void shutdown();});process.on('SIGINT',()=>{void shutdown();});

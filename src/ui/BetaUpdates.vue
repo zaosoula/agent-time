@@ -6,8 +6,10 @@ import {invoke} from '@tauri-apps/api/core';
 import {installBetaUpdate} from './beta-updates.ts';
 const update=shallowRef<Update|null>(null),error=ref(''),busy=ref(false),progress=ref('');
 let timer:ReturnType<typeof setInterval>|undefined;
+let lastCheck=0;
 async function checkNow(){
  if(busy.value)return;
+ lastCheck=Date.now();
  busy.value=true;error.value='';
  try{const next=await check();await update.value?.close();update.value=next;}
  catch(e){error.value=`Could not check for updates: ${String(e)}`;}
@@ -22,8 +24,9 @@ async function install(){
  });}
  catch(e){error.value=`Update failed: ${String(e)}`;progress.value='';busy.value=false;}
 }
-onMounted(()=>{void checkNow();timer=setInterval(()=>{void checkNow();},6*60*60*1000);});
-onUnmounted(()=>{if(timer)clearInterval(timer);if(!busy.value)void update.value?.close();});
+function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>60_000)void checkNow();}
+onMounted(()=>{void checkNow();timer=setInterval(()=>{void checkNow();},6*60*60*1000);window.addEventListener('focus',checkOnReturn);document.addEventListener('visibilitychange',checkOnReturn);});
+onUnmounted(()=>{if(timer)clearInterval(timer);window.removeEventListener('focus',checkOnReturn);document.removeEventListener('visibilitychange',checkOnReturn);if(!busy.value)void update.value?.close();});
 </script>
 <template>
 <div v-if="update||error" class="beta-update" role="status">
