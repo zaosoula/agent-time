@@ -7,7 +7,7 @@ import {transport,type WebsiteProjectStatus} from './transport.ts';
 
 const props=defineProps<{intervals:Interval[];siteFilter:string}>();
 const emit=defineEmits<{changed:[summary:Summary];clearFilter:[]}>();
-const projects=ref<WebsiteProjectStatus|null>(null),choices=ref<Record<string,string>>({}),error=ref(''),pending=ref(''),expanded=ref(false),showAll=ref(false),limit=ref(30),selectedGroups=ref<Record<string,boolean>>({}),bulkProject=ref('');
+const projects=ref<WebsiteProjectStatus|null>(null),choices=ref<Record<string,string>>({}),error=ref(''),pending=ref(''),expanded=ref(false),viewMode=ref<'needs'|'conflicts'|'all'>('needs'),limit=ref(30),selectedGroups=ref<Record<string,boolean>>({}),bulkProject=ref('');
 let projectsLoading=false;
 const id=(group:HumanReviewGroup)=>`${group.start}:${group.key}`;
 const clock=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'});
@@ -16,8 +16,10 @@ const name=(path:string)=>path.split('/').filter(Boolean).at(-1)||path;
 const projectPaths=computed(()=>[...new Set([...(projects.value?.projects||[]),...props.intervals.flatMap(i=>i.workspaceId?[i.workspaceId.split('::').at(-1)!]:[])])].filter(path=>path.startsWith('/')).sort((a,b)=>name(a).localeCompare(name(b))));
 const groups=computed(()=>groupHumanReview(props.intervals).filter(group=>!props.siteFilter||Boolean(group.browserUrl?.startsWith(props.siteFilter)||group.browserOrigin===props.siteFilter)));
 const needs=computed(()=>groups.value.filter(group=>!group.projectPath&&!group.userAttribution).sort((a,b)=>b.seconds-a.seconds||b.start-a.start));
+const conflicts=computed(()=>groups.value.filter(group=>group.attributionSource==='conflict'&&!group.userAttribution).sort((a,b)=>b.seconds-a.seconds||b.start-a.start));
 const unmatchedSeconds=computed(()=>needs.value.reduce((total,group)=>total+group.seconds,0));
-const visible=computed(()=>(showAll.value?groups.value:needs.value).slice(0,limit.value));
+const activeGroups=computed(()=>viewMode.value==='all'?groups.value:viewMode.value==='conflicts'?conflicts.value:needs.value);
+const visible=computed(()=>activeGroups.value.slice(0,limit.value));
 const bulkGroups=computed(()=>groups.value.filter(group=>selectedGroups.value[id(group)]));
 async function bulkAssign(){
  if(!bulkProject.value){error.value='Choose a project folder first.';return;}
@@ -53,7 +55,7 @@ async function saveRule(group:HumanReviewGroup){
 }
 async function loadProjects(){if(projects.value||projectsLoading)return;projectsLoading=true;try{projects.value=await transport.websiteProjects();}catch(cause){error.value=String(cause);}finally{projectsLoading=false;}}
 watch(expanded,open=>{if(open)void loadProjects();});
-watch(()=>props.siteFilter,filter=>{if(filter){expanded.value=true;showAll.value=false;limit.value=30;}},{immediate:true});
+watch(()=>props.siteFilter,filter=>{if(filter){expanded.value=true;viewMode.value='needs';limit.value=30;}},{immediate:true});
 </script>
 
 <template>
@@ -61,10 +63,10 @@ watch(()=>props.siteFilter,filter=>{if(filter){expanded.value=true;showAll.value
   <button class="human-review-heading" :aria-expanded="expanded" @click="expanded=!expanded"><span><ChevronRight :size="14" :class="{expanded}"/><strong>Review human activity</strong><small>{{duration(unmatchedSeconds)}} unmatched · {{needs.length}} groups</small></span><span>{{expanded?'Hide':'Review'}}</span></button>
   <div v-if="expanded" class="human-review-body">
    <p>Assign recorded foreground time to a project. This changes the timesheet; the original capture stays intact.</p>
-   <div class="human-review-controls"><button :class="{active:!showAll}" @click="showAll=false;limit=30">Needs review · longest first</button><button :class="{active:showAll}" @click="showAll=true;limit=30">All activity · recent first</button><span v-if="siteFilter">Showing {{siteFilter}} <button @click="emit('clearFilter')">Clear filter</button></span></div>
+   <div class="human-review-controls"><button :class="{active:viewMode==='needs'}" @click="viewMode='needs';limit=30">Needs review · longest first</button><button :class="{active:viewMode==='conflicts'}" @click="viewMode='conflicts';limit=30">Conflicting evidence · {{conflicts.length}}</button><button :class="{active:viewMode==='all'}" @click="viewMode='all';limit=30">All activity · recent first</button><span v-if="siteFilter">Showing {{siteFilter}} <button @click="emit('clearFilter')">Clear filter</button></span></div>
    <div v-if="visible.length" class="human-review-bulk"><button :disabled="Boolean(pending)" @click="selectedGroups=Object.fromEntries(visible.map(group=>[id(group),true]))">Select visible</button><button :disabled="Boolean(pending)" @click="selectedGroups={}">Clear selection</button><span>{{bulkGroups.length}} selected</span><input v-model="bulkProject" list="human-bulk-projects" aria-label="Project for selected activity" placeholder="Project for selected activity"/><datalist id="human-bulk-projects"><option v-for="path in projectPaths" :key="path" :value="path">{{name(path)}}</option></datalist><button :disabled="Boolean(pending)||!bulkGroups.length" @click="bulkAssign">Assign selected</button></div>
    <p v-if="error" class="human-review-error" role="alert">{{error}}</p>
-   <div v-if="!visible.length" class="human-review-empty">{{siteFilter?'No recorded activity for this site on the selected day.':showAll?'No human activity recorded on this day.':'Everything recorded on this day has a project or has been reviewed.'}}</div>
+   <div v-if="!visible.length" class="human-review-empty">{{siteFilter?'No recorded activity for this site on the selected day.':viewMode==='all'?'No human activity recorded on this day.':viewMode==='conflicts'?'No unresolved attribution conflicts on this day.':'Everything recorded on this day has a project or has been reviewed.'}}</div>
    <article v-for="group in visible" :key="id(group)" class="human-review-row">
     <label class="human-review-select"><input v-model="selectedGroups[id(group)]" type="checkbox" :aria-label="`Select ${group.label} at ${clock(group.start)}`"/> Select for bulk assignment</label>
     <div class="human-review-row-head"><div><strong>{{group.label}}</strong><small :title="group.detail">{{group.detail}}</small></div><span>{{clock(group.start)}}–{{clock(group.end)}} · {{duration(group.seconds)}}</span></div>
@@ -72,7 +74,7 @@ watch(()=>props.siteFilter,filter=>{if(filter){expanded.value=true;showAll.value
     <div class="human-review-actions"><input :list="`human-project-paths-${id(group)}`" :value="selected(group)" :aria-label="`Project for ${group.label}`" placeholder="Choose or enter project folder" @input="choices[id(group)]=($event.target as HTMLInputElement).value"/><datalist :id="`human-project-paths-${id(group)}`"><option v-for="path in projectPaths" :key="path" :value="path">{{name(path)}}</option></datalist><button :disabled="Boolean(pending)" @click="decide(group,'assigned')">Assign this activity</button><button v-if="!group.userAttribution" :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</button><button v-else :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12"/> Undo</button></div>
     <div v-if="futurePattern(group)" class="human-review-future"><button :disabled="Boolean(pending)||!selected(group)" @click="saveRule(group)">Also match future visits to {{futurePattern(group)}}</button><small>Separate website rule; past visits stay as recorded until you review them.</small></div>
    </article>
-   <button v-if="(showAll?groups:needs).length>limit" class="human-review-more" @click="limit+=30">Show more activity</button>
+   <button v-if="activeGroups.length>limit" class="human-review-more" @click="limit+=30">Show more activity</button>
   </div>
  </section>
 </template>
