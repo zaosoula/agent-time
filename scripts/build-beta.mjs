@@ -3,7 +3,7 @@ import {existsSync,mkdtempSync,readdirSync,rmSync,statSync} from 'node:fs';
 import {resolve,join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {betaBuildConfig} from './beta-config.mjs';
-import {betaBundleEnvironment,notarizeBetaDmg} from './beta-release-steps.mjs';
+import {betaBundleEnvironment,notarizeBetaDmg,validateStaple} from './beta-release-steps.mjs';
 
 function run(command,args,options={}){
  const result=spawnSync(command,args,{stdio:'inherit',...options});
@@ -102,7 +102,7 @@ try{
  let reply;try{reply=JSON.parse(collector.stdout.trim());}catch{}
  if(collector.status!==0||reply?.id!=='smoke'||reply?.result?.surfaces?.macosActivity!==true)throw new Error(`Bundled collector could not start: ${collector.stderr.slice(0,1000)}`);
 }finally{rmSync(smokeHome,{recursive:true,force:true});}
-run('xcrun',['stapler','validate',app]);run('xcrun',['stapler','validate',container]);
+validateStaple(app);validateStaple(container);
 run('spctl',['--assess','--type','execute','--verbose=4',app]);
 run('shasum',['-a','256',container,archive]);
 console.log('Beta candidate verified locally; clean-machine quarantine and update tests remain required.');
