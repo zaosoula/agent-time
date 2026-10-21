@@ -23,6 +23,7 @@ test('storage report separates database, spool, runtimes and exports without fol
   assert.equal(report.runtimes.bytes,23);
   assert.equal(report.exports.bytes,29);
   assert.ok(report.database.bytes>0);
+  assert.ok(report.freeBytes===null||report.freeBytes>=0);
   assert.ok(report.indexes.bytes>0);
   assert.equal(report.byDay[0].events,1);
   assert.equal(report.byDay[0].source,'macos');

@@ -38,6 +38,7 @@ onMounted(()=>{void refresh();});
  <p v-if="error" role="alert" class="storage-error">{{error}}</p>
  <template v-if="usage">
   <strong class="storage-total">{{size(usage.totalBytes)}} total · {{usage.eventCount.toLocaleString()}} events</strong>
+  <p v-if="usage.freeBytes!==null">{{size(usage.freeBytes)}} available on this disk.<span v-if="usage.freeBytes<usage.database.bytes+64*1024*1024" class="storage-error"> A verified compacted copy needs at least {{size(usage.database.bytes+64*1024*1024)}} free; clear space before preparing it.</span></p>
   <p v-if="lastResult" role="status">{{lastResult.status==='applied'?'Storage replacement completed. The prior database remains in Local archives as '+lastResult.backup+'. Review capture before choosing whether to delete it.':'Storage replacement was cancelled because data changed or the prior swap was interrupted. The current database was kept.'}}</p>
   <dl><div v-for="row in rows" :key="row.name"><dt>{{row.name}}</dt><dd>{{size(row.value.bytes)}}<small v-if="row.value.truncated"> · partial scan</small></dd></div></dl>
   <p>Database indexes occupy about {{size(usage.indexes.bytes)}} within the event database. Recent captured payload, excluding database and index overhead:</p>

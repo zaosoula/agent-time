@@ -1,12 +1,12 @@
 import {DatabaseSync} from 'node:sqlite';
-import {lstatSync,readdirSync} from 'node:fs';
+import {lstatSync,readdirSync,statfsSync} from 'node:fs';
 import {join} from 'node:path';
 
 export interface StorageSize {bytes:number;files:number;truncated:boolean;}
 export interface StorageUsage {
  database:StorageSize;wal:StorageSize;sharedMemory:StorageSize;indexes:StorageSize;
  spool:StorageSize;runtimes:StorageSize;exports:StorageSize;
- totalBytes:number;eventCount:number;
+ totalBytes:number;eventCount:number;freeBytes:number|null;
  byDay:Array<{date:string;source:string;events:number;payloadBytes:number}>;
 }
 const empty=():StorageSize=>({bytes:0,files:0,truncated:false});
@@ -37,6 +37,8 @@ export function storageUsage(root:string,now=Date.now()/1000):StorageUsage{
  const spool=directorySize(join(root,'spool')),runtimes=directorySize(join(root,'hook-runtime'));
  const exports=directorySize(join(root,'exports'));
  const indexes=empty();
+ let freeBytes:number|null=null;
+ try{const volume=statfsSync(root);freeBytes=Number(volume.bavail)*Number(volume.bsize);}catch{/* Report storage even when filesystem capacity is unavailable. */}
  let eventCount=0;
  let byDay:StorageUsage['byDay']=[];
  if(database.files){
@@ -49,6 +51,6 @@ export function storageUsage(root:string,now=Date.now()/1000):StorageUsage{
     .map(row=>({date:String(row.date),source:String(row.source),events:Number(row.events),payloadBytes:Number(row.payloadBytes)}));
   }finally{db.close();}
  }
- return {database,wal,sharedMemory,indexes,spool,runtimes,exports,eventCount,byDay,
+ return {database,wal,sharedMemory,indexes,spool,runtimes,exports,eventCount,byDay,freeBytes,
   totalBytes:database.bytes+wal.bytes+sharedMemory.bytes+spool.bytes+runtimes.bytes+exports.bytes};
 }

@@ -62,6 +62,8 @@ My day now guides first-run verification from enabled sources through hook confi
 
 The selected day's totals now show dated capture caveats from coverage and unresolved events, with the static local-only Orca scope notice omitted. Human review has a dedicated unresolved-conflicts view; existing assignment and undo actions apply there. The first-run guide can start paused capture directly.
 
+Storage Settings shows available disk space and warns when there is less than the minimum required to prepare a verified copy while retaining the source database.
+
 On 2026-10-21, a disposable snapshot of the same live source completed the app's prepare and restart-time replacement path. It reduced 558,638 rows to 516,870, saved 17,047,552 bytes relative to that already-vacuumed snapshot, reopened with the expected row count, and passed SQLite quick-check. The rehearsal directory was removed. The installed app's live database was not changed.
 
 ## Candidate improvements after this branch
