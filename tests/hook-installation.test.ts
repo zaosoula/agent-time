@@ -107,6 +107,22 @@ test('an Orca account inheriting the user Codex hooks stays installed after sync
   assert.equal(JSON.parse(readFileSync(accountHooks,'utf8')).hooks.SessionStart,undefined);
  }finally{f.close();}
 });
+test('reordering Orca hook JSON keys does not trigger a repair or rewrite trusted hooks',async()=>{
+ const f=fixture();try{
+  const account=join(f.home,'Library/Application Support/orca/codex-accounts/account/home');mkdirSync(account,{recursive:true});
+  await f.manager.install('codex');
+  const path=join(account,'hooks.json'),config=JSON.parse(readFileSync(path,'utf8'));
+  config.hooks=Object.fromEntries(Object.entries(config.hooks).reverse());
+  writeFileSync(path,JSON.stringify(config,null,2)+'\n');
+  const before={bytes:readFileSync(path,'utf8'),inode:statSync(path).ino,modified:statSync(path).mtimeMs};
+  const target=f.manager.status().targets.find(t=>t.path===path)!;
+  assert.equal(target.state,'installed');
+  await f.manager.install('codex',[target.id]);
+  assert.equal(readFileSync(path,'utf8'),before.bytes);
+  assert.equal(statSync(path).ino,before.inode);
+  assert.equal(statSync(path).mtimeMs,before.modified);
+ }finally{f.close();}
+});
 test('an Orca account detects and removes a copied historical user hook beside its own hook',async()=>{
  const f=fixture();try{
   const account=join(f.home,'Library/Application Support/orca/codex-accounts/account/home');mkdirSync(account,{recursive:true});

@@ -1,6 +1,7 @@
 import {existsSync,readFileSync,writeFileSync,mkdirSync,readdirSync,lstatSync,copyFileSync,renameSync,chmodSync,accessSync,constants,rmSync} from 'node:fs';
 import {homedir} from 'node:os';import {join,dirname,resolve,basename} from 'node:path';import {fileURLToPath} from 'node:url';import {createHash,randomUUID} from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
+import {isDeepStrictEqual} from 'node:util';
 import {prepareConfig,applyConfig,restoreConfig,hookEvents,type Manifest} from './hook-config.ts';
 import {agents,agentById} from './sources/agent-registry.ts';
 import {pruneHookRuntimes} from './hook-runtime-prune.ts';
@@ -107,7 +108,7 @@ export class HookInstallation{
       if(ready)for(const candidate of candidates){
        const candidateCommand=this.command(candidate.provider,candidate.id);
        const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(JSON.stringify(current)===JSON.stringify(JSON.parse(equivalent.updated))){state='installed';reason=null;matchedId=candidate.id;break;}
+       if(isDeepStrictEqual(current,JSON.parse(equivalent.updated))){state='installed';reason=null;matchedId=candidate.id;break;}
       }
      }
     }
