@@ -27,7 +27,12 @@ const settled=(e:CaptureEvent)=>['succeeded','failed','completed','cancelled','a
 export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;agentIdleThreshold?:number;maxGap?:number}={}):Summary {
  const maxGap=options.maxGap??15,idle=options.idleThreshold??300,agentIdle=options.agentIdleThreshold??300;
  if(!Number.isFinite(idle)||idle<=0||!Number.isFinite(agentIdle)||agentIdle<=0)throw new Error('invalid idle threshold');
- const unique=[...new Map(input.map(e=>[e.eventId,e])).values()];
+ const unique:CaptureEvent[]=[],byId=new Map<string,number>();
+ for(const event of input){
+  const index=byId.get(event.eventId);
+  if(index===undefined){byId.set(event.eventId,unique.length);unique.push(event);}
+  else unique[index]=event;
+ }
  // Preserve per-epoch causal order even when wall time rolls backwards, with a transitive global ordering.
  const epochGroups=new Map<string,CaptureEvent[]>();
  for(const e of unique){const group=epochGroups.get(e.collectorEpoch)||[];group.push(e);epochGroups.set(e.collectorEpoch,group);}

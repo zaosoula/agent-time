@@ -68,7 +68,10 @@ export class EventStore {
   revision():string{return `${this.generation}:${this.db.prepare('PRAGMA data_version').get()?.data_version}`;}
   events(): CaptureEvent[] {
     // Preserve causal insertion order across process epochs. Reducers sort per source epoch.
-    return this.db.prepare('SELECT payload FROM events ORDER BY rowid').all().map(r => JSON.parse(String(r.payload)) as CaptureEvent);
+    const events:CaptureEvent[]=[];
+    for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate())
+      events.push(JSON.parse(String(row.payload)) as CaptureEvent);
+    return events;
   }
   settingsEvents():CaptureEvent[]{
     // Startup only needs setting boundaries; reading every captured observation

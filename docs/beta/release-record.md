@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.5` preparation — 2026-10-21
+
+The prior reliability and review branch revision passed its Apple Silicon pull-request checks and has been versioned to `0.2.0-beta.5` for a build-only release candidate. The final beta.5 revision still needs its own check. The public version remains `0.2.0-beta.4`. Signed artifacts, notarization, a clean install, actual OTA completion, and publication are not yet recorded for beta.5.
+
+On the local 558,638-event, 434,417,664-byte database, a read-only benchmark after streaming event rows and removing an intermediate deduplication array took 1.2 seconds to read and parse, 2.0 seconds to summarize, and reported about 841 MB of heap with a 1.5 GB Node heap cap. It produced 182,512 intervals. This is a measured large-history performance limit, not a bounded daily reducer checkpoint. The app's cached summary and indexed startup settings query reduce repeated work, but an uncached summary still replays full history. No historical observations were pruned from the live database.
+
+The release gate remains open until the exact candidate is signed and tested on the Mac mini `ezyostudio` account, including first-run capture, widget navigation, OTA update and recovery, and a capture soak. The release owner authorized clearing Agent Time data only in that test account; the local release Mac's history remains untouched.
+
 ## Tracking reliability work — 2026-10-20, unreleased
 
 Branch `feat/tracking-reliability-roadmap` contains per-source capture states including browsers, bounded collector restart, targeted hook repair, first-event setup feedback, privacy exclusions that discard browser samples when a site exclusion cannot be checked, timed pause, bulk daily review, manual notes, weekly review/export, an opt-in redacted JSON support bundle, verified SQLite archive import and explicit deletion, storage breakdown and WAL reclamation, background update checks, and a widget route to capture health. Latest local verification passed 215 JavaScript tests, 15 locked Rust tests, and the interface build. The prior Apple Silicon app build passed strict nested signature verification and packaged `agenttime` URL scheme inspection; it predates the 2026-10-21 storage changes. That build used local development signing and was **not notarized or published**. The current public beta remains `0.2.0-beta.4`.
