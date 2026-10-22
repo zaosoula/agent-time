@@ -30,3 +30,9 @@ The owner authorized the recommended sequence on 2026-10-22. Work stays local fi
 - [ ] Add focused filters and evidence details, then verify corrections across timeline, daily totals, weekly review, and export.
 
 Publication is separate from merging code. The public feed must always point to the exact signed candidate that passed release checks.
+
+## Progress on 2026-10-22
+
+Beta.6 is public, the release Mac completed OTA with its history intact, and the reliability follow-up passed Apple Silicon CI and merged. A 48-hour soak is running. The Mac mini OTA and macOS 13.5 minimum remain unconfirmed; the owner cannot access the Mac mini desktop now.
+
+The next branch adds an exact append-only projection for new Mac activity, with full replay for agent, Orca, settings, import, and decision changes. On a copied 497,580-event prefix, a 254-sample append matched full replay and took 39 ms instead of 1,497 ms. This improves a common path but does not yet replace full-history replay for every source. It also adds day evidence by source, a corrected all-enabled-sources setup check, focused attribution review filters and evidence, and collector recovery when the updater cannot relaunch. Historical confidence does not infer past configuration from today's settings.

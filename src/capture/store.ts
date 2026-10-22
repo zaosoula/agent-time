@@ -19,7 +19,7 @@ export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdA
 }
 
 export class EventStore {
-  private db: DatabaseSync;private generation=0;
+  private db: DatabaseSync;private generation=0;private nonEventGeneration=0;
   constructor(path: string) {
     if (path !== ':memory:') {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
@@ -66,12 +66,19 @@ export class EventStore {
     if(!this.quickCheck())throw new Error('Database integrity check failed after checkpoint');
   }
   revision():string{return `${this.generation}:${this.db.prepare('PRAGMA data_version').get()?.data_version}`;}
+  incrementalSafetyRevision():string{return `${this.nonEventGeneration}:${this.db.prepare('PRAGMA data_version').get()?.data_version}`;}
   events(): CaptureEvent[] {
     // Preserve causal insertion order across process epochs. Reducers sort per source epoch.
     const events:CaptureEvent[]=[];
     for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate())
       events.push(JSON.parse(String(row.payload)) as CaptureEvent);
     return events;
+  }
+  lastEventRowid():number{return Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) rowid FROM events').get()?.rowid||0);}
+  eventsAfterRowid(rowid:number):Array<{rowid:number;event:CaptureEvent}>{
+    if(!Number.isSafeInteger(rowid)||rowid<0)throw new Error('Invalid event cursor');
+    return this.db.prepare('SELECT rowid,payload FROM events WHERE rowid>? ORDER BY rowid').all(rowid)
+      .map(row=>({rowid:Number(row.rowid),event:JSON.parse(String(row.payload)) as CaptureEvent}));
   }
   settingsEvents():CaptureEvent[]{
     // Startup only needs setting boundaries; reading every captured observation
@@ -88,7 +95,7 @@ export class EventStore {
     this.db.exec('BEGIN');
     try{
       for(const [start,end] of pairs){if(mode==='clear')remove.run(start,end);else put.run(start,end,mode,projectPath,Date.now()/1000);}
-      this.db.exec('COMMIT');this.generation++;
+      this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
   manualNotes(date:string):ManualNote[]{
@@ -184,7 +191,7 @@ export class EventStore {
           this.db.exec('CREATE TABLE IF NOT EXISTS main.usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');
           this.db.exec('INSERT OR IGNORE INTO main.usage_events SELECT id,timestamp,payload FROM archive.usage_events');
         }
-        this.db.exec('COMMIT');this.generation++;
+        this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
       }catch(error){this.db.exec('ROLLBACK');throw error;}
       return {addedEvents:preview.newEvents,addedNotes:preview.newNotes,addedDecisions:preview.newDecisions};
     });

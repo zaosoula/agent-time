@@ -9,6 +9,7 @@ import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
 import { dailyTotals,summaryForDate,workingAgentCount } from './daily.ts';
+import {appendActivitySummary} from './incremental-summary.ts';
 import {UsageReader} from '../usage/reader.ts';
 import {HookInstallation,type HookProvider} from './hook-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
@@ -36,7 +37,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private summaryCache:{revision:string;at:number;value:Summary}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
+  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
   private interval:number; private runId?:string; private reader:typeof callOrca;
   private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
   private lastOrcaAccessibility:AccessibilityCapture|null=null;
@@ -247,10 +248,23 @@ export class Collector {
   private refreshProbeTrust():Promise<void>|undefined{return this.activityProbe.refreshTrust(this.macos);}
   summary(maxAgeMs=0):Summary {
     const revision=this.store.revision();if(this.summaryCache&&(this.summaryCache.revision===revision||maxAgeMs>0&&Date.now()-this.summaryCache.at<maxAgeMs))return this.summaryCache.value;
+    if(this.summaryCache&&this.summaryCache.safeRevision===this.store.incrementalSafetyRevision()){
+      const previous=this.summaryCache,newRows=this.store.eventsAfterRowid(previous.rowid),newEvents=newRows.map(row=>row.event);
+      if(newEvents.length&&newEvents.every(event=>event.observedAt>=previous.maxObservedAt)&&newEvents.every((event,index)=>index===0||event.observedAt>=newEvents[index-1]!.observedAt)){
+        const value=appendActivitySummary(previous.value,previous.lastActivity,newEvents,this.surfaces.humanIdleMinutes*60);
+        if(value){this.summaryCache={revision,safeRevision:previous.safeRevision,at:Date.now(),value,rowid:newRows.at(-1)!.rowid,lastActivity:newEvents.at(-1),maxObservedAt:newEvents.at(-1)!.observedAt};return value;}
+      }
+    }
     const events=this.store.events(),summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60}),this.store.humanDecisions());
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
     for(const s of summary.sessions){const t=terminals.get(s.terminalHandle);if(t&&!s.child){s.title=String(t.data?.title||s.title).replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◐◓◑◒]\s*/, '');s.cwd=t.cwd||s.cwd;}}
-    this.summaryCache={revision,at:Date.now(),value:summary};return summary;
+    let lastActivity:CaptureEvent|undefined,maxObservedAt=-Infinity;
+    for(const event of events){
+      maxObservedAt=Math.max(maxObservedAt,event.observedAt);
+      if(event.source==='macos'&&event.kind==='activity')lastActivity=event;
+      else if(['sleep','capture_stop','capture_start'].includes(event.kind)||event.kind==='capture_settings'&&event.data?.previous&&event.data?.surfaces&&(event.data.previous as Record<string,unknown>).macosActivity!==(event.data.surfaces as Record<string,unknown>).macosActivity)lastActivity=undefined;
+    }
+    this.summaryCache={revision,safeRevision:this.store.incrementalSafetyRevision(),at:Date.now(),value:summary,rowid:this.store.lastEventRowid(),lastActivity,maxObservedAt};return summary;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
   weeklyReview(startDate:string){return weeklyReview(this.summary(15000),startDate);}

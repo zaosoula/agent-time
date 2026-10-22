@@ -16,7 +16,7 @@ runtime="$support/hook-runtime"
 if [[ ! -f $db ]]; then printf 'Missing Agent Time database: %s\n' "$db" >&2; exit 1; fi
 umask 077
 if [[ ! -e $output ]]; then
-  printf 'utc\tversion\tpid\trss_kb\tcpu_pct\tevents\tlatest_event_utc\tdb_bytes\truntime_kb\tquick_check\n' > "$output"
+  printf 'utc\tversion\tpid\trss_kb\tcpu_pct\tevents\tlatest_event_utc\tdb_bytes\truntime_kb\tquick_check\tbattery_pct\tpower_source\n' > "$output"
 fi
 
 for ((n=0;n<samples;n++)); do
@@ -37,6 +37,9 @@ for ((n=0;n<samples;n++)); do
   runtime_kb=${runtime_kb:-0}
   integrity='-'
   if ((n % 12 == 0)); then integrity=$(sqlite3 -readonly "$db" 'pragma quick_check(1)' 2>/dev/null || printf 'error'); fi
-  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$utc" "$version" "$pid" "$rss" "$cpu" "$events" "$latest" "$db_bytes" "$runtime_kb" "$integrity" >> "$output"
+  power_report=$(pmset -g batt 2>/dev/null || true)
+  battery=$(printf '%s\n' "$power_report" | sed -n 's/.*[[:space:]]\([0-9][0-9]*\)%;.*/\1/p' | head -n 1)
+  power=$(printf '%s\n' "$power_report" | sed -n "1s/.*'\([^']*\)'.*/\1/p")
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' "$utc" "$version" "$pid" "$rss" "$cpu" "$events" "$latest" "$db_bytes" "$runtime_kb" "$integrity" "${battery:--}" "${power:--}" >> "$output"
   if ((n+1<samples)); then sleep "$interval"; fi
 done
