@@ -16,7 +16,7 @@ const hooksCurrent=computed(()=>enabledAgents.value.length>0&&enabledAgents.valu
  return targets.length>0&&targets.every(target=>target.state==='installed');
 }));
 const deliveredAgent=computed(()=>enabledAgents.value.some(agent=>props.hooks?.targets.some(target=>target.provider===agent.id&&target.state==='installed'&&target.lastEvent!==null)));
-const codexDelivered=computed(()=>props.hooks?.targets.some(target=>target.provider==='codex'&&target.state==='installed'&&target.lastEvent!==null)===true);
+const codexDelivered=computed(()=>{const targets=props.hooks?.targets.filter(target=>target.provider==='codex')||[];return targets.length>0&&targets.every(target=>target.state==='installed'&&target.lastEvent!==null);});
 const deliveredMac=computed(()=>macEnabled.value&&typeof props.health?.latest.macos==='number'&&props.health.checkedAt-props.health.latest.macos<=60);
 const macPermission=computed(()=>!macEnabled.value||!props.health?.sources.some(source=>source.id==='macos'&&source.state==='permission-limited'));
 const allAgentsDelivered=computed(()=>enabledAgents.value.every(agent=>{
