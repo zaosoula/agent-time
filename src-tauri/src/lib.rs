@@ -1,11 +1,10 @@
 use std::{collections::HashMap, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, ChildStdin, ChildStdout, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use tauri::{Manager, State};
-use tauri_plugin_updater::UpdaterExt;
-use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
 mod tray;
 mod widget;
+mod updates;
 #[cfg(unix)] use std::os::unix::process::CommandExt;
 use serde_json::{json, Value};
 type Pending = Arc<Mutex<HashMap<String, std::sync::mpsc::Sender<Result<Value, String>>>>>;
@@ -283,26 +282,10 @@ pub fn run(){
   });
   if option_env!("AGENT_TIME_BETA")==Some("1") {
    app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
-   let handle=app.handle().clone();
-   tauri::async_runtime::spawn(async move {
-    let mut announced=String::new();
-    loop {
-     if let Ok(updater)=handle.updater(){
-      if let Ok(Some(update))=updater.check().await {
-       if update.version!=announced {
-        announced=update.version.clone();
-        if handle.get_webview_window("main").and_then(|window|window.is_visible().ok())!=Some(true){
-         let _=handle.notification().builder().title("Agent Time update available").body(format!("Version {} is ready. Open Agent Time to install it.",update.version)).show();
-        }
-       }
-      }
-     }
-     let _=tauri::async_runtime::spawn_blocking(||std::thread::sleep(Duration::from_secs(6*60*60))).await;
-    }
-   });
   }
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
   let init=bridge.clone();std::thread::spawn(move||{if init.desired_running.load(Ordering::Acquire){let _=init.request("start",json!({}));}});app.manage(bridge.clone());tray::install(app,bridge)?;
+  if option_env!("AGENT_TIME_BETA")==Some("1") { updates::start(app.handle().clone()); }
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;
   let quit=tauri::menu::PredefinedMenuItem::quit(app,Some("Quit Agent Time"))?;
   let edit=tauri::menu::Submenu::with_items(app,"Edit",true,&[
