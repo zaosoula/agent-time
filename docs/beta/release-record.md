@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.9` candidate preparation — 2026-10-22
+
+The release owner asked for all listed UI, tracking, and reconciliation improvements. [PR #18](https://github.com/zaosoula/agent-time/pull/18) contains the reviewed daily flow, capture and gap status, contextual notes, setup checklist, and a longer installation-only hook self-test. Its isolated Apple Silicon worktree passed 236 Node tests and the frontend typecheck/build; the Apple Silicon PR checks passed. This candidate advances the five version declarations and includes [release notes](0.2.0-beta.9-notes.md). Signing, notarization, exact artifact hashes, clean installation, OTA, and public feed promotion remain to be recorded after beta.8 publication and candidate build.
+
+The provisional macOS 13.5 floor, live update failure injection, and full 48-hour soak remain unconfirmed. The release owner previously chose to publish beta updates with these limits explicit; no gate is marked complete on that basis alone.
+
 ## `0.2.0-beta.8` release preparation — 2026-10-22
 
 The release owner requested the next public Apple Silicon build after the source confidence, review, updater recovery, and hourly update notification changes merged to `main`. Beta.7 was signed and staged privately but never published; its artifact predates the notification changes and will remain unpublished. Beta.8 advances the five version declarations and includes [release notes](0.2.0-beta.8-notes.md). GitHub's Apple Silicon release workflow will build and notarize from the merged `main` commit before protected publication. Artifact hashes, notarization, hosted-byte checks, and the public feed result will be recorded after the build.
