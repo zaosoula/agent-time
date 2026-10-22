@@ -6,6 +6,8 @@ import {tmpdir} from 'node:os';
 import {Collector} from '../src/capture/collector.ts';
 import {makeEvent} from '../src/capture/events.ts';
 import {groupHumanReview} from '../src/capture/human-review.ts';
+import {summaryForDate} from '../src/capture/daily.ts';
+import {reviewedCsv,weeklyReview} from '../src/capture/weekly.ts';
 
 test('a human interval can be assigned, left unassigned, undone, and restored after restart without changing observations',async()=>{
  const output=mkdtempSync(join(tmpdir(),'agent-time-human-review-'));
@@ -17,9 +19,18 @@ test('a human interval can be assigned, left unassigned, undone, and restored af
   collector.store.put(first);collector.store.put(second);
   const pair:[string,string]=[first.eventId,second.eventId];
   const before=collector.store.events();
-  let interval=collector.summary().intervals.find(i=>i.state==='human');
+  const originalSummary=collector.summary();
+  let interval=originalSummary.intervals.find(i=>i.state==='human');
   assert.equal(interval?.workspaceId,'observed::/original');
-  assert.equal(collector.setHumanDecision([pair],'assigned',output).intervals.find(i=>i.state==='human')?.workspaceId,`manual::${output}`);
+  const assigned=collector.setHumanDecision([pair],'assigned',output);
+  assert.equal(assigned.intervals.find(i=>i.state==='human')?.workspaceId,`manual::${output}`);
+  const day=new Date(now*1000),date=`${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
+  assert.equal(summaryForDate(assigned,date).humanSeconds,summaryForDate(originalSummary,date).humanSeconds);
+  const monday=new Date(day);monday.setHours(0,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
+  const weekStart=`${monday.getFullYear()}-${String(monday.getMonth()+1).padStart(2,'0')}-${String(monday.getDate()).padStart(2,'0')}`;
+  const week=weeklyReview(assigned,weekStart);
+  assert.ok(week.projects.some(project=>project.project===output&&project.humanSeconds>0));
+  assert.match(reviewedCsv(week.reviewedEntries),/Brave/);
   assert.deepEqual(collector.store.events(),before);
   await collector.close();collector=new Collector(output);
   interval=collector.summary().intervals.find(i=>i.state==='human');

@@ -38,7 +38,7 @@ export async function pruneHookRuntimes(root:string,current:string,options:{now?
  const copies=readdirSync(root,{withFileTypes:true}).filter(entry=>entry.isDirectory()&&runtimeName.test(entry.name))
   .map(entry=>({name:entry.name,path:join(root,entry.name)})).filter(entry=>recognizedRuntime(entry.path))
   .map(entry=>({...entry,mtime:lstatSync(entry.path).mtimeMs})).sort((a,b)=>b.mtime-a.mtime);
- const previous=copies.find(copy=>copy.name!==current)?.name;
+ const previous=copies.find(copy=>copy.name!==current&&currentName.test(copy.name))?.name;
  let removed=0;
  for(const copy of copies){
   if(copy.name===current||copy.name===previous||(options.now??Date.now())-copy.mtime<graceMs||commands.includes(copy.path))continue;

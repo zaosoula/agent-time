@@ -8,8 +8,12 @@ export async function installBetaUpdate(
  prepare: () => Promise<void>,
  relaunch: () => Promise<void>,
  onProgress?: (event: unknown) => void,
+ recover?: () => Promise<void>,
 ): Promise<void> {
  await update.download(onProgress);
  try { await prepare(); await update.install(); }
- finally { await relaunch(); }
+ finally {
+  try { await relaunch(); }
+  catch(error){await recover?.();throw error;}
+ }
 }

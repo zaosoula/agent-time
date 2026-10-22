@@ -17,26 +17,31 @@ const hooksCurrent=computed(()=>enabledAgents.value.length>0&&enabledAgents.valu
 }));
 const deliveredAgent=computed(()=>enabledAgents.value.some(agent=>props.hooks?.targets.some(target=>target.provider===agent.id&&target.state==='installed'&&target.lastEvent!==null)));
 const deliveredMac=computed(()=>macEnabled.value&&typeof props.health?.latest.macos==='number'&&props.health.checkedAt-props.health.latest.macos<=60);
-const verified=computed(()=>deliveredAgent.value||deliveredMac.value);
+const allAgentsDelivered=computed(()=>enabledAgents.value.every(agent=>{
+ const targets=props.hooks?.targets.filter(target=>target.provider===agent.id)||[];
+ return targets.length>0&&targets.every(target=>target.state==='installed'&&target.lastEvent!==null);
+}));
+const verified=computed(()=>(enabledAgents.value.length>0||macEnabled.value)&&allAgentsDelivered.value&&(!macEnabled.value||deliveredMac.value));
 const lastEvent=computed(()=>Math.max(0,...(props.hooks?.targets.filter(target=>enabledAgents.value.some(agent=>agent.id===target.provider)&&target.state==='installed').map(target=>target.lastEvent||0)||[]),deliveredMac.value?props.health?.latest.macos||0:0));
 const stage=computed(()=>{
  if(!props.status)return 'checking';
  if(!props.status.running)return 'paused';
  if(!enabledAgents.value.length&&!macEnabled.value)return 'disabled';
- if(enabledAgents.value.length&&!hooksCurrent.value&&!deliveredMac.value)return 'hooks';
+ if(enabledAgents.value.length&&!hooksCurrent.value)return 'hooks';
  return verified.value?'verified':'waiting';
 });
+watch(stage,value=>{if(value!=='verified')dismissed.value=false;});
 function dismiss(){dismissed.value=true;localStorage.setItem(key.value,'1');}
 </script>
 <template>
 <section v-if="stage!=='checking'&&!dismissed" class="setup-verification" :class="{complete:stage==='verified'}" aria-label="Capture setup verification">
  <CheckCircle2 v-if="stage==='verified'" :size="18"/><CircleHelp v-else :size="18"/>
  <div><strong>{{stage==='verified'?'Capture verified':stage==='paused'?'Capture is paused':stage==='disabled'?'Choose what to capture':stage==='hooks'?'Connect your agent hooks':'Waiting for the first captured event'}}</strong>
-  <p v-if="stage==='verified'">Agent Time received a {{deliveredAgent?'current-runtime agent':'Mac activity'}} event{{lastEvent?' at '+new Date(lastEvent*1000).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):''}}. New activity should now appear in My day.</p>
+  <p v-if="stage==='verified'">Every enabled source has delivered an event; the latest was at {{new Date(lastEvent*1000).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}}. Check Capture health if activity stops appearing.</p>
   <p v-else-if="stage==='paused'">Start capture to check that events reach Agent Time.</p>
   <p v-else-if="stage==='disabled'">Enable Mac activity or an agent in Settings, then verify one real observation.</p>
   <p v-else-if="stage==='hooks'">Install or repair the enabled agent hooks. In Codex, trust Agent Time in /hooks.</p>
-  <p v-else>Start a new agent session or use your Mac for a few seconds. A configured hook alone does not confirm delivery.</p>
+  <p v-else>At least one enabled source has not delivered a recent event{{deliveredAgent||deliveredMac?' even though another source is working':''}}. Start a new agent session or use your Mac for a few seconds. A configured hook alone does not confirm delivery.</p>
  </div>
  <button v-if="stage==='verified'" @click="dismiss">Done</button>
  <button v-else-if="stage==='paused'" :disabled="busy" @click="emit('start')">Start capture</button>

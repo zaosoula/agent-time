@@ -26,3 +26,8 @@ test('a failed preparation relaunches the app because capture may already be sto
  await assert.rejects(installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');throw Error('collector flush failed');},async()=>{calls.push('relaunch');}),/collector flush failed/);
  assert.deepEqual(calls,['download','prepare','relaunch']);
 });
+test('a failed relaunch resumes the collector in the still-open app',async()=>{
+ const calls:string[]=[];
+ await assert.rejects(installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');throw Error('relaunch denied');},undefined,async()=>{calls.push('recover');}),/relaunch denied/);
+ assert.deepEqual(calls,['download','prepare','install','relaunch','recover']);
+});

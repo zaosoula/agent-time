@@ -126,6 +126,18 @@ impl Bridge {
    stop_owned(&mut child);
   }
  }
+ fn pause_for_update(&self){
+  let was_running=self.desired_running.load(Ordering::Acquire);
+  self.shutdown();
+  self.desired_running.store(was_running,Ordering::Release);
+ }
+ fn recover_from_update(&self)->Result<(),String>{
+  let mut restart=self.restart.lock().map_err(|error|error.to_string())?;
+  if !restart.closed{return Err("No interrupted update to recover".into());}
+  restart.closed=false;restart.attempts=0;restart.window=Instant::now();
+  drop(restart);
+  self.ensure_live()
+ }
 }
 fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let p=params.as_object().ok_or("Expected object parameters")?;
@@ -253,8 +265,13 @@ fn startup_item(operation:String)->Result<Value,String>{
 #[tauri::command]
 async fn prepare_update(bridge:State<'_,Arc<Bridge>>)->Result<(),String>{
  let bridge=bridge.inner().clone();
- tauri::async_runtime::spawn_blocking(move||bridge.shutdown()).await.map_err(|e|e.to_string())?;
+ tauri::async_runtime::spawn_blocking(move||bridge.pause_for_update()).await.map_err(|e|e.to_string())?;
  Ok(())
+}
+#[tauri::command]
+async fn resume_after_failed_update(bridge:State<'_,Arc<Bridge>>)->Result<(),String>{
+ let bridge=bridge.inner().clone();
+ tauri::async_runtime::spawn_blocking(move||bridge.recover_from_update()).await.map_err(|error|error.to_string())?
 }
 pub fn run(){
   tauri::Builder::default().plugin(tauri_plugin_deep_link::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_notification::init()).plugin(tauri_plugin_process::init()).setup(|app|{
@@ -299,7 +316,7 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update,resume_after_failed_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);tray.publish_stopped();}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("diagnostics",&json!({})).is_ok());assert!(validate_method("diagnostics",&json!({"includeRawEvents":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite","confirmed":true})).is_ok());assert!(validate_method("archive_delete",&json!({"id":"../events.sqlite","confirmed":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite"})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["0123456789abcdef"]})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["../other"]})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
@@ -345,6 +362,27 @@ mod process_tests {
 #[cfg(test)]
 mod restart_tests {
  use super::*;
+ #[test] fn failed_update_reopens_the_collector_and_restores_capture() {
+  let directory=std::env::temp_dir().join(format!("agent-time-update-recovery-{}",std::process::id()));
+  let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
+  let script=directory.join("collector.cjs");
+  std::fs::write(&script,r#"
+const fs=require('fs'),readline=require('readline'),root=process.argv[process.argv.indexOf('--output')+1];
+readline.createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);fs.appendFileSync(root+'/requests',request.method+'\n');process.stdout.write(JSON.stringify({id:request.id,result:{running:request.method==='start'}})+'\n');});
+"#).unwrap();
+  let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+  let launch=LaunchSpec{node:root.join("src-tauri/binaries/node-aarch64-apple-darwin"),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let bridge=Bridge::from_launch(launch).unwrap();
+  assert!(bridge.recover_from_update().is_err());
+  bridge.request("start",json!({})).unwrap();
+  bridge.pause_for_update();
+  assert!(bridge.request("status",json!({})).is_err());
+  bridge.recover_from_update().unwrap();
+  assert_eq!(bridge.request("status",json!({})).unwrap()["method"],Value::Null);
+  let requests=std::fs::read_to_string(directory.join("requests")).unwrap();
+  assert_eq!(requests.lines().filter(|method|*method=="start").count(),2);
+  bridge.shutdown();let _=std::fs::remove_dir_all(directory);
+ }
  #[test] fn collector_crash_recovers_and_restarts_capture() {
   let directory=std::env::temp_dir().join(format!("agent-time-recovery-{}",std::process::id()));
   let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();

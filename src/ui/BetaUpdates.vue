@@ -21,7 +21,7 @@ async function install(){
  try{await installBetaUpdate(candidate,()=>invoke('prepare_update'),relaunch,(event)=>{
   const item=event as DownloadEvent;
   if(item.event==='Finished')progress.value='Installing and restarting…';
- });}
+ },()=>invoke('resume_after_failed_update'));}
  catch(e){error.value=`Update failed: ${String(e)}`;progress.value='';busy.value=false;}
 }
 function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>60_000)void checkNow();}
