@@ -16,3 +16,13 @@ test('a failed install relaunches the app so capture resumes',async()=>{
  await assert.rejects(installBetaUpdate({download:async()=>{},install:async()=>{throw Error('bad signature');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');}),/bad signature/);
  assert.deepEqual(calls,['prepare','relaunch']);
 });
+test('an interrupted download never stops capture',async()=>{
+ const calls:string[]=[];
+ await assert.rejects(installBetaUpdate({download:async()=>{throw new DOMException('Interrupted','AbortError');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');}),/Interrupted/);
+ assert.deepEqual(calls,[]);
+});
+test('a failed preparation relaunches the app because capture may already be stopped',async()=>{
+ const calls:string[]=[];
+ await assert.rejects(installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');throw Error('collector flush failed');},async()=>{calls.push('relaunch');}),/collector flush failed/);
+ assert.deepEqual(calls,['download','prepare','relaunch']);
+});

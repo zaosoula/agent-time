@@ -4,9 +4,9 @@ The owner authorized the recommended sequence on 2026-10-22. Work stays local fi
 
 ## 1. beta.6 maintenance update
 
-- [ ] Bump all five version declarations together and document the two merged fixes: guarded old hook runtime pruning and semantic Codex hook configuration comparison.
-- [ ] Run JavaScript, frontend, Rust, packaged collector, signing, notarization, and Gatekeeper checks on the exact candidate.
-- [ ] Validate a signed beta.5 to beta.6 OTA with retained history and new Claude/Codex events. Promote the public feed only after the exact candidate and recovery path pass.
+- [x] Bump all five version declarations together and document the two merged fixes: guarded old hook runtime pruning and semantic Codex hook configuration comparison.
+- [x] Run JavaScript, frontend, Rust, packaged collector, signing, notarization, and Gatekeeper checks on the exact candidate.
+- [x] Validate a signed beta.5 to beta.6 OTA on the release Mac with retained history and new Claude/Codex events; preserve verified app and database backups before promoting the exact candidate.
 
 ## 2. Reliability and OTA proof
 
