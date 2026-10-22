@@ -47,3 +47,16 @@ test('pruning waits for an active hook process and refuses an invalid current ru
   assert.equal(existsSync(old),true);
  }finally{f.done();}
 });
+
+test('a newer replaced copy cannot displace the previous distinct runtime',async()=>{
+ const f=fixture();
+ try{
+  const previous=f.add('1111111111111111',90*60*1000);
+  const current=f.add('2222222222222222',2*60*60*1000);
+  const replaced=f.add('2222222222222222-replaced-aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee',70*60*1000);
+  assert.equal(await pruneHookRuntimes(f.root,'2222222222222222',{now,activeCommands:''}),1);
+  assert.equal(existsSync(replaced),false);
+  assert.equal(existsSync(previous),true);
+  assert.equal(existsSync(current),true);
+ }finally{f.done();}
+});

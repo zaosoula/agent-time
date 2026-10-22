@@ -73,6 +73,11 @@ export class HookInstallation{
   if(!existsSync(currentPath)||readFileSync(currentPath,'utf8')!==runtimeVersion+'\n')privateWrite(currentPath,runtimeVersion+'\n');
   const launched=JSON.parse(execFileSync('/bin/sh',[launchPath,'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(launched.ok!==true||launched.node!==process.version)throw new Error('Hook launcher verification failed');
   void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});
+  // Newly replaced copies get a grace period for hooks already in flight.
+  // Recheck after that period even if Agent Time stays open for days.
+  setTimeout(()=>{
+   try{if(readFileSync(currentPath,'utf8')===runtimeVersion+'\n')void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});}catch{/* A changed launcher is left alone. */}
+  },65*60*1000).unref();
  }
  verify(){
   if(this.ready()){const check=JSON.parse(execFileSync('/bin/sh',[join(dirname(this.runtime),'launch.sh'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Installed hook runtime verification failed');}
