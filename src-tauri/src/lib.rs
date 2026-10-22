@@ -282,10 +282,10 @@ pub fn run(){
   });
   if option_env!("AGENT_TIME_BETA")==Some("1") {
    app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
-   updates::start(app.handle().clone());
   }
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
   let init=bridge.clone();std::thread::spawn(move||{if init.desired_running.load(Ordering::Acquire){let _=init.request("start",json!({}));}});app.manage(bridge.clone());tray::install(app,bridge)?;
+  if option_env!("AGENT_TIME_BETA")==Some("1") { updates::start(app.handle().clone()); }
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;
   let quit=tauri::menu::PredefinedMenuItem::quit(app,Some("Quit Agent Time"))?;
   let edit=tauri::menu::Submenu::with_items(app,"Edit",true,&[
