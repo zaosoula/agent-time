@@ -5,7 +5,7 @@ use tauri_plugin_updater::UpdaterExt;
 
 pub const NOTIFICATION_ID: i32 = 1001;
 pub const NOTIFICATION_TITLE: &str = "Agent Time update available";
-const CHECK_INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
+const CHECK_INTERVAL: Duration = Duration::from_secs(60 * 60);
 
 fn should_notify(last: Option<&str>, available: &str) -> bool {
     last != Some(available)

@@ -76,7 +76,7 @@ Hooks record only provider/session/subagent IDs, working directory, tool identit
 
 While capture runs, outdated hooks for an enabled agent trigger an in-app warning and one macOS notification per issue state during that app run. Clicking the notification opens Settings to repair the hooks. The in-app warning remains while capture and the affected agent's hooks are enabled and the configuration is outdated.
 
-The signed beta app checks its update feed when it starts and every six hours while it is running, including when the dashboard is hidden. A newer version triggers one macOS notification per version; clicking it opens the dashboard, where you can choose **Install and restart**. Opening the dashboard also checks for updates. Updates are never installed automatically.
+The signed beta app checks its update feed when it starts and every hour while it is running, including when the dashboard is hidden. A newer version triggers one macOS notification per version; clicking it opens the dashboard, where you can choose **Install and restart**. Opening the dashboard also checks for updates. Updates are never installed automatically.
 
 ## Adding a tracked source
 
