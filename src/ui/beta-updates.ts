@@ -10,7 +10,6 @@ export async function installBetaUpdate(
  onProgress?: (event: unknown) => void,
 ): Promise<void> {
  await update.download(onProgress);
- await prepare();
- try { await update.install(); }
+ try { await prepare(); await update.install(); }
  finally { await relaunch(); }
 }
