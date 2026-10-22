@@ -34,6 +34,20 @@ test('human review accepts bounded event pairs and rejects extra or malformed de
  ])assert.ok('error' in await dispatchRequest({id:'review',method:'human_decision_set',params},c));
  assert.equal(changes,1);
 });
+test('review history, split, day status, and rule preview expose only bounded methods',async()=>{
+ const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),reviewHistory:()=>['change'],undoReviewAction:(id:string)=>id,setHumanGroupSplit:(_pairs:Array<[string,string]>,at:number)=>at,dayReviewStatus:(date:string)=>date,markDayReview:(date:string)=>date,previewWebsiteRule:(pattern:string)=>pattern};
+ assert.deepEqual(await dispatchRequest({id:'h',method:'review_history'},c),{id:'h',result:['change']});
+ assert.ok('error' in await dispatchRequest({id:'h',method:'review_history',params:{limit:1000}},c));
+ assert.deepEqual(await dispatchRequest({id:'u',method:'review_undo',params:{id:'00000000-0000-0000-0000-000000000000'}},c),{id:'u',result:'00000000-0000-0000-0000-000000000000'});
+ assert.ok('error' in await dispatchRequest({id:'u',method:'review_undo',params:{id:'../data'}},c));
+ assert.deepEqual(await dispatchRequest({id:'s',method:'human_group_split',params:{pairs:[['a','b']],splitAt:10}},c),{id:'s',result:10});
+ for(const params of [{pairs:[['a']],splitAt:10},{pairs:[['a','b']],splitAt:Infinity},{pairs:[['a','b']],splitAt:10,extra:true}])assert.ok('error' in await dispatchRequest({id:'s',method:'human_group_split',params},c));
+ assert.deepEqual(await dispatchRequest({id:'d',method:'day_review_status',params:{date:'2026-10-22'}},c),{id:'d',result:'2026-10-22'});
+ assert.deepEqual(await dispatchRequest({id:'d',method:'day_review_mark',params:{date:'2026-10-22'}},c),{id:'d',result:'2026-10-22'});
+ assert.ok('error' in await dispatchRequest({id:'d',method:'day_review_mark',params:{date:'yesterday'}},c));
+ assert.deepEqual(await dispatchRequest({id:'w',method:'website_rule_preview',params:{pattern:'https://example.com',projectPath:'/project'}},c),{id:'w',result:'https://example.com'});
+ assert.ok('error' in await dispatchRequest({id:'w',method:'website_rule_preview',params:{pattern:'https://example.com'}},c));
+});
 test('settings protocol accepts surface controls and bounded idle minutes',async()=>{
  let changed=0;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),updateSettings:()=>{changed++;return {saved:true};}};
  assert.deepEqual(await dispatchRequest({id:'1',method:'settings',params:{claudeHooks:false}},c),{id:'1',result:{saved:true}});

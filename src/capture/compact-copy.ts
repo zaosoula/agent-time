@@ -17,7 +17,7 @@ const scopeDays=(events:CaptureEvent[])=>[...new Set(events.filter(event=>event.
 let copy;
 try{
  const original=new DatabaseSync(source,{readOnly:true});
- let sourceIds,sourceSummary,sourceScopeDays,sourceDecisions,sourceNotes;
+ let sourceIds,sourceSummary,sourceScopeDays,sourceDecisions,sourceNotes,sourceReviewActions,sourceSplits,sourceDayReviews;
  try{
   const hasTable=(name:string)=>Boolean(original.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
   const sourceEvents=original.prepare('SELECT event_id,payload FROM events ORDER BY rowid').all();
@@ -26,6 +26,9 @@ try{
   sourceSummary=summarize(parsed,options);sourceScopeDays=scopeDays(parsed);
   sourceDecisions=hasTable('human_decisions')?original.prepare('SELECT * FROM human_decisions ORDER BY start_event_id,end_event_id').all():null;
   sourceNotes=hasTable('manual_notes')?original.prepare('SELECT * FROM manual_notes ORDER BY id').all():null;
+  sourceReviewActions=hasTable('review_actions')?original.prepare('SELECT * FROM review_actions ORDER BY rowid').all():null;
+  sourceSplits=hasTable('human_splits')?original.prepare('SELECT * FROM human_splits ORDER BY start_event_id,end_event_id').all():null;
+  sourceDayReviews=hasTable('day_reviews')?original.prepare('SELECT * FROM day_reviews ORDER BY date').all():null;
   original.prepare('VACUUM INTO ?').run(target);
  }finally{original.close();}
  chmodSync(target,0o600);
@@ -51,7 +54,7 @@ try{
  if(finalIds.length!==retainedIds.length||finalIds.some((id,index)=>id!==retainedIds[index]))throw new Error('Final vacuum changed event insertion order; compacted copy was rejected');
  const finalEvents=finalRows.map(row=>JSON.parse(String(row.payload)));
  if(comparable(summarize(finalEvents,options))!==comparable(before)||JSON.stringify(scopeDays(finalEvents))!==JSON.stringify(sourceScopeDays))throw new Error('Final vacuum changed capture summary; compacted copy was rejected');
- if(sourceDecisions&&JSON.stringify(copy.prepare('SELECT * FROM human_decisions ORDER BY start_event_id,end_event_id').all())!==JSON.stringify(sourceDecisions)||sourceNotes&&JSON.stringify(copy.prepare('SELECT * FROM manual_notes ORDER BY id').all())!==JSON.stringify(sourceNotes))throw new Error('Review decisions or manual notes changed; compacted copy was rejected');
+ if(sourceDecisions&&JSON.stringify(copy.prepare('SELECT * FROM human_decisions ORDER BY start_event_id,end_event_id').all())!==JSON.stringify(sourceDecisions)||sourceNotes&&JSON.stringify(copy.prepare('SELECT * FROM manual_notes ORDER BY id').all())!==JSON.stringify(sourceNotes)||sourceReviewActions&&JSON.stringify(copy.prepare('SELECT * FROM review_actions ORDER BY rowid').all())!==JSON.stringify(sourceReviewActions)||sourceSplits&&JSON.stringify(copy.prepare('SELECT * FROM human_splits ORDER BY start_event_id,end_event_id').all())!==JSON.stringify(sourceSplits)||sourceDayReviews&&JSON.stringify(copy.prepare('SELECT * FROM day_reviews ORDER BY date').all())!==JSON.stringify(sourceDayReviews))throw new Error('Review data changed; compacted copy was rejected');
  if(copy.prepare('PRAGMA integrity_check').get()?.integrity_check!=='ok')throw new Error('Final compacted copy failed SQLite integrity check');
  const result={source,output:target,beforeRows:rows.length,afterRows:afterRows.length,beforeBytes:statSync(source).size,afterBytes:statSync(target).size,timeAndOtherCoverageIdentical:true as const,hostScopeDaysPreserved:sourceScopeDays.length};
  copy.close();copy=undefined;

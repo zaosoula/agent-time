@@ -47,6 +47,8 @@ test('an owned archive previews and restores missing evidence without overwritin
   source.put(event);
   const start=new Date(2026,9,19,11).getTime()/1000;
   source.addManualNote({start,end:start+60,project:'Project A',note:'From archive'});
+  source.setHumanGroupSplit([['start','end']],start+30,[[start,start+60]],'/project-a','/project-b');
+  source.markDayReview('2026-10-19','review-fingerprint');
   const saved=await source.exportArchive(first);
   mkdirSync(join(second,'exports'));
   copyFileSync(saved.path,join(second,'exports',saved.path.split('/').at(-1)!));
@@ -54,12 +56,18 @@ test('an owned archive previews and restores missing evidence without overwritin
   const preview=target.previewArchive(second,archiveId);
   assert.equal(preview.newEvents,1);
   assert.equal(preview.newNotes,1);
+  assert.equal(preview.newSplits,1);
+  assert.equal(preview.newReviewActions,1);
+  assert.equal(preview.newDayReviews,1);
   assert.equal(target.count(),0);
   const imported=target.importArchive(second,archiveId);
   assert.equal(imported.addedEvents,1);
   assert.equal(imported.addedNotes,1);
   assert.equal(target.count(),1);
   assert.equal(target.manualNotes('2026-10-19')[0]?.note,'From archive');
+  assert.equal(target.humanSplits()[0]?.splitAt,start+30);
+  assert.equal(target.reviewActions()[0]?.mode,'split');
+  assert.equal(target.dayReview('2026-10-19')?.fingerprint,'review-fingerprint');
   assert.equal(target.importArchive(second,archiveId).addedEvents,0);
   symlinkSync(saved.path,join(second,'exports','agent-time-unsafe.sqlite'));
   assert.throws(()=>target.previewArchive(second,'../events.sqlite'));

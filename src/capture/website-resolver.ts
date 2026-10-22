@@ -3,8 +3,10 @@ import {promisify} from 'node:util';
 import {existsSync,readFileSync,writeFileSync,renameSync,readdirSync,statSync} from 'node:fs';
 import {basename,isAbsolute,join,resolve,sep} from 'node:path';
 import {homedir} from 'node:os';
+import type {Interval} from './events.ts';
 
 export interface WebsiteRule {pattern:string;projectPath:string;}
+export interface WebsiteRuleImpact {pattern:string;projectPath:string;observedIntervals:number;affectedIntervals:number;examples:Array<{url:string;currentProject:string|null;seconds:number}>;windowDays:7;}
 export interface KnownWorkspace {projectPath:string;workspacePath:string;workspaceId:string;}
 export interface WebsiteSuggestion {projectPath:string;source:string;detail:string;}
 export interface WebsiteResolution {
@@ -51,6 +53,24 @@ export function normalizeRulePattern(raw:string):string{
 export function matchingRule(url:URL,rules:WebsiteRule[]):WebsiteRule|undefined{
  return [...rules].filter(rule=>url.href===rule.pattern||url.href.startsWith(rule.pattern+'/')||url.href.startsWith(rule.pattern+'?')||url.href.startsWith(rule.pattern+'#')||rule.pattern===url.origin)
   .sort((a,b)=>b.pattern.length-a.pattern.length)[0];
+}
+export function previewWebsiteRuleImpact(pattern:string,projectPath:string,intervals:Interval[],rules:WebsiteRule[],now=Date.now()/1000):WebsiteRuleImpact{
+ const normalized=normalizeRulePattern(pattern),proposed={pattern:normalized,projectPath};
+ let observedIntervals=0,affectedIntervals=0;
+ const examples:WebsiteRuleImpact['examples']=[];
+ for(const interval of intervals){
+  if(interval.state!=='human'||interval.end<now-7*86400||interval.start>now||interval.userAttribution||!interval.browserUrl)continue;
+  let url:URL;try{url=new URL(interval.browserUrl);}catch{continue;}
+  if(!['http:','https:'].includes(url.protocol))continue;
+  observedIntervals++;
+  const next=matchingRule(url,[...rules.filter(rule=>rule.pattern!==normalized),proposed]);
+  if(next?.pattern!==normalized)continue;
+  const current=interval.workspaceId?.split('::').at(-1)||null;
+  if(current===projectPath)continue;
+  affectedIntervals++;
+  if(examples.length<10)examples.push({url:interval.browserUrl,currentProject:current,seconds:interval.end-interval.start});
+ }
+ return {pattern:normalized,projectPath,observedIntervals,affectedIntervals,examples,windowDays:7};
 }
 function uniqueSuggestions(items:WebsiteSuggestion[]):WebsiteSuggestion[]{
  const seen=new Set<string>();return items.filter(item=>{const key=item.projectPath+':'+item.source;if(seen.has(key))return false;seen.add(key);return true;});

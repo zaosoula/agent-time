@@ -36,12 +36,32 @@ test('a human interval can be assigned, left unassigned, undone, and restored af
   interval=collector.summary().intervals.find(i=>i.state==='human');
   assert.equal(interval?.userAttribution,'assigned');
   assert.equal(interval?.workspaceId,`manual::${output}`);
+  const history=collector.reviewHistory();
+  assert.equal(history.length,1);
+  assert.equal(history[0]?.mode,'assigned');
+  interval=collector.undoReviewAction(history[0]!.id).intervals.find(i=>i.state==='human');
+  assert.equal(interval?.workspaceId,'observed::/original');
+  assert.equal(collector.reviewHistory()[0]?.undoneAt!==null,true);
+  collector.setHumanDecision([pair],'assigned',output);
   interval=collector.setHumanDecision([pair],'unassigned').intervals.find(i=>i.state==='human');
   assert.equal(interval?.workspaceId,undefined);
   assert.equal(interval?.userAttribution,'unassigned');
   interval=collector.setHumanDecision([pair],'clear').intervals.find(i=>i.state==='human');
   assert.equal(interval?.workspaceId,'observed::/original');
   assert.equal(interval?.userAttribution,undefined);
+  const split=collector.setHumanGroupSplit([pair],now+1,output);
+  const parts=split.intervals.filter(i=>i.state==='human');
+  assert.equal(parts.length,2);
+  assert.equal(parts[0]?.end,now+1);
+  assert.equal(parts[0]?.workspaceId,`manual::${output}`);
+  assert.equal(parts[1]?.start,now+1);
+  assert.equal(parts[1]?.userAttribution,'unassigned');
+  assert.equal(summaryForDate(split,date).humanSeconds,summaryForDate(originalSummary,date).humanSeconds);
+  await collector.close();collector=new Collector(output);
+  assert.equal(collector.summary().intervals.filter(i=>i.state==='human').length,2);
+  const latest=collector.reviewHistory()[0]!;
+  assert.equal(latest.mode,'split');
+  assert.equal(collector.undoReviewAction(latest.id).intervals.filter(i=>i.state==='human').length,1);
   assert.deepEqual(collector.store.events(),before);
   assert.throws(()=>collector.setHumanDecision([['wrong',second.eventId]],'assigned',output),/Activity changed/);
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
@@ -57,4 +77,22 @@ test('review groups nearby observations of one page but keeps separate pages sep
  assert.equal(groups.length,2);
  assert.deepEqual(groups[1]?.pairs,[['a','b'],['b','c']]);
  assert.deepEqual(groups[0]?.pairs,[['c','d']]);
+});
+
+test('day review survives restart and reopens only when that day changes',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-day-review-'));
+ let collector=new Collector(output);
+ try{
+  const at=new Date(2026,9,22,10).getTime()/1000,date='2026-10-22';
+  collector.store.put(makeEvent('macos','activity',{observedAt:at,monotonicAt:1,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}}));
+  collector.store.put(makeEvent('macos','activity',{observedAt:at+10,monotonicAt:11,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}}));
+  assert.equal(collector.dayReviewStatus(date).completedAt,null);
+  assert.equal(collector.markDayReview(date).stale,false);
+  await collector.close();collector=new Collector(output);
+  assert.equal(collector.dayReviewStatus(date).stale,false);
+  collector.store.put(makeEvent('capture','coverage',{observedAt:at+86400,monotonicAt:12,data:{reason:'A later day has a gap'}}));
+  assert.equal(collector.dayReviewStatus(date).stale,false);
+  collector.store.put(makeEvent('capture','coverage',{observedAt:at+20,monotonicAt:13,data:{reason:'This day has a gap'}}));
+  assert.equal(collector.dayReviewStatus(date).stale,true);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });

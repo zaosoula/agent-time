@@ -37,6 +37,23 @@ test('activity projection declines agent events and a capture fence',()=>{
  assert.equal(appendActivitySummary(baseline,prior,[event('tool',105,'tool_start','hook'),following],300),null);
 });
 
+test('agent and Orca replay reuse a parsed history prefix when it remains in memory',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-replay-cache-')),collector=new Collector(root);
+ try{
+  const old=[event('a',100),event('b',105)];for(const item of old)collector.store.put(item);
+  collector.summary();
+  const readAll=collector.store.events.bind(collector.store);
+  collector.store.events=()=>{throw new Error('Unexpected full database read');};
+  const hook=event('hook',110,'tool_start','hook',{toolId:'one'});hook.sessionId='session';hook.terminalHandle='terminal';hook.hostId='local';
+  collector.store.put(hook);
+  assert.deepEqual(collector.summary(),summarize([...old,hook]));
+  const worker=event('worker',115,'worker','orca',{state:'working'});worker.hostId='local';worker.dispatchId='dispatch';worker.terminalHandle='terminal';
+  collector.store.put(worker);
+  assert.deepEqual(collector.summary(),summarize([...old,hook,worker]));
+  collector.store.events=readAll;
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});
+
 test('an appended foreground sample credits both sides of local midnight exactly once',async()=>{
  const root=mkdtempSync(join(tmpdir(),'agent-time-midnight-')),collector=new Collector(root);
  try{

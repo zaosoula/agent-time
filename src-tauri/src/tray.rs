@@ -68,7 +68,8 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let on_notification=app.handle().clone();
  let _=app.notification().on_action(move |action|{if action.action_id()=="tap"{
   let update=action.notification().is_some_and(|notification|notification.id()==crate::updates::NOTIFICATION_ID || notification.title()==Some(crate::updates::NOTIFICATION_TITLE));
-  open_page(&on_notification,if update{"today"}else{"settings"});
+  let hook=action.notification().is_some_and(|notification|notification.title()==Some("Agent tracking may be idle"));
+  open_page(&on_notification,if update{"today"}else if hook{"hook-setup"}else{"health"});
  }});
  let status=MenuItem::with_id(app,"tray-status","Connecting to capture…",false,None::<&str>)?;
  let today=MenuItem::with_id(app,"tray-today","Today: —",false,None::<&str>)?;
@@ -77,10 +78,12 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let toggle=MenuItem::with_id(app,"tray-toggle","Pause capture",false,None::<&str>)?;
  let timed_pause=MenuItem::with_id(app,"tray-pause-15","Pause for 15 minutes",false,None::<&str>)?;
  let dashboard=MenuItem::with_id(app,"tray-dashboard","Open dashboard",true,None::<&str>)?;
+ let health=MenuItem::with_id(app,"tray-health","Capture health…",true,None::<&str>)?;
+ let repair=MenuItem::with_id(app,"tray-repair-hooks","Check and repair agent hooks…",true,None::<&str>)?;
  let settings=MenuItem::with_id(app,"tray-settings","Settings…",true,None::<&str>)?;
  let usage=MenuItem::with_id(app,"tray-usage","Tokens and limits…",true,None::<&str>)?;
  let quit=MenuItem::with_id(app,"tray-quit","Quit Agent Time",true,None::<&str>)?;
- let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
+ let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&health,&repair,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
  TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true).build(app)?;
  let pause_file=bridge.launch.output.join("pause-until");
  let pause_until=pause_deadline(&pause_file);
@@ -100,7 +103,7 @@ fn open_page(app:&tauri::AppHandle,page:&str){
  }
 }
 pub fn handle(app:&tauri::AppHandle,id:&str){match id{
- "tray-dashboard"=>open_page(app,"today"),"tray-settings"=>open_page(app,"settings"),"tray-usage"=>open_page(app,"usage"),"tray-quit"=>app.exit(0),
+ "tray-dashboard"=>open_page(app,"today"),"tray-health"=>open_page(app,"health"),"tray-repair-hooks"=>open_page(app,"hook-setup"),"tray-settings"=>open_page(app,"settings"),"tray-usage"=>open_page(app,"usage"),"tray-quit"=>app.exit(0),
  "tray-toggle"=>{
   let Some(state)=app.try_state::<Arc<TrayState>>() else{return;};let state=state.inner().clone();
   if state.busy.swap(true,Ordering::AcqRel){return;}
