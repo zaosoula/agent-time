@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.6` candidate — 2026-10-22
+
+Candidate source includes guarded old hook runtime cleanup from PR #6 and semantic Codex hook configuration comparison from PR #7. The five version declarations are advanced together. Local prebuild checks: 225 Node tests, frontend typecheck/build, 15 Rust tests, and version consistency passed. Apple's app submission was accepted. The first DMG `notarytool --wait` call timed out after Apple received it; querying that submission showed `Accepted`, and its stapled DMG passed validation. A focused regression check now resumes known submissions after that transient timeout. The candidate will be rebuilt from the amended source commit before staging. Signed OTA, recovery, and public promotion are pending. The public feed continues to serve beta.5 until this exact candidate passes the release gates.
+
 ## `0.2.0-beta.5` public release — 2026-10-21
 
 The reliability and review work, version bump, and a retry for transient Apple stapler connection failures were merged to `main` at `20f5aa9817afff58de1f6ad82959a3a179326fb3`. The final pull request passed its Apple Silicon checks. The release owner approved publication of the exact locally staged candidate and accepted the measured large-history limit.

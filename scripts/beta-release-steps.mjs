@@ -29,7 +29,29 @@ export function notarizeBetaDmg(file, env, execFile = execFileSync, wait = sleep
       : null;
   if (!auth) throw new Error('DMG notarization requires the team API key or a Keychain profile');
 
-  const output = execFile('xcrun', ['notarytool', 'submit', file, '--wait', '--output-format', 'json', ...auth], {encoding: 'utf8'});
+  let output;
+  try {
+    output = execFile('xcrun', ['notarytool', 'submit', file, '--wait', '--output-format', 'json', ...auth], {encoding: 'utf8'});
+  } catch (error) {
+    const details = `${error?.message || ''}\n${error?.stdout || ''}\n${error?.stderr || ''}`;
+    const id = details.match(/\/notary\/v2\/submissions\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})/i)?.[1];
+    if (!id || !/Code=-1001|Code=-1005/.test(details)) throw error;
+    // Apple may have accepted the upload before its --wait request timed out.
+    // Query the known submission instead of uploading a second copy.
+    for (let attempt = 0; attempt < 30; attempt++) {
+      try {
+        const info = execFile('xcrun', ['notarytool', 'info', id, '--output-format', 'json', ...auth], {encoding: 'utf8'});
+        const status = JSON.parse(info).status;
+        if (status === 'Accepted') { output = info; break; }
+        if (status !== 'In Progress') throw new Error(`DMG notarization was ${status || 'unknown'}`);
+      } catch (infoError) {
+        const message = `${infoError?.message || ''}\n${infoError?.stderr || ''}`;
+        if (!/Code=-1001|Code=-1005/.test(message)) throw infoError;
+      }
+      if (attempt === 29) throw new Error(`Timed out waiting for Apple DMG notarization submission ${id}`);
+      wait(10000);
+    }
+  }
   let submission;
   try { submission = JSON.parse(output); }
   catch { throw new Error('Apple returned an unreadable DMG notarization result'); }
