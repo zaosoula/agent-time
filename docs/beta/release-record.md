@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.7` candidate preparation — 2026-10-22
+
+The changes from merged [PR #11](https://github.com/zaosoula/agent-time/pull/11) are being prepared as an Apple Silicon candidate. They add an exact incremental path for append-only Mac activity, day-by-source capture evidence, clearer hook setup verification, more focused human activity review, recovery after a failed updater relaunch, and delayed cleanup of replaced hook runtimes. The version and release notes are on an isolated candidate branch. Local `npm test` passed 236 tests, the interface build passed, and 16 locked Rust tests passed. Signing, notarization, staging, and independent installation have not yet been recorded for this candidate. It is **not published**; the live update feed remains beta.6.
+
+The beta.6 48-hour soak continues separately. The Mac mini OTA still needs desktop access, and the provisional macOS 13.5 minimum remains unconfirmed as the owner chose. Full-history replay remains in use for agent and Orca events, and live isolated-feed failure injection is pending.
+
 ## `0.2.0-beta.6` public release — 2026-10-22
 
 The source tree at merged `main` commit `b19c5d7468d6d102af17714d9a45e3e11e6a9a5f` includes guarded old hook runtime cleanup from PR #6, semantic Codex hook configuration comparison from PR #7, and recovery of a known Apple DMG notarization submission after a transient wait timeout. The five version declarations were advanced together. The candidate passed 226 Node tests, frontend typecheck/build, 15 Rust tests, and version consistency locally. Apple accepted both the app and DMG. Strict nested signature checks, stapling, Gatekeeper, and packaged collector smoke checks passed. Its staged updater archive SHA-256 is `b7743303e474f14bb31b4ed93c6b9ac9aaa65d1653e310709e1915215900c207`; the DMG SHA-256 is `254d2341f0652dcfff9e04fcbf0fb841a35dabf3c91d6d5fd458a3861882d3ba`. The merged commit and built branch had the same Git tree hash.
