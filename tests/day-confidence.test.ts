@@ -15,3 +15,9 @@ test('historical day never claims current hook failure happened then',()=>{
  const day=dayConfidence(summary,sources,['codex'],0,100,false);
  assert.equal(day.attention,0);assert.equal(day.sources.find(source=>source.id==='codex')?.detail,'No credited activity recorded on this day');
 });
+test('previously verified hook still reports credited activity from the selected day',()=>{
+ const withAgent:Summary={...summary,intervals:[...summary.intervals,{start:20,end:25,state:'running',proof:'observed',sourceEventIds:['start','end'],provider:'codex'}]};
+ const verified:SourceSnapshot[]=[sources[0]!,{...sources[1]!,state:'verified',action:'none',detail:'Delivered earlier'}];
+ const day=dayConfidence(withAgent,verified,['codex'],0,100,true);
+ assert.equal(day.sources.find(source=>source.id==='codex')?.detail,'Credited activity recorded on this day');
+});

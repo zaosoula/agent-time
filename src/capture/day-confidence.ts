@@ -19,8 +19,9 @@ export function dayConfidence(summary:Summary,sources:SourceSnapshot[],agentIds:
   const off=today&&['off','paused','unavailable','excluded'].includes(source.state);
   const waiting=today&&['waiting','verified','permission-limited'].includes(source.state)&&!observed;
   const state=needsRepair?'attention':off?'off':waiting?'waiting':observed?'observed':today?'waiting':'unknown';
-  const detail=needsRepair?source.detail:today&&source.state==='verified'?'Current hook runtime delivered an event earlier; no activity is credited on this day':
-   observed?'Credited activity recorded on this day':received?'Event received, but no duration credited on this day':today?source.detail:'No credited activity recorded on this day';
+  const detail=needsRepair?source.detail:observed?'Credited activity recorded on this day':
+   today&&source.state==='verified'?'Current hook runtime delivered an event earlier; no activity is credited on this day':
+   received?'Event received, but no duration credited on this day':today?source.detail:'No credited activity recorded on this day';
   return {id:source.id,name:source.name,observed,state,detail,action:today?source.action:'none'} as DayConfidenceSource;
  });
  const caveats=[...summary.coverage,...summary.unresolved].filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to).length;
