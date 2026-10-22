@@ -3,7 +3,7 @@ import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {validateManualNote,type ManualNote} from './store.ts';
-interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;}
+interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string):unknown;markDayReview?(date:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
@@ -18,6 +18,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       if(!controller.setWebsiteRule||Object.keys(params).length!==2||typeof params.pattern!=='string'||typeof params.projectPath!=='string')throw new Error('Invalid website rule');
       return {id,result:controller.setWebsiteRule(params.pattern,params.projectPath)};
     }
+    if(request.method==='website_rule_preview'){
+      if(!controller.previewWebsiteRule||Object.keys(params).length!==2||typeof params.pattern!=='string'||typeof params.projectPath!=='string')throw new Error('Invalid website rule preview');
+      return {id,result:controller.previewWebsiteRule(params.pattern,params.projectPath)};
+    }
     if(request.method==='website_rule_remove'){
       if(!controller.removeWebsiteRule||Object.keys(params).length!==1||typeof params.pattern!=='string')throw new Error('Invalid website rule');
       return {id,result:controller.removeWebsiteRule(params.pattern)};
@@ -25,6 +29,20 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='human_decision_set'){
       if(!controller.setHumanDecision||Object.keys(params).some(key=>!['pairs','mode','projectPath'].includes(key))||!Array.isArray(params.pairs)||!params.pairs.length||params.pairs.length>500||!['assigned','unassigned','clear'].includes(String(params.mode))||params.pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128))||params.mode==='assigned'&&typeof params.projectPath!=='string'||params.mode!=='assigned'&&params.projectPath!==undefined)throw new Error('Invalid human activity decision');
       return {id,result:controller.setHumanDecision(params.pairs as Array<[string,string]>,params.mode as 'assigned'|'unassigned'|'clear',params.projectPath as string|undefined)};
+    }
+    if(request.method==='review_undo'){
+      if(!controller.undoReviewAction||Object.keys(params).length!==1||typeof params.id!=='string'||!/^[a-f0-9-]{36}$/.test(params.id))throw new Error('Invalid review undo request');
+      return {id,result:controller.undoReviewAction(params.id)};
+    }
+    if(request.method==='human_group_split'){
+      if(!controller.setHumanGroupSplit||Object.keys(params).some(key=>!['pairs','splitAt','beforeProject','afterProject'].includes(key))||!Array.isArray(params.pairs)||!params.pairs.length||params.pairs.length>500||params.pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128))||typeof params.splitAt!=='number'||!Number.isFinite(params.splitAt)||['beforeProject','afterProject'].some(key=>params[key]!==undefined&&typeof params[key]!=='string'))throw new Error('Invalid activity split');
+      return {id,result:controller.setHumanGroupSplit(params.pairs as Array<[string,string]>,params.splitAt as number,params.beforeProject as string|undefined,params.afterProject as string|undefined)};
+    }
+    if(request.method==='day_review_status'||request.method==='day_review_mark'){
+      if(Object.keys(params).length!==1||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date))throw new Error('Invalid review date');
+      const handler=request.method==='day_review_status'?controller.dayReviewStatus:controller.markDayReview;
+      if(!handler)throw new Error('Daily review unavailable');
+      return {id,result:handler.call(controller,params.date)};
     }
     if(request.method==='linear_connect'){
       if(!controller.linearConnect||Object.keys(params).length!==1||typeof params.clientId!=='string')throw new Error('Invalid Linear connection request');
@@ -94,6 +112,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='hooks_verify'&&controller.verifyHooks)return {id,result:controller.verifyHooks()};
     if(request.method==='hooks_dismiss'&&controller.dismissHookSetup)return {id,result:controller.dismissHookSetup()};
     if(request.method==='status')return {id,result:controller.status()};
+    if(request.method==='review_history'&&controller.reviewHistory)return {id,result:controller.reviewHistory()};
     if(request.method==='summary')return {id,result:controller.summary(15000)};
     if(request.method==='capture_health'&&controller.captureHealth)return {id,result:controller.captureHealth()};
     if(request.method==='capture_checks'&&controller.captureChecks)return {id,result:controller.captureChecks()};

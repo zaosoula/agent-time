@@ -3,7 +3,20 @@ import assert from 'node:assert/strict';
 import {mkdtempSync,mkdirSync,rmSync,writeFileSync} from 'node:fs';
 import {join} from 'node:path';
 import {tmpdir} from 'node:os';
-import {WebsiteResolver,githubRemoteSlug,matchingRule,normalizeRulePattern,websiteKey,type KnownWorkspace} from '../src/capture/website-resolver.ts';
+import {WebsiteResolver,githubRemoteSlug,matchingRule,normalizeRulePattern,previewWebsiteRuleImpact,websiteKey,type KnownWorkspace} from '../src/capture/website-resolver.ts';
+import type {Interval} from '../src/capture/events.ts';
+
+test('rule preview counts recent eligible captured intervals without changing past decisions',()=>{
+ const now=1_800_000_000,intervals:Interval[]=[
+  {state:'human',proof:'inferred',sourceEventIds:['a','b'],start:now-60,end:now-30,browserUrl:'https://github.com/acme/app/issues/1',workspaceId:'observed::/old'},
+  {state:'human',proof:'inferred',sourceEventIds:['b','c'],start:now-60,end:now-30,browserUrl:'https://github.com/acme/other',workspaceId:'observed::/old'},
+  {state:'human',proof:'inferred',sourceEventIds:['c','d'],start:now-8*86400,end:now-8*86400+30,browserUrl:'https://github.com/acme/app',workspaceId:'observed::/old'},
+ ];
+ const impact=previewWebsiteRuleImpact('https://github.com/acme/app','/new',intervals,[{pattern:'https://github.com',projectPath:'/old'}],now);
+ assert.equal(impact.observedIntervals,2);assert.equal(impact.affectedIntervals,1);
+ assert.equal(impact.examples[0]?.currentProject,'/old');
+ assert.equal(intervals[0]?.workspaceId,'observed::/old');
+});
 
 test('URL-prefix rules override origin rules and survive reopening',()=>{
  const output=mkdtempSync(join(tmpdir(),'agent-time-web-rule-')),one=join(output,'one'),two=join(output,'two');

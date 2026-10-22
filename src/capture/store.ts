@@ -2,12 +2,13 @@ import { DatabaseSync,backup } from 'node:sqlite';
 import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
-import type {HumanDecision} from './human-review.ts';
+import type {HumanDecision,HumanSplit} from './human-review.ts';
 import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
-export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newUsageEvents:number;usageConflicts:number;}
+export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;}
+export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;}
 const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid manual note');
@@ -26,7 +27,7 @@ export class EventStore {
       closeSync(openSync(path, 'a', 0o600)); chmodSync(path, 0o600);
     }
     this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
   }
   put(event: CaptureEvent): boolean {
     validateEvent(event);
@@ -89,14 +90,75 @@ export class EventStore {
   humanDecisions():HumanDecision[]{
     return this.db.prepare('SELECT start_event_id, end_event_id, mode, project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode as HumanDecision['mode'],projectPath:row.project_path===null?null:String(row.project_path)}));
   }
+  humanSplits():HumanSplit[]{
+    return this.db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)}));
+  }
+  private reviewSnapshot(pairs:Array<[string,string]>){
+    const decision=this.db.prepare('SELECT mode,project_path FROM human_decisions WHERE start_event_id=? AND end_event_id=?');
+    const split=this.db.prepare('SELECT split_at,before_path,after_path FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+    return pairs.map(([start,end])=>({start,end,decision:decision.get(start,end)||null,split:split.get(start,end)||null}));
+  }
+  private recordReviewAction(mode:ReviewAction['mode'],projectPath:string|null,before:ReturnType<EventStore['reviewSnapshot']>,after:ReturnType<EventStore['reviewSnapshot']>){
+    if(JSON.stringify(before)!==JSON.stringify(after))this.db.prepare('INSERT INTO review_actions VALUES(?,?,?,?,?,?,NULL)').run(randomUUID(),Date.now()/1000,mode,projectPath,JSON.stringify(before),JSON.stringify(after));
+  }
   setHumanDecisions(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath:string|null):void {
     const put=this.db.prepare('INSERT INTO human_decisions (start_event_id,end_event_id,mode,project_path,decided_at) VALUES (?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET mode=excluded.mode,project_path=excluded.project_path,decided_at=excluded.decided_at');
     const remove=this.db.prepare('DELETE FROM human_decisions WHERE start_event_id=? AND end_event_id=?');
     this.db.exec('BEGIN');
     try{
-      for(const [start,end] of pairs){if(mode==='clear')remove.run(start,end);else put.run(start,end,mode,projectPath,Date.now()/1000);}
+      const before=this.reviewSnapshot(pairs),removeSplit=this.db.prepare('DELETE FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+      for(const [start,end] of pairs){removeSplit.run(start,end);if(mode==='clear')remove.run(start,end);else put.run(start,end,mode,projectPath,Date.now()/1000);}
+      this.recordReviewAction(mode,projectPath,before,this.reviewSnapshot(pairs));
       this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  setHumanGroupSplit(pairs:Array<[string,string]>,splitAt:number,bounds:Array<[number,number]>,beforePath:string|null,afterPath:string|null):void{
+    const putDecision=this.db.prepare('INSERT INTO human_decisions (start_event_id,end_event_id,mode,project_path,decided_at) VALUES(?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET mode=excluded.mode,project_path=excluded.project_path,decided_at=excluded.decided_at');
+    const removeDecision=this.db.prepare('DELETE FROM human_decisions WHERE start_event_id=? AND end_event_id=?');
+    const putSplit=this.db.prepare('INSERT INTO human_splits VALUES(?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET split_at=excluded.split_at,before_path=excluded.before_path,after_path=excluded.after_path');
+    const removeSplit=this.db.prepare('DELETE FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+    this.db.exec('BEGIN');
+    try{
+      const before=this.reviewSnapshot(pairs);
+      pairs.forEach(([start,end],index)=>{
+        const [from,to]=bounds[index]!;
+        if(to<=splitAt||from>=splitAt){const path=to<=splitAt?beforePath:afterPath;removeSplit.run(start,end);putDecision.run(start,end,path?'assigned':'unassigned',path,Date.now()/1000);}
+        else{removeDecision.run(start,end);putSplit.run(start,end,splitAt,beforePath,afterPath);}
+      });
+      this.recordReviewAction('split',null,before,this.reviewSnapshot(pairs));
+      this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  reviewActions(limit=30):ReviewAction[]{
+    const rows=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions ORDER BY at DESC,rowid DESC LIMIT ?').all(limit);
+    const latest=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();
+    if(latest&&!rows.some(row=>row.id===latest.id))rows.push(latest);
+    return rows.map(row=>({id:String(row.id),at:Number(row.at),mode:row.mode as ReviewAction['mode'],projectPath:row.project_path===null?null:String(row.project_path),count:(JSON.parse(String(row.before_json)) as unknown[]).length,undoneAt:row.undone_at===null?null:Number(row.undone_at)}));
+  }
+  undoReviewAction(id:string):void{
+    const action=this.db.prepare('SELECT id,before_json,after_json FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();
+    if(!action||action.id!==id)throw new Error('Only the latest review change can be undone');
+    type Snapshot=Array<{start:string;end:string;decision:{mode:'assigned'|'unassigned';project_path:string|null}|null;split:{split_at:number;before_path:string|null;after_path:string|null}|null}>;
+    const before=JSON.parse(String(action.before_json)) as Snapshot,after=JSON.parse(String(action.after_json)) as Snapshot;
+    this.db.exec('BEGIN');
+    try{
+      if(JSON.stringify(this.reviewSnapshot(after.map(item=>[item.start,item.end])))!==JSON.stringify(after))throw new Error('Review data changed; refresh before undoing');
+      const put=this.db.prepare('INSERT INTO human_decisions (start_event_id,end_event_id,mode,project_path,decided_at) VALUES(?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET mode=excluded.mode,project_path=excluded.project_path,decided_at=excluded.decided_at');
+      const remove=this.db.prepare('DELETE FROM human_decisions WHERE start_event_id=? AND end_event_id=?');
+      const putSplit=this.db.prepare('INSERT INTO human_splits VALUES(?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET split_at=excluded.split_at,before_path=excluded.before_path,after_path=excluded.after_path');
+      const removeSplit=this.db.prepare('DELETE FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+      for(const item of before){if(item.decision)put.run(item.start,item.end,item.decision.mode,item.decision.project_path,Date.now()/1000);else remove.run(item.start,item.end);if(item.split)putSplit.run(item.start,item.end,item.split.split_at,item.split.before_path,item.split.after_path);else removeSplit.run(item.start,item.end);}
+      this.db.prepare('UPDATE review_actions SET undone_at=? WHERE id=?').run(Date.now()/1000,id);
+      this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
+  }
+  dayReview(date:string):{completedAt:number;fingerprint:string}|null{
+    const row=this.db.prepare('SELECT completed_at,fingerprint FROM day_reviews WHERE date=?').get(date);
+    return row?{completedAt:Number(row.completed_at),fingerprint:String(row.fingerprint)}:null;
+  }
+  markDayReview(date:string,fingerprint:string):void{
+    this.db.prepare('INSERT INTO day_reviews VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET completed_at=excluded.completed_at,fingerprint=excluded.fingerprint').run(date,Date.now()/1000,fingerprint);
+    this.generation++;this.nonEventGeneration++;
   }
   manualNotes(date:string):ManualNote[]{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('Invalid date');
@@ -171,7 +233,7 @@ export class EventStore {
   importArchive(output:string,id:string):{addedEvents:number;addedNotes:number;addedDecisions:number}{
     return this.withArchive(output,id,hasUsage=>{
       const preview=this.previewAttachedArchive(id,hasUsage);
-      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.usageConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
+      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.splitConflicts||preview.reviewActionConflicts||preview.dayReviewConflicts||preview.usageConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
       for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)').iterate()){
         const event=JSON.parse(String(row.payload)) as CaptureEvent;
         validateEvent(event);
@@ -186,6 +248,9 @@ export class EventStore {
         this.db.exec('INSERT OR IGNORE INTO main.events SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid');
         this.db.exec('INSERT OR IGNORE INTO main.observation_signatures SELECT identity,signature FROM archive.observation_signatures');
         this.db.exec('INSERT OR IGNORE INTO main.human_decisions SELECT start_event_id,end_event_id,mode,project_path,decided_at FROM archive.human_decisions');
+        if(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get())this.db.exec('INSERT OR IGNORE INTO main.human_splits SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM archive.human_splits');
+        if(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='review_actions'").get())this.db.exec('INSERT OR IGNORE INTO main.review_actions SELECT id,at,mode,project_path,before_json,after_json,undone_at FROM archive.review_actions');
+        if(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='day_reviews'").get())this.db.exec('INSERT OR IGNORE INTO main.day_reviews SELECT date,completed_at,fingerprint FROM archive.day_reviews');
         this.db.exec('INSERT OR IGNORE INTO main.manual_notes SELECT id,start,end,project,note,created_at FROM archive.manual_notes');
         if(hasUsage){
           this.db.exec('CREATE TABLE IF NOT EXISTS main.usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');
@@ -199,6 +264,9 @@ export class EventStore {
   private previewAttachedArchive(id:string,hasUsage:boolean):ArchivePreview{
     const count=(query:string)=>Number(this.db.prepare(query).get()?.n||0);
     const mainUsage=Boolean(this.db.prepare("SELECT name FROM main.sqlite_master WHERE type='table' AND name='usage_events'").get());
+    const hasHistory=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='review_actions'").get());
+    const hasSplits=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get());
+    const hasDayReviews=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='day_reviews'").get());
     return {id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
       newEvents:count('SELECT count(*) n FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)'),
       eventConflicts:count('SELECT count(*) n FROM archive.events a JOIN main.events m ON m.event_id=a.event_id WHERE m.payload<>a.payload'),
@@ -206,6 +274,12 @@ export class EventStore {
       noteConflicts:count('SELECT count(*) n FROM archive.manual_notes a JOIN main.manual_notes m ON m.id=a.id WHERE m.start<>a.start OR m.end<>a.end OR m.project<>a.project OR m.note<>a.note'),
       newDecisions:count('SELECT count(*) n FROM archive.human_decisions a WHERE NOT EXISTS (SELECT 1 FROM main.human_decisions m WHERE m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id)'),
       decisionConflicts:count('SELECT count(*) n FROM archive.human_decisions a JOIN main.human_decisions m ON m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id WHERE m.mode<>a.mode OR m.project_path IS NOT a.project_path'),
+      newSplits:hasSplits?count('SELECT count(*) n FROM archive.human_splits a WHERE NOT EXISTS (SELECT 1 FROM main.human_splits m WHERE m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id)'):0,
+      splitConflicts:hasSplits?count('SELECT count(*) n FROM archive.human_splits a JOIN main.human_splits m ON m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id WHERE m.split_at<>a.split_at OR m.before_path IS NOT a.before_path OR m.after_path IS NOT a.after_path'):0,
+      newReviewActions:hasHistory?count('SELECT count(*) n FROM archive.review_actions a WHERE NOT EXISTS (SELECT 1 FROM main.review_actions m WHERE m.id=a.id)'):0,
+      reviewActionConflicts:hasHistory?count('SELECT count(*) n FROM archive.review_actions a JOIN main.review_actions m ON m.id=a.id WHERE m.before_json<>a.before_json OR m.after_json<>a.after_json OR m.undone_at IS NOT a.undone_at'):0,
+      newDayReviews:hasDayReviews?count('SELECT count(*) n FROM archive.day_reviews a WHERE NOT EXISTS (SELECT 1 FROM main.day_reviews m WHERE m.date=a.date)'):0,
+      dayReviewConflicts:hasDayReviews?count('SELECT count(*) n FROM archive.day_reviews a JOIN main.day_reviews m ON m.date=a.date WHERE m.fingerprint<>a.fingerprint OR m.completed_at<>a.completed_at'):0,
       newUsageEvents:hasUsage?mainUsage?count('SELECT count(*) n FROM archive.usage_events a WHERE NOT EXISTS (SELECT 1 FROM main.usage_events m WHERE m.id=a.id)'):count('SELECT count(*) n FROM archive.usage_events'):0,
       usageConflicts:hasUsage&&mainUsage?count('SELECT count(*) n FROM archive.usage_events a JOIN main.usage_events m ON m.id=a.id WHERE m.payload<>a.payload OR m.timestamp<>a.timestamp'):0};
   }

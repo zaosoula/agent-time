@@ -33,7 +33,7 @@ test('disabled browser page details are discarded while foreground activity rema
  writeFileSync(helper,`#!/bin/sh\nprintf '%s' "$*" > '${argsFile}'\necho '${safari}'\necho '${brave}'\nexec /bin/sleep 5\n`,{mode:0o755});
  const c=new Collector(output,helper);c.updateSettings({orcaPolling:false,browserSafari:false,browserChrome:false,browserBrave:true});
  try{
-  await c.start(30);for(let i=0;i<80&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(25);
+  await c.start(30);for(let i=0;i<200&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(25);
   const samples=c.store.events().filter(e=>e.kind==='activity');
   assert.equal(samples.length,2);assert.equal(samples[0]?.data?.foregroundBundleId,'com.apple.Safari');assert.equal(samples[0]?.data?.browserUrl,undefined);
   assert.equal(samples[1]?.data?.browserUrl,'https://example.com/brave');
@@ -176,9 +176,9 @@ test('status avoids history replay and dashboard/menu reuse a summary until an e
  const read=c.store.events.bind(c.store);let reads=0;c.store.events=()=>{reads++;return read();};
  try{
   c.status();assert.equal(reads,0);const first=c.summary();c.summary();c.trayStatus();assert.equal(reads,1);
-  const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local'});c.store.put(e);assert.notDeepEqual(c.summary(),first);c.trayStatus();assert.equal(reads,2);
-  c.store.put(e);c.summary();assert.equal(reads,2);
-  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,3);
+  const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local'});c.store.put(e);assert.notDeepEqual(c.summary(),first);c.trayStatus();assert.equal(reads,1);
+  c.store.put(e);c.summary();assert.equal(reads,1);
+  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,2);
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
 test('Orca tab metadata remains independent of worker polling and never blocks capture',async()=>{

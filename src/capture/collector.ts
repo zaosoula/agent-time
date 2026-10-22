@@ -1,5 +1,6 @@
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
+import {createHash} from 'node:crypto';
 import { EventStore, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
@@ -8,14 +9,15 @@ import { importSpool,spoolStatus } from './hooks.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
-import { dailyTotals,summaryForDate,workingAgentCount } from './daily.ts';
+import { dailyCaptureIssues,dailyTotals,summaryForDate,workingAgentCount } from './daily.ts';
 import {appendActivitySummary} from './incremental-summary.ts';
 import {UsageReader} from '../usage/reader.ts';
 import {HookInstallation,type HookProvider} from './hook-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
-import {WebsiteResolver,websiteKey,projectPathFromWorktree,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
+import {WebsiteResolver,websiteKey,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
-import {applyHumanDecisions,humanIntervalKey} from './human-review.ts';
+import {applyHumanDecisions,groupHumanReview,humanIntervalKey} from './human-review.ts';
+import {unobservedGaps} from './gaps.ts';
 import {agents,browsers,pollers,agentById,sourceMetadata,browserByBundle} from './sources/registry.ts';
 import {outdatedHookTargets} from './hook-warning.ts';
 import {diagnosticSummary} from './diagnostics.ts';
@@ -37,7 +39,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
+  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number;eventsRef?:WeakRef<CaptureEvent[]>;eventsRowid?:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
   private interval:number; private runId?:string; private reader:typeof callOrca;
   private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
   private lastOrcaAccessibility:AccessibilityCapture|null=null;
@@ -159,6 +161,10 @@ export class Collector {
     const paths=[...new Set([...this.websiteResolver.candidateProjects(this.knownWorkspaces()),...[...this.websiteMatches.values()].map(match=>match.projectPath).filter((path):path is string=>Boolean(path))])].sort();
     return {rules:this.websiteResolver.rules(),projects:paths,matches:[...this.websiteMatches.values()].sort((a,b)=>b.observedAt-a.observedAt).slice(0,30)};
   }
+  previewWebsiteRule(pattern:string,projectPath:string){
+    if(!isAbsolute(projectPath))throw new Error('Choose an absolute project directory');
+    return previewWebsiteRuleImpact(pattern,projectPathFromWorktree(projectPath),this.summary().intervals,this.websiteResolver.rules());
+  }
   setWebsiteRule(pattern:string,projectPath:string){
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Change website rules in the app that owns capture');
     this.websiteResolver.setRule(pattern,projectPath);this.websiteRevision++;this.websiteMatches.clear();this.websiteApplied.clear();return this.websiteProjects();
@@ -181,6 +187,56 @@ export class Collector {
     this.store.setHumanDecisions([...new Map(pairs.map(pair=>[pair.join(':'),pair])).values()],mode,path);
     this.summaryCache=undefined;
     return this.summary();
+  }
+  reviewHistory(){return this.store.reviewActions();}
+  private dayReviewSnapshot(date:string,source:Summary){
+    const day=summaryForDate(source,date),groups=groupHumanReview(day.intervals),unmatched=groups.filter(group=>!group.projectPath&&!group.userAttribution),conflicts=groups.filter(group=>group.attributionSource==='conflict'&&!group.userAttribution),gaps=unobservedGaps(day.intervals);
+    const start=new Date(`${date}T00:00:00`),end=new Date(start);end.setDate(end.getDate()+1);
+    const issues=dailyCaptureIssues(source,start.getTime()/1000,end.getTime()/1000);
+    const fingerprint=createHash('sha256').update(JSON.stringify({intervals:day.intervals,issues,notes:this.store.manualNotes(date)})).digest('hex');
+    const saved=this.store.dayReview(date);
+    return {date,completedAt:saved?.completedAt||null,stale:Boolean(saved&&saved.fingerprint!==fingerprint),hasActivity:day.intervals.length>0,unmatchedSeconds:unmatched.reduce((total,group)=>total+group.seconds,0),conflicts:conflicts.length,gaps:gaps.length,fingerprint};
+  }
+  dayReviewStatus(date:string){
+    const summary=this.summary(),start=new Date(`${date}T00:00:00`),earliest=new Date(start),latest=new Date(start);
+    earliest.setDate(earliest.getDate()-7);latest.setDate(latest.getDate()+1);
+    const from=earliest.getTime()/1000,to=latest.getTime()/1000;
+    // One scan of the complete history keeps day review responsive on large databases.
+    const recent={...summary,intervals:summary.intervals.filter(item=>item.end>from&&item.start<to),coverage:summary.coverage.filter(item=>item.observedAt!==undefined&&item.observedAt>=from&&item.observedAt<to),unresolved:summary.unresolved.filter(item=>item.observedAt!==undefined&&item.observedAt>=from&&item.observedAt<to)};
+    const current=this.dayReviewSnapshot(date,recent),backlog=[];
+    for(let days=1;days<=7;days++){const prior=new Date(start);prior.setDate(prior.getDate()-days);const key=`${prior.getFullYear()}-${String(prior.getMonth()+1).padStart(2,'0')}-${String(prior.getDate()).padStart(2,'0')}`;const item=this.dayReviewSnapshot(key,recent);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
+    const {fingerprint:_,...view}=current;return {...view,backlog};
+  }
+  markDayReview(date:string){
+    if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
+    const snapshot=this.dayReviewSnapshot(date,this.summary());if(!snapshot.hasActivity)throw new Error('There is no captured activity to review for this day');
+    this.store.markDayReview(date,snapshot.fingerprint);return this.dayReviewStatus(date);
+  }
+  undoReviewAction(id:string):Summary{
+    if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
+    this.store.undoReviewAction(id);this.summaryCache=undefined;return this.summary();
+  }
+  setHumanGroupSplit(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string):Summary{
+    if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
+    if(!Array.isArray(pairs)||!pairs.length||pairs.length>500||!Number.isFinite(splitAt))throw new Error('Invalid activity split');
+    if(pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128)))throw new Error('Invalid activity split');
+    const unique=[...new Map(pairs.map(pair=>[pair.join(':'),pair])).values()];
+    const ranges=new Map<string,[number,number]>();
+    for(const interval of this.summary().intervals.filter(item=>item.state==='human')){
+      const key=humanIntervalKey(interval);if(!key)continue;const old=ranges.get(key);ranges.set(key,old?[Math.min(old[0],interval.start),Math.max(old[1],interval.end)]:[interval.start,interval.end]);
+    }
+    const bounds=unique.map(pair=>ranges.get(pair.join(':')));
+    if(bounds.some(range=>!range))throw new Error('Activity changed; refresh and try again');
+    const valid=bounds as Array<[number,number]>,start=Math.min(...valid.map(range=>range[0])),end=Math.max(...valid.map(range=>range[1]));
+    if(splitAt<=start||splitAt>=end||splitAt-start<1||end-splitAt<1)throw new Error('Choose a time inside this activity');
+    const normalize=(value?:string)=>{
+      if(!value)return null;
+      if(!isAbsolute(value))throw new Error('Choose an absolute project directory');
+      const path=projectPathFromWorktree(value);if(!existsSync(path)||!statSync(path).isDirectory())throw new Error('Choose an existing project directory');return path;
+    };
+    const before=normalize(beforeProject),after=normalize(afterProject);
+    if(before===after)throw new Error('Choose different projects or leave one side unassigned');
+    this.store.setHumanGroupSplit(unique,splitAt,valid,before,after);this.summaryCache=undefined;return this.summary();
   }
   private resolveWebsite(url:string){
     const key=websiteKey(url,this.websiteResolver.rules());if(!key||this.websitePending.has(key))return;
@@ -248,14 +304,22 @@ export class Collector {
   private refreshProbeTrust():Promise<void>|undefined{return this.activityProbe.refreshTrust(this.macos);}
   summary(maxAgeMs=0):Summary {
     const revision=this.store.revision();if(this.summaryCache&&(this.summaryCache.revision===revision||maxAgeMs>0&&Date.now()-this.summaryCache.at<maxAgeMs))return this.summaryCache.value;
-    if(this.summaryCache&&this.summaryCache.safeRevision===this.store.incrementalSafetyRevision()){
-      const previous=this.summaryCache,newRows=this.store.eventsAfterRowid(previous.rowid),newEvents=newRows.map(row=>row.event);
+    const previous=this.summaryCache,safeRevision=this.store.incrementalSafetyRevision();
+    let newRows:ReturnType<EventStore['eventsAfterRowid']>|undefined;
+    if(previous&&previous.safeRevision===safeRevision){
+      newRows=this.store.eventsAfterRowid(previous.rowid);const newEvents=newRows.map(row=>row.event);
       if(newEvents.length&&newEvents.every(event=>event.observedAt>=previous.maxObservedAt)&&newEvents.every((event,index)=>index===0||event.observedAt>=newEvents[index-1]!.observedAt)){
         const value=appendActivitySummary(previous.value,previous.lastActivity,newEvents,this.surfaces.humanIdleMinutes*60);
-        if(value){this.summaryCache={revision,safeRevision:previous.safeRevision,at:Date.now(),value,rowid:newRows.at(-1)!.rowid,lastActivity:newEvents.at(-1),maxObservedAt:newEvents.at(-1)!.observedAt};return value;}
+        if(value){this.summaryCache={revision,safeRevision,at:Date.now(),value,rowid:newRows.at(-1)!.rowid,lastActivity:newEvents.at(-1),maxObservedAt:newEvents.at(-1)!.observedAt,eventsRef:previous.eventsRef,eventsRowid:previous.eventsRowid};return value;}
       }
     }
-    const events=this.store.events(),summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60}),this.store.humanDecisions());
+    // The reducer still replays all events for hook and Orca changes. Reuse the
+    // parsed prefix while it survives GC, avoiding a full SQLite read and JSON
+    // decode on every replay without permanently retaining a large history.
+    const cached=previous?.safeRevision===safeRevision?previous.eventsRef?.deref():undefined;
+    const eventRows=cached&&previous?.eventsRowid!==undefined?previous.eventsRowid===previous.rowid?newRows||this.store.eventsAfterRowid(previous.eventsRowid):this.store.eventsAfterRowid(previous.eventsRowid):undefined;
+    const events=cached&&eventRows?[...cached,...eventRows.map(row=>row.event)]:this.store.events();
+    const summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60}),this.store.humanDecisions(),this.store.humanSplits());
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
     for(const s of summary.sessions){const t=terminals.get(s.terminalHandle);if(t&&!s.child){s.title=String(t.data?.title||s.title).replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◐◓◑◒]\s*/, '');s.cwd=t.cwd||s.cwd;}}
     let lastActivity:CaptureEvent|undefined,maxObservedAt=-Infinity;
@@ -264,7 +328,8 @@ export class Collector {
       if(event.source==='macos'&&event.kind==='activity')lastActivity=event;
       else if(['sleep','capture_stop','capture_start'].includes(event.kind)||event.kind==='capture_settings'&&event.data?.previous&&event.data?.surfaces&&(event.data.previous as Record<string,unknown>).macosActivity!==(event.data.surfaces as Record<string,unknown>).macosActivity)lastActivity=undefined;
     }
-    this.summaryCache={revision,safeRevision:this.store.incrementalSafetyRevision(),at:Date.now(),value:summary,rowid:this.store.lastEventRowid(),lastActivity,maxObservedAt};return summary;
+    const rowid=this.store.lastEventRowid();
+    this.summaryCache={revision,safeRevision:this.store.incrementalSafetyRevision(),at:Date.now(),value:summary,rowid,lastActivity,maxObservedAt,eventsRef:new WeakRef(events),eventsRowid:rowid};return summary;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
   weeklyReview(startDate:string){return weeklyReview(this.summary(15000),startDate);}
