@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import {ref,shallowRef,onMounted,onUnmounted} from 'vue';
+import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {check,type Update,type DownloadEvent} from '@tauri-apps/plugin-updater';
 import {relaunch} from '@tauri-apps/plugin-process';
 import {invoke} from '@tauri-apps/api/core';
 import {installBetaUpdate} from './beta-updates.ts';
 const update=shallowRef<Update|null>(null),error=ref(''),busy=ref(false),progress=ref('');
-let timer:ReturnType<typeof setInterval>|undefined;
+let unlisten:UnlistenFn|undefined;
+let unmounted=false;
 let lastCheck=0;
 async function checkNow(){
  if(busy.value)return;
@@ -25,8 +27,8 @@ async function install(){
  catch(e){error.value=`Update failed: ${String(e)}`;progress.value='';busy.value=false;}
 }
 function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>60_000)void checkNow();}
-onMounted(()=>{void checkNow();timer=setInterval(()=>{void checkNow();},6*60*60*1000);window.addEventListener('focus',checkOnReturn);document.addEventListener('visibilitychange',checkOnReturn);});
-onUnmounted(()=>{if(timer)clearInterval(timer);window.removeEventListener('focus',checkOnReturn);document.removeEventListener('visibilitychange',checkOnReturn);if(!busy.value)void update.value?.close();});
+onMounted(()=>{void checkNow();void listen<string>('update-available',()=>{void checkNow();}).then(dispose=>{if(unmounted)dispose();else unlisten=dispose;});window.addEventListener('focus',checkOnReturn);document.addEventListener('visibilitychange',checkOnReturn);});
+onUnmounted(()=>{unmounted=true;unlisten?.();window.removeEventListener('focus',checkOnReturn);document.removeEventListener('visibilitychange',checkOnReturn);if(!busy.value)void update.value?.close();});
 </script>
 <template>
 <div v-if="update||error" class="beta-update" role="status">

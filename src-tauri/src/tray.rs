@@ -66,7 +66,10 @@ impl TrayState {
 }
 pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let on_notification=app.handle().clone();
- let _=app.notification().on_action(move |action|{if action.action_id()=="tap"{open_page(&on_notification,"settings");}});
+ let _=app.notification().on_action(move |action|{if action.action_id()=="tap"{
+  let update=action.notification().is_some_and(|notification|notification.id()==crate::updates::NOTIFICATION_ID || notification.title()==Some(crate::updates::NOTIFICATION_TITLE));
+  open_page(&on_notification,if update{"today"}else{"settings"});
+ }});
  let status=MenuItem::with_id(app,"tray-status","Connecting to capture…",false,None::<&str>)?;
  let today=MenuItem::with_id(app,"tray-today","Today: —",false,None::<&str>)?;
  let detail=MenuItem::with_id(app,"tray-detail","Agents: — · Mac: —",false,None::<&str>)?;
