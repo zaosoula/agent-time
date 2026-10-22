@@ -4,7 +4,8 @@ import type {Interval} from '../capture/events.ts';
 import type {ManualNote} from '../capture/store.ts';
 import {manualNoteTransport} from './transport.ts';
 import {unobservedGaps} from '../capture/gaps.ts';
-const props=defineProps<{date:string;intervals:Interval[]}>();
+const props=defineProps<{date:string;intervals:Interval[];revision:number}>();
+const emit=defineEmits<{changed:[]}>();
 const open=ref(false),notes=ref<ManualNote[]>([]),from=ref(''),to=ref(''),project=ref(''),note=ref(''),error=ref(''),busy=ref(false);
 let loadGeneration=0;
 const gaps=computed(()=>unobservedGaps(props.intervals));
@@ -12,13 +13,14 @@ const time=(seconds:number)=>new Date(seconds*1000).toLocaleTimeString(undefined
 const minutes=(seconds:number)=>`${Math.round(seconds/60)}m`;
 async function load(){const generation=++loadGeneration,date=props.date;if(!open.value)return;try{const next=await manualNoteTransport.list(date);if(generation===loadGeneration&&props.date===date&&open.value){notes.value=next;error.value='';}}catch(cause){if(generation===loadGeneration&&props.date===date)error.value=String(cause);}}
 watch([open,()=>props.date],()=>{notes.value=[];from.value='';to.value='';void load();});
+watch(()=>props.revision,()=>{void load();});
 function useGap(start:number,end:number){from.value=new Date(start*1000).toTimeString().slice(0,5);to.value=new Date(end*1000).toTimeString().slice(0,5);}
 async function add(){
  const date=props.date,start=new Date(`${date}T${from.value}:00`).getTime()/1000,end=new Date(`${date}T${to.value}:00`).getTime()/1000;
  if(!Number.isFinite(start)||!Number.isFinite(end)||end<=start){error.value='Choose a valid start and end on this day.';return;}
- busy.value=true;error.value='';try{const saved=await manualNoteTransport.add({start,end,project:project.value,note:note.value});if(props.date===date){notes.value.push(saved);notes.value.sort((a,b)=>a.start-b.start);note.value='';}}catch(cause){if(props.date===date)error.value=String(cause);}finally{busy.value=false;}
+ busy.value=true;error.value='';try{const saved=await manualNoteTransport.add({start,end,project:project.value,note:note.value});if(props.date===date){notes.value.push(saved);notes.value.sort((a,b)=>a.start-b.start);note.value='';emit('changed');}}catch(cause){if(props.date===date)error.value=String(cause);}finally{busy.value=false;}
 }
-async function remove(id:string){const date=props.date;busy.value=true;error.value='';try{await manualNoteTransport.remove(id);if(props.date===date)notes.value=notes.value.filter(item=>item.id!==id);}catch(cause){if(props.date===date)error.value=String(cause);}finally{busy.value=false;}}
+async function remove(id:string){const date=props.date;busy.value=true;error.value='';try{await manualNoteTransport.remove(id);if(props.date===date){notes.value=notes.value.filter(item=>item.id!==id);emit('changed');}}catch(cause){if(props.date===date)error.value=String(cause);}finally{busy.value=false;}}
 </script>
 <template>
 <section class="manual-notes">

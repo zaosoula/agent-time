@@ -16,6 +16,9 @@ const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
 const source=dirname(fileURLToPath(import.meta.url));
 const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','observation-retention.ts','orca.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
 const runtimeVersion=hash(process.version+files.map(f=>readFileSync(join(source,f),'utf8')).join('\n'));
+// First execution of a copied runtime can exceed five seconds on a busy Mac.
+// This only verifies installation; hook delivery keeps its separate short timeout.
+const runtimeSelfTestTimeout=15_000;
 const launcher=`#!/bin/sh
 root=\${0%/*}
 IFS= read -r version < "$root/current" || exit 0
@@ -59,19 +62,19 @@ export class HookInstallation{
   const parent=dirname(this.runtime);if(existsSync(parent)&&lstatSync(parent).isSymbolicLink())throw new Error('symlink runtime refused');
   mkdirSync(parent,{recursive:true,mode:0o700});
   if(existsSync(this.runtime)&&lstatSync(this.runtime).isSymbolicLink())throw new Error('symlink runtime refused');
-  const bundleReady=()=>{try{const node=join(this.runtime,'node');if(!lstatSync(node).isFile())return false;accessSync(node,constants.X_OK);if(!files.every(f=>lstatSync(join(this.runtime,f)).isFile()&&readFileSync(join(this.runtime,f),'utf8')===readFileSync(join(source,f),'utf8')))return false;const check=JSON.parse(execFileSync(node,[join(this.runtime,'hook-runner.ts'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));return check.ok===true&&check.node===process.version;}catch{return false;}};
+  const bundleReady=()=>{try{const node=join(this.runtime,'node');if(!lstatSync(node).isFile())return false;accessSync(node,constants.X_OK);if(!files.every(f=>lstatSync(join(this.runtime,f)).isFile()&&readFileSync(join(this.runtime,f),'utf8')===readFileSync(join(source,f),'utf8')))return false;const check=JSON.parse(execFileSync(node,[join(this.runtime,'hook-runner.ts'),'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));return check.ok===true&&check.node===process.version;}catch{return false;}};
   if(!bundleReady()){
    const temp=join(parent,'.'+runtimeVersion+'-'+randomUUID());mkdirSync(temp,{mode:0o700});
    copyFileSync(process.execPath,join(temp,'node'));chmodSync(join(temp,'node'),0o700);
    mkdirSync(join(temp,'sources'),{mode:0o700});for(const f of files)copyFileSync(join(source,f),join(temp,f));writeFileSync(join(temp,'package.json'),'{"type":"module"}\n',{mode:0o600});
    if(existsSync(this.runtime))renameSync(this.runtime,this.runtime+'-replaced-'+randomUUID());renameSync(temp,this.runtime);
   }
-  const check=JSON.parse(execFileSync(join(this.runtime,'node'),[join(this.runtime,'hook-runner.ts'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Hook runtime verification failed');
+  const check=JSON.parse(execFileSync(join(this.runtime,'node'),[join(this.runtime,'hook-runner.ts'),'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Hook runtime verification failed');
   const launchPath=join(parent,'launch.sh'),currentPath=join(parent,'current');
   for(const path of [launchPath,currentPath])if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('symlink hook launcher refused');
   if(!existsSync(launchPath)||readFileSync(launchPath,'utf8')!==launcher)privateWrite(launchPath,launcher);
   if(!existsSync(currentPath)||readFileSync(currentPath,'utf8')!==runtimeVersion+'\n')privateWrite(currentPath,runtimeVersion+'\n');
-  const launched=JSON.parse(execFileSync('/bin/sh',[launchPath,'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(launched.ok!==true||launched.node!==process.version)throw new Error('Hook launcher verification failed');
+  const launched=JSON.parse(execFileSync('/bin/sh',[launchPath,'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));if(launched.ok!==true||launched.node!==process.version)throw new Error('Hook launcher verification failed');
   void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});
   // Newly replaced copies get a grace period for hooks already in flight.
   // Recheck after that period even if Agent Time stays open for days.
@@ -80,7 +83,7 @@ export class HookInstallation{
   },65*60*1000).unref();
  }
  verify(){
-  if(this.ready()){const check=JSON.parse(execFileSync('/bin/sh',[join(dirname(this.runtime),'launch.sh'),'--self-test'],{encoding:'utf8',timeout:5000,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Installed hook runtime verification failed');}
+  if(this.ready()){const check=JSON.parse(execFileSync('/bin/sh',[join(dirname(this.runtime),'launch.sh'),'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Installed hook runtime verification failed');}
   return this.status();
  }
  private legacy(provider?:HookProvider){
