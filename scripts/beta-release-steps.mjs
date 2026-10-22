@@ -6,12 +6,13 @@ export function betaBundleEnvironment(env) {
 
 const sleep = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 function retryAppleTicket(action, wait) {
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const maxAttempts = 8;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try { return action(); }
     catch (error) {
       const details = `${error?.message || ''}\n${error?.stdout || ''}\n${error?.stderr || ''}`;
-      if (attempt === 2 || !details.includes('Code=-1005')) throw error;
-      wait(5000 * (attempt + 1));
+      if (attempt === maxAttempts - 1 || !details.includes('Code=-1005')) throw error;
+      wait(Math.min(30000, 5000 * (attempt + 1)));
     }
   }
 }
