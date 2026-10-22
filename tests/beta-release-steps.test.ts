@@ -72,6 +72,26 @@ test('transient Apple ticket connection loss retries staple validation', () => {
   assert.deepEqual(delays, [5000]);
 });
 
+test('a timed-out DMG wait resumes the existing Apple submission', () => {
+  const calls: string[] = [];
+  const delays: number[] = [];
+  const id = '06780ab0-ae4e-48b0-99c7-574b880cefa2';
+  const run = (_command: string, args: string[]) => {
+    calls.push(args[0]);
+    if (args[0] === 'notarytool' && args[1] === 'submit') {
+      throw new Error(`NSURLErrorDomain Code=-1001 https://appstoreconnect.apple.com/notary/v2/submissions/${id}?`);
+    }
+    if (args[0] === 'notarytool' && args[1] === 'info') {
+      assert.equal(args[2], id);
+      return JSON.stringify({status: calls.filter(call => call === 'notarytool').length === 2 ? 'In Progress' : 'Accepted'});
+    }
+    return '';
+  };
+  notarizeBetaDmg('/release/Agent Time.dmg', credentials, run, delay => delays.push(delay));
+  assert.deepEqual(calls, ['notarytool', 'notarytool', 'notarytool', 'stapler']);
+  assert.deepEqual(delays, [10000]);
+});
+
 test('staple validation fails immediately on a permanent error', () => {
   let calls = 0;
   const run = () => { calls++; throw new Error('Ticket not found'); };
