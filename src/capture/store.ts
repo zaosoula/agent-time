@@ -7,7 +7,7 @@ import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
-export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;}
+export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;eventIds:string[];}
 export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;}
 const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
@@ -133,7 +133,7 @@ export class EventStore {
     const rows=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions ORDER BY at DESC,rowid DESC LIMIT ?').all(limit);
     const latest=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();
     if(latest&&!rows.some(row=>row.id===latest.id))rows.push(latest);
-    return rows.map(row=>({id:String(row.id),at:Number(row.at),mode:row.mode as ReviewAction['mode'],projectPath:row.project_path===null?null:String(row.project_path),count:(JSON.parse(String(row.before_json)) as unknown[]).length,undoneAt:row.undone_at===null?null:Number(row.undone_at)}));
+    return rows.map(row=>{const pairs=JSON.parse(String(row.before_json)) as Array<{start:string;end:string}>;return {id:String(row.id),at:Number(row.at),mode:row.mode as ReviewAction['mode'],projectPath:row.project_path===null?null:String(row.project_path),count:pairs.length,undoneAt:row.undone_at===null?null:Number(row.undone_at),eventIds:[...new Set(pairs.flatMap(pair=>[pair.start,pair.end]))]};});
   }
   undoReviewAction(id:string):void{
     const action=this.db.prepare('SELECT id,before_json,after_json FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();

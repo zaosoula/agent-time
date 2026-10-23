@@ -13,6 +13,10 @@ const emit=defineEmits<{changed:[summary:Summary];clearFilter:[];note:[start:num
 const projects=ref<WebsiteProjectStatus|null>(null),choices=ref<Record<string,string>>({}),error=ref(''),notice=ref(''),pending=ref(''),expanded=ref(false),viewMode=ref<'needs'|'conflicts'|'reviewed'|'all'>('needs'),filterText=ref(''),limit=ref(30),selectedGroups=ref<Record<string,boolean>>({}),bulkProject=ref(''),focused=ref(''),rulePreview=ref('');
 const history=ref<ReviewAction[]>([]);
 const latestAction=computed(()=>history.value.find(action=>action.undoneAt===null));
+const dayEventIds=computed(()=>new Set(props.intervals.flatMap(interval=>interval.sourceEventIds)));
+const actionOnDay=(action:ReviewAction)=>action.eventIds.some(id=>dayEventIds.value.has(id));
+const dayHistory=computed(()=>history.value.filter(actionOnDay));
+const undoAvailable=computed(()=>Boolean(latestAction.value&&actionOnDay(latestAction.value)));
 const splitDraft=ref<{key:string;at:number;before:string;after:string}|null>(null);
 const ruleImpact=ref<WebsiteRuleImpact|null>(null);
 let projectsLoading=false;
@@ -41,7 +45,7 @@ const reviewStateKey=computed(()=>`agent-time.review:${props.date}`);
 watch(reviewStateKey,key=>{try{const saved=JSON.parse(sessionStorage.getItem(key)||'{}');expanded.value=Boolean(saved.expanded);viewMode.value=['needs','conflicts','reviewed','all'].includes(saved.viewMode)?saved.viewMode:'needs';filterText.value=typeof saved.filterText==='string'?saved.filterText:'';focused.value=typeof saved.focused==='string'?saved.focused:'';}catch{/* Ignore old review state. */}},{immediate:true});
 watch([expanded,viewMode,filterText,focused],()=>sessionStorage.setItem(reviewStateKey.value,JSON.stringify({expanded:expanded.value,viewMode:viewMode.value,filterText:filterText.value,focused:focused.value})));
 async function loadHistory(){try{history.value=await reviewTransport.history();}catch(cause){error.value=String(cause);}}
-async function undo(){if(!latestAction.value||pending.value)return;pending.value='undo';error.value='';try{emit('changed',await reviewTransport.undo(latestAction.value.id));await loadHistory();notice.value='Review decision undone.';}catch(cause){error.value=String(cause);}finally{pending.value='';}}
+async function undo(){if(!latestAction.value||!undoAvailable.value||pending.value)return;pending.value='undo';error.value='';try{emit('changed',await reviewTransport.undo(latestAction.value.id));await loadHistory();notice.value='Review decision undone.';}catch(cause){error.value=String(cause);}finally{pending.value='';}}
 function keyboard(event:KeyboardEvent){
  if(!expanded.value||event.target instanceof HTMLInputElement||event.target instanceof HTMLTextAreaElement)return;
  if((event.metaKey||event.ctrlKey)&&event.key.toLowerCase()==='z'){event.preventDefault();void undo();return;}
@@ -108,8 +112,8 @@ async function saveSplit(group:HumanReviewGroup){
    <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter app, website, project, or evidence"/>
    <div v-if="visible.length" class="human-review-bulk"><button :disabled="Boolean(pending)" @click="selectedGroups=Object.fromEntries(visible.map(group=>[id(group),true]))">Select visible</button><button :disabled="Boolean(pending)" @click="selectedGroups={}">Clear selection</button><span>{{bulkGroups.length}} selected · {{duration(selectedSeconds)}} affected</span><ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity"/><span v-if="bulkProject&&bulkGroups.length" class="bulk-impact">{{name(bulkProject)}}: {{duration(bulkProjectBefore)}} → {{duration(bulkProjectAfter)}} credited</span><button :disabled="Boolean(pending)||!bulkGroups.length||!bulkProject" @click="bulkAssign">Assign {{duration(selectedSeconds)}} to {{name(bulkProject)}}</button></div>
    <p v-if="error" class="human-review-error" role="alert">{{error}}</p>
-   <p v-if="notice" class="human-review-notice" role="status">{{notice}} <button v-if="latestAction" :disabled="Boolean(pending)" @click="undo">Undo ⌘Z</button></p>
-   <details v-if="history.length" class="human-review-history"><summary>Decision history · {{history.length}} recent changes</summary><ol><li v-for="action in history.slice(0,10)" :key="action.id">{{new Date(action.at*1000).toLocaleString()}} · {{action.count}} {{action.count===1?'interval':'intervals'}} {{historyLabel(action)}}{{action.undoneAt?' · undone':''}}</li></ol><button v-if="latestAction" :disabled="Boolean(pending)" @click="undo">Undo latest decision</button></details>
+   <p v-if="notice" class="human-review-notice" role="status">{{notice}} <button v-if="undoAvailable" :disabled="Boolean(pending)" @click="undo">Undo ⌘Z</button></p>
+   <details v-if="dayHistory.length" class="human-review-history"><summary>Decision history for {{date}} · {{dayHistory.length}} recent changes</summary><ol><li v-for="action in dayHistory.slice(0,10)" :key="action.id">{{new Date(action.at*1000).toLocaleString()}} · {{action.count}} {{action.count===1?'interval':'intervals'}} {{historyLabel(action)}}{{action.undoneAt?' · undone':''}}</li></ol><button v-if="undoAvailable" :disabled="Boolean(pending)" @click="undo">Undo latest decision</button><small v-else>Only the most recent decision across all days can be undone. Open its day to undo it.</small></details>
    <p class="human-review-shortcuts">Keyboard: J next unresolved · A assign selected project · U leave unassigned · ⌘Z undo</p>
    <div v-if="!visible.length" class="human-review-empty">{{filterText?'No activity matches this filter.':siteFilter?'No recorded activity for this site on the selected day.':viewMode==='all'?'No human activity recorded on this day.':viewMode==='reviewed'?'No reviewed activity on this day.':viewMode==='conflicts'?'No unresolved attribution conflicts on this day.':'Everything recorded on this day has a project or has been reviewed.'}}</div>
    <article v-for="group in visible" :id="`review-${id(group)}`" :key="id(group)" class="human-review-row" :class="{focused:focused===id(group)}" tabindex="0" @focus="focused=id(group)">

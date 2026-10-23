@@ -48,10 +48,14 @@ export function importSpool(directory: string, store: EventStore, accept:(event:
   const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink())throw new Error('Invalid hook spool directory');
   for(const file of readdirSync(directory).filter(f=>f.endsWith('.json')).sort()) {
     const path=join(directory,file);
+    let event:CaptureEvent|undefined;
     try {
       const info=lstatSync(path);if(!info.isFile() || info.isSymbolicLink() || info.size>262144) throw new Error('invalid spool file');
-      const event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;validateEvent(event);if(accept(event))store.put(event);unlinkSync(path);
+      event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;validateEvent(event);
     } catch { issues.push({reason:`Unreadable event record: ${file}`,source:'hook'}); }
+    if(!event)continue;
+    if(accept(event))store.put(event);
+    unlinkSync(path);
   }
   return issues;
 }

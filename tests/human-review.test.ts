@@ -39,6 +39,7 @@ test('a human interval can be assigned, left unassigned, undone, and restored af
   const history=collector.reviewHistory();
   assert.equal(history.length,1);
   assert.equal(history[0]?.mode,'assigned');
+  assert.deepEqual(history[0]?.eventIds,[first.eventId,second.eventId]);
   interval=collector.undoReviewAction(history[0]!.id).intervals.find(i=>i.state==='human');
   assert.equal(interval?.workspaceId,'observed::/original');
   assert.equal(collector.reviewHistory()[0]?.undoneAt!==null,true);

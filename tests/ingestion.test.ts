@@ -46,6 +46,19 @@ test('corrupt and partial spool files preserve valid events and replays', () => 
   assert.equal(spoolStatus(root).pending,1);
   spoolHook(event,root);importSpool(root,store);assert.equal(store.events().length,1);store.close();rmSync(root,{recursive:true});
 });
+test('a database write failure leaves hook events queued for retry', () => {
+  const root=mkdtempSync(join(tmpdir(),'ade-spool-write-'));
+  const event=normalizeHook('claude',{hook_event_name:'SessionStart',session_id:'retry-me'},{});
+  assert.equal(spoolHook(event,root),true);
+  const closed=new EventStore(':memory:');closed.close();
+  try{
+    assert.throws(()=>importSpool(root,closed),/not open/i);
+    assert.equal(spoolStatus(root).pending,1);
+    const healthy=new EventStore(':memory:');
+    try{assert.deepEqual(importSpool(root,healthy),[]);assert.equal(healthy.events().length,1);assert.equal(spoolStatus(root).pending,0);}
+    finally{healthy.close();}
+  }finally{rmSync(root,{recursive:true});}
+});
 test('hook spool rejects a directory symlink',()=>{
  const root=mkdtempSync(join(tmpdir(),'ade-spool-link-')),link=join(root,'spool'),target=join(root,'target'),store=new EventStore(':memory:');
  try{

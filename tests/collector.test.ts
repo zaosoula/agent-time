@@ -25,6 +25,44 @@ test('missing Orca CLI skips polling while agent hooks keep capturing',async()=>
  }
 });
 
+test('collector retries queued hooks after a temporary storage write failure',async()=>{
+ const {spoolHook,normalizeHook}=await import('../src/capture/hooks.ts');
+ const {setTimeout:sleep}=await import('node:timers/promises');
+ const path=mkdtempSync(join(tmpdir(),'ade-write-retry-')),c=new Collector(path,undefined,1);
+ c.updateSettings({macosActivity:false,orcaPolling:false,tokenUsage:false});
+ const put=c.store.put.bind(c.store);
+ try{
+  await c.start(10);
+  (c.store as any).put=()=>{throw new Error('simulated storage failure');};
+  assert.equal(spoolHook(normalizeHook('claude',{hook_event_name:'SessionStart',session_id:'retry-after-write'},{}),join(path,'spool')),true);
+  for(let i=0;i<100&&!c.status().lastError?.includes('storage failure');i++)await sleep(25);
+  assert.equal(c.status().running,true);
+  assert.match(c.status().lastError||'',/storage failure/);
+  (c.store as any).put=put;
+  for(let i=0;i<120&&!c.store.events().some(event=>event.sessionId==='retry-after-write');i++)await sleep(25);
+  assert.ok(c.store.events().some(event=>event.sessionId==='retry-after-write'));
+ }finally{(c.store as any).put=put;await c.close();rmSync(path,{recursive:true});}
+});
+
+test('a failed start or stop releases the collector lock for recovery',async()=>{
+ const {existsSync}=await import('node:fs');
+ const path=mkdtempSync(join(tmpdir(),'ade-lock-recovery-')),c=new Collector(path);
+ c.updateSettings({macosActivity:false,orcaPolling:false,tokenUsage:false});
+ const put=c.store.put.bind(c.store),lock=join(path,'capture.lock');
+ try{
+  (c.store as any).put=()=>{throw new Error('simulated storage failure');};
+  await assert.rejects(c.start(10),/simulated storage failure/);
+  assert.equal(existsSync(lock),false);
+  (c.store as any).put=put;
+  await c.start(10);
+  (c.store as any).put=()=>{throw new Error('simulated storage failure');};
+  const stopped=await c.stop();
+  assert.equal(stopped.running,false);
+  assert.match(stopped.lastError||'',/storage failure/);
+  assert.equal(existsSync(lock),false);
+ }finally{(c.store as any).put=put;await c.close();rmSync(path,{recursive:true});}
+});
+
 test('disabled browser page details are discarded while foreground activity remains',async()=>{
  const {writeFileSync,readFileSync}=await import('node:fs');const {setTimeout:sleep}=await import('node:timers/promises');
  const output=mkdtempSync(join(tmpdir(),'ade-browser-switch-')),helper=join(output,'probe'),argsFile=join(output,'args');

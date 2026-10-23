@@ -1,6 +1,7 @@
 import test from 'node:test';import assert from 'node:assert/strict';
 import {agentLoadSegments,creditedIntervals,groupTimelineProjects,visualIntervals} from '../src/ui/timeline-groups.ts';
 import type {Interval,Session} from '../src/capture/events.ts';
+import {sessionProject,workspaceProject} from '../src/ui/project-identity.ts';
 
 const interval=(start:number,end:number,state:Interval['state'],workspaceId?:string):Interval=>({start,end,state,workspaceId,proof:'inferred',sourceEventIds:[]});
 const session=(key:string,child=false):Session=>({key,title:key,child,state:'idle',lastObservedAt:0,seconds:child?3:7,observedSeconds:0,proof:'observed',workspaceId:'host::/projects/alpha'});
@@ -41,6 +42,13 @@ test('a project with only worktree-attributed human time has its own timeline ro
  const human=interval(10,20,'human','host::/projects/beta');
  const groups=groupTimelineProjects([],[human],new Map(),()=>[],()=>'',id=>id.split('/').at(-1)!);
  assert.equal(groups.length,1);assert.equal(groups[0].name,'beta');assert.equal(groups[0].humanSeconds,60);assert.equal(groups[0].sessions.length,0);
+});
+
+test('same-named project folders remain separate in the timeline',()=>{
+ const first={...session('first'),workspaceId:'host::/personal/app'};
+ const second={...session('second'),workspaceId:'host::/client/app'};
+ const groups=groupTimelineProjects([first,second],[interval(0,10,'human',first.workspaceId),interval(20,30,'human',second.workspaceId)],new Map(),()=>[interval(0,5,'grouped')],sessionProject,workspaceProject);
+ assert.deepEqual(groups.map(group=>[group.name,group.sessions.map(item=>item.key)]),[['/personal/app',['first']],['/client/app',['second']]]);
 });
 
 test('browser and Mac activity appear in distinct project child rows without doubling the parent',()=>{

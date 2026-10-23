@@ -56,7 +56,7 @@ export class Collector {
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
     this.output=output;mkdirSync(output,{recursive:true,mode:0o700});this.store=new EventStore(join(output,'events.sqlite'));
-    this.activityProbe=new MacActivityProbe(probe,()=>this.surfaces,()=>this.running,line=>this.onProbeLine(line),reason=>{this.lastError=reason;this.macError=reason;if(reason==='macOS helper exited')this.store.put(makeEvent('macos','coverage',{data:{reason}}));},()=>{this.macError='macOS activity helper not available';this.store.put(makeEvent('macos','coverage',{data:{reason:'macOS activity helper not available; human activity is unverified'}}));});
+    this.activityProbe=new MacActivityProbe(probe,()=>this.surfaces,()=>this.running,line=>this.onProbeLine(line),reason=>{this.lastError=reason;this.macError=reason;if(reason==='macOS helper exited')this.recordCoverage('macos',reason);},()=>{this.macError='macOS activity helper not available';this.recordCoverage('macos','macOS activity helper not available; human activity is unverified');});
     this.websiteResolver=new WebsiteResolver(output);
     this.privacy=new PrivacyExclusions(output);
     this.linear=new LinearConnection(output,keychainHelper(keychainPath));
@@ -278,6 +278,7 @@ export class Collector {
     return issues;
   }
   private onProbeLine(line:string){
+    let saving=false;
     try{
       const payload=JSON.parse(line);
       if(this.privacy.matches(payload,browserByBundle.has(String(payload.foregroundBundleId)))){
@@ -298,8 +299,12 @@ export class Collector {
       const foreground=pollers.map(source=>source.foreground?.(payload,event,this.focusedTabs,this.focusedTabsAt)).find(Boolean);
       this.macos={...payload,orcaAttribution:foreground?.attribution||null,websiteAttribution:event.data?.websiteAttribution||null};
       if(foreground?.accessibility)this.lastOrcaAccessibility=foreground.accessibility;
-      this.store.put(event);this.macError=null;
-    }catch{this.lastError='Invalid macOS observation';this.macError=this.lastError;}
+      saving=true;this.store.put(event);this.macError=null;
+    }catch(error){this.lastError=saving?`Could not save macOS observation: ${String(error)}`:'Invalid macOS observation';this.macError=this.lastError;}
+  }
+  private recordCoverage(source:'macos'|'capture',reason:string){
+    try{this.store.put(makeEvent(source,'coverage',{data:{reason}}));}
+    catch(error){this.lastError=`Could not save ${source} coverage: ${String(error)}`;if(source==='macos')this.macError=this.lastError;}
   }
   private refreshProbeTrust():Promise<void>|undefined{return this.activityProbe.refreshTrust(this.macos);}
   summary(maxAgeMs=0):Summary {
@@ -349,15 +354,22 @@ export class Collector {
       unlinkSync(lock);
     }
     writeFileSync(lock,String(process.pid),{mode:0o600,flag:'wx'});this.lockOwned=true;this.running=true;this.lastError=null;this.failedPoller=null;this.macError=null;
-    this.store.put(makeEvent('capture','capture_start'));
-    this.activityProbe.start();
-    this.syncUsage();
-    if(durationSeconds!==undefined)this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
-    await this.tick();return this.status();
+    try{
+      this.store.put(makeEvent('capture','capture_start'));
+      this.activityProbe.start();
+      this.syncUsage();
+      if(durationSeconds!==undefined)this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
+      await this.tick();return this.status();
+    }catch(error){
+      this.running=false;this.activityProbe.stop();clearTimeout(this.deadline);
+      if(existsSync(lock)&&readFileSync(lock,'utf8')===String(process.pid))unlinkSync(lock);
+      this.lockOwned=false;throw error;
+    }
   }
   private async tick() {
     if(!this.running)return;
-    this.inFlight=this.poll();await this.inFlight;this.inFlight=undefined;
+    this.inFlight=this.poll().catch(error=>{this.lastError=`Capture poll failed: ${String(error)}`;});
+    await this.inFlight;this.inFlight=undefined;
     if(this.running)this.timer=setTimeout(()=>{void this.tick();},this.interval*1000);
   }
   private refreshFocusedTabs(){
@@ -383,7 +395,7 @@ export class Collector {
       for(const issue of spoolIssues)if(!this.seenSpoolIssues.has(issue.reason))this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
       this.seenSpoolIssues=currentIssues;
       this.lastPoll=Date.now()/1000;this.lastError=pollingError;this.failedPoller=failedPoller;
-    }catch(error){this.lastError=String(error);this.failedPoller=null;this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}
+    }catch(error){this.lastError=String(error);this.failedPoller=null;this.recordCoverage('capture',this.lastError);}
   }
   stop():Promise<ReturnType<Collector['status']>> {
     if(this.stopping)return this.stopping;
@@ -397,9 +409,9 @@ export class Collector {
     this.activityProbe.stop();
     await this.usageReader.stop();
     await this.inFlight;
-    this.drainHooks();
-    this.store.put(makeEvent('capture','capture_stop'));
-    if(this.lockOwned){const lock=join(this.output,'capture.lock');if(existsSync(lock)&&readFileSync(lock,'utf8')===String(process.pid))unlinkSync(lock);this.lockOwned=false;}
+    try{this.drainHooks();this.store.put(makeEvent('capture','capture_stop'));}
+    catch(error){this.lastError=`Could not finish capture cleanly: ${String(error)}`;}
+    finally{if(this.lockOwned){const lock=join(this.output,'capture.lock');if(existsSync(lock)&&readFileSync(lock,'utf8')===String(process.pid))unlinkSync(lock);this.lockOwned=false;}}
     return this.status();
   }
   async close(){this.linear.close();await this.stop();await this.usageReader.close();this.store.close();}

@@ -17,13 +17,13 @@ export function sourceStates(input:SourceStateInput):SourceSnapshot[]{
   if(!enabled)return {...base,state:'off',action:'none',detail:'Disabled in Settings'};
   if(!input.running)return {...base,state:'paused',action:'resume',detail:'Resume capture'};
   if(source.id==='macos'&&input.macosExcluded)return {...base,state:'excluded',action:'none',detail:'This app or website is excluded from capture'};
-  if(source.id==='macos'&&input.macError)return {...base,state:'failed',action:'retry',detail:'macOS activity helper reported an error'};
+  if(source.id==='macos'&&input.macError)return {...base,state:'failed',action:'retry',detail:'Mac activity helper or storage reported an error'};
   if(source.id==='orca'&&!input.orcaAvailable)return {...base,state:'unavailable',action:'none',detail:'Orca is optional and is not installed'};
   if(source.kind==='browser'){
    if(!input.surfaces.macosActivity)return {...base,state:'unavailable',action:'none',detail:'Enable Mac activity to collect browser pages'};
    if(source.bundleId!==input.foregroundBundleId)return {...base,state:'waiting',action:'open-browser',detail:'Open this browser to verify website capture'};
    if(input.macosExcluded)return {...base,state:'excluded',action:'none',detail:'Foreground browser sample is excluded'};
-   if(input.macError)return {...base,state:'failed',action:'retry',detail:'macOS activity helper reported an error'};
+   if(input.macError)return {...base,state:'failed',action:'retry',detail:'Mac activity helper or storage reported an error'};
    if(!lastEvent||input.now-lastEvent>30)return {...base,state:'stale',action:'retry',detail:'No recent browser observation'};
    if(!input.browserDetailAvailable)return {...base,state:'permission-limited',action:input.macosTrusted===false?'grant-accessibility':'retry',detail:'Foreground browser detected, but no current page domain is available'};
    return {...base,state:'receiving',action:'none',detail:'Current browser page observed'};
