@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.11` candidate — 2026-10-23
+
+The candidate includes the polish fixes merged in [PR #24](https://github.com/zaosoula/agent-time/pull/24). Version declarations and [updater notes](0.2.0-beta.11-notes.md) are prepared together. Apple Silicon PR checks and a signed build-only GitHub run are required before publication. The public feed and installer remain at beta.10 until a separate publication decision.
+
+Local preparation passed 247 JavaScript tests, interface typecheck/build, and the five-file version consistency check. An isolated headless browser preview in light and dark mode had no page errors; the export dialog opened with focus inside and closed on Escape. This checks a browser preview, not packaged desktop behavior or a clean installation. Isolated automated recovery cases cover temporary storage write failure and queued-hook retry, failed or interrupted update download, failed install, failed preparation, and failed relaunch; live signed updater fault injection is still outstanding.
+
+The previous soak sampler recorded 356 samples over 30.66 elapsed hours, with 31 SQLite quick checks returning `ok`. The app PID was present in only 74 samples; its last observed PID was at 2026-10-22 21:13 UTC, and the last captured event was at 21:15 UTC. Event count stopped at 633,995. The sampler was stopped after this audit because it no longer measured a running app. This cannot establish a continuous 48-hour soak. Clean beta.11 installation, real beta.10-to-beta.11 OTA, isolated live updater failure injection, the provisional macOS 13.5 floor, and a fresh uninterrupted soak remain unverified.
+
 ## `0.2.0-beta.10` published — 2026-10-23
 
 [PR #21](https://github.com/zaosoula/agent-time/pull/21) merged persistent review history and undo, activity splitting, website rule impact previews, reviewed-day backlog, capture repair and delivery verification, an overlap explainer, large-history read reuse, and guided local recovery. [PR #22](https://github.com/zaosoula/agent-time/pull/22) advanced the five version declarations and added [updater notes](0.2.0-beta.10-notes.md). Both Apple Silicon PR checks passed. GitHub's Apple Silicon [release run 39972945388](https://github.com/zaosoula/agent-time/actions/runs/39972945388) built and published exact `main` commit `ae9e4be94b0a9aa39bfc524b0c7c9ecc1213570b` after candidate tests, Developer ID signing, app and DMG notarization, stapling, packaged collector checks, and staged metadata validation.
