@@ -1,8 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.10` candidate — 2026-10-23
+## `0.2.0-beta.10` published — 2026-10-23
 
-[PR #21](https://github.com/zaosoula/agent-time/pull/21) merged persistent review history and undo, activity splitting, website rule impact previews, reviewed-day backlog, capture repair and delivery verification, an overlap explainer, large-history read reuse, and guided local recovery. Its Apple Silicon PR checks passed; the local worktree passed 240 JavaScript tests, the frontend build, and 17 Rust tests. This candidate advances the five version declarations and adds [updater notes](0.2.0-beta.10-notes.md). Signing, notarization, publication, and independent public artifact checks are pending. The live feed remains beta.9 until those checks complete.
+[PR #21](https://github.com/zaosoula/agent-time/pull/21) merged persistent review history and undo, activity splitting, website rule impact previews, reviewed-day backlog, capture repair and delivery verification, an overlap explainer, large-history read reuse, and guided local recovery. [PR #22](https://github.com/zaosoula/agent-time/pull/22) advanced the five version declarations and added [updater notes](0.2.0-beta.10-notes.md). Both Apple Silicon PR checks passed. GitHub's Apple Silicon [release run 39972945388](https://github.com/zaosoula/agent-time/actions/runs/39972945388) built and published exact `main` commit `ae9e4be94b0a9aa39bfc524b0c7c9ecc1213570b` after candidate tests, Developer ID signing, app and DMG notarization, stapling, packaged collector checks, and staged metadata validation.
+
+The downloaded candidate DMG passed stapler validation, strict nested code-signature verification, and Gatekeeper assessment. Its mounted app reports `0.2.0-beta.10`, bundle ID `studio.ezyo.agenttime`, and arm64. The staged updater signature, notes, and manifest matched. Independent public downloads matched the staged DMG SHA-256 `27b692d69fb02fda24f17f13f46c8c434b2a5eefa409dde904c4fb6fe7738bd3` and updater archive SHA-256 `332fd3a634edcccc92392ca3e8281e6d88ad861436f14a6c4b1489d68218f57d`. The [public update feed](https://agent-time.ezyostudio.com/beta/latest.json) exactly matches the signed staged manifest, and the landing page links to the [beta.10 DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.10/Agent%20Time_0.2.0-beta.10_aarch64.dmg).
+
+Clean first installation and an actual in-app update to beta.10 have not been observed. The provisional macOS 13.5 floor, live update failure injection, and full 48-hour soak remain unconfirmed. The release owner requested publication with these limits explicit; no gate is marked complete on that basis alone.
 
 ## `0.2.0-beta.9` published — 2026-10-23
 
