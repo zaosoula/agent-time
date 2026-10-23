@@ -2,6 +2,14 @@ export interface TimeRange { start:number; end:number }
 
 export const minimumTimelineSpan=60;
 
+export function initialTimelineRange(dayStart:number,dayEnd:number,intervals:Array<TimeRange>,now:number,today:boolean):TimeRange{
+ let first:number|null=null,latest:number|null=null;
+ for(const interval of intervals){first=first===null?interval.start:Math.min(first,interval.start);latest=latest===null?interval.end:Math.max(latest,interval.end);}
+ const start=first!==null?Math.max(dayStart,first-3600):today?Math.max(dayStart,now-3*3600):Math.min(dayEnd,dayStart+8*3600);
+ const end=Math.max(start+6*3600,dayStart+18*3600,today?now:0,latest!==null?latest+3600:0);
+ return clampTimeRange({start,end},dayStart,dayEnd);
+}
+
 export function clampTimeRange(range:TimeRange,dayStart:number,dayEnd:number,minSpan=minimumTimelineSpan):TimeRange{
  const daySpan=dayEnd-dayStart;
  const span=Math.min(daySpan,Math.max(minSpan,range.end-range.start));

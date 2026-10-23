@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {clampTimeRange,panTimeRange,timelineTicks,zoomTimeRange} from '../src/ui/timeline-viewport.ts';
+import {clampTimeRange,initialTimelineRange,panTimeRange,timelineTicks,zoomTimeRange} from '../src/ui/timeline-viewport.ts';
 
 const day=24*3600;
 test('pointer-centered zoom keeps the pointed time in place',()=>{
@@ -11,6 +11,12 @@ test('range handles and panning stay inside the day',()=>{
  assert.deepEqual(clampTimeRange({start:day-30,end:day+30},0,day),{start:day-60,end:day});
  assert.deepEqual(panTimeRange({start:3600,end:7200},-7200,0,day),{start:0,end:3600});
  assert.deepEqual(panTimeRange({start:3600,end:7200},day,0,day),{start:day-3600,end:day});
+});
+test('initial range includes late activity on 25-hour days and fits 23-hour days',()=>{
+ assert.deepEqual(initialTimelineRange(0,25*3600,[{start:23*3600,end:24.5*3600}],0,false),{start:19*3600,end:25*3600});
+ const short=initialTimelineRange(0,23*3600,[],22*3600,true);
+ assert.ok(short.start>=0&&short.end<=23*3600);
+ assert.ok(short.end>=22*3600);
 });
 test('tick spacing becomes finer as the timeline zooms',()=>{
  const quarterHour=timelineTicks({start:0,end:900});

@@ -26,17 +26,17 @@ async function install(){
  },()=>invoke('resume_after_failed_update'));}
  catch(e){error.value=`Update failed: ${String(e)}`;progress.value='';busy.value=false;}
 }
-function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>60_000)void checkNow();}
+function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>3_600_000)void checkNow();}
 onMounted(()=>{void checkNow();void listen<string>('update-available',()=>{void checkNow();}).then(dispose=>{if(unmounted)dispose();else unlisten=dispose;});window.addEventListener('focus',checkOnReturn);document.addEventListener('visibilitychange',checkOnReturn);});
 onUnmounted(()=>{unmounted=true;unlisten?.();window.removeEventListener('focus',checkOnReturn);document.removeEventListener('visibilitychange',checkOnReturn);if(!busy.value)void update.value?.close();});
 </script>
 <template>
 <div v-if="update||error" class="beta-update" role="status">
  <template v-if="update"><strong>Agent Time {{update.version}} is available</strong><span>{{update.body||'A beta update is ready.'}}</span><button :disabled="busy" @click="install">{{busy?progress:'Install and restart'}}</button></template>
- <template v-else><button :disabled="busy" @click="checkNow">Retry update check</button></template>
- <span v-if="error" class="beta-update-error" role="alert">{{error}}</span>
+ <template v-else><span>Update check unavailable. Capture continues normally.</span><button :disabled="busy" @click="checkNow">Retry</button><details class="beta-update-error"><summary>Technical details</summary>{{error}}</details></template>
+ <span v-if="error&&update" class="beta-update-error" role="alert">{{error}}</span>
 </div>
 </template>
 <style scoped>
-.beta-update{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}.beta-update span{flex:1;min-width:180px;color:var(--muted)}.beta-update button{padding:7px 10px;border-radius:6px;background:var(--blue);color:white}.beta-update button:disabled{opacity:.6}.beta-update-error{color:#d07878!important;flex-basis:100%}
+.beta-update{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}.beta-update span{flex:1;min-width:180px;color:var(--muted)}.beta-update button{padding:7px 10px;border-radius:6px;background:var(--blue);color:white}.beta-update button:disabled{opacity:.6}.beta-update-error{color:var(--muted)!important;flex-basis:100%}
 </style>

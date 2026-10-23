@@ -38,8 +38,8 @@ function dismiss(){dismissed.value=true;localStorage.setItem(key.value,'1');}
 <template>
 <section v-if="stage!=='checking'&&!dismissed" class="setup-verification" :class="{complete:stage==='verified'}" aria-label="Capture setup verification">
  <CheckCircle2 v-if="stage==='verified'" :size="18"/><CircleHelp v-else :size="18"/>
- <div><strong>{{stage==='verified'?'Capture verified':stage==='paused'?'Capture is paused':stage==='disabled'?'Choose what to capture':stage==='hooks'?'Connect your agent hooks':'Waiting for the first captured event'}}</strong>
-  <p v-if="stage==='verified'">Every enabled source has delivered an event; the latest was at {{new Date(lastEvent*1000).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'})}}. Check Capture health if activity stops appearing.</p>
+ <div><strong>{{stage==='verified'?'Initial delivery confirmed':stage==='paused'?'Capture is paused':stage==='disabled'?'Choose what to capture':stage==='hooks'?'Connect your agent hooks':'Waiting for the first captured event'}}</strong>
+  <p v-if="stage==='verified'">Every enabled source has a recorded event; the latest was at {{new Date(lastEvent*1000).toLocaleString()}}. This confirms initial setup, not ongoing delivery. Check Capture health for current event ages.</p>
   <p v-else-if="stage==='paused'">Start capture to check that events reach Agent Time.</p>
   <p v-else-if="stage==='disabled'">Enable Mac activity or an agent in Settings, then verify one real observation.</p>
   <p v-else-if="stage==='hooks'">Install or repair the enabled agent hooks. In Codex, trust Agent Time in /hooks.</p>
