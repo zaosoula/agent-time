@@ -8,6 +8,7 @@ import type {WebsiteResolution,WebsiteRule} from '../capture/website-resolver.ts
 import type {LinearStatus} from '../capture/linear.ts';
 import type {PrivacyExclusion} from '../capture/privacy-exclusions.ts';
 import type {WeeklyReview} from '../capture/weekly.ts';
+import type {WorkOutcomes} from '../capture/work-outcomes.ts';
 import type {ArchivePreview,ManualNote} from '../capture/store.ts';
 import type {StorageUsage} from '../capture/storage-usage.ts';
 import type {CaptureCheck} from '../capture/capture-checks.ts';
@@ -26,6 +27,7 @@ export async function request<T>(method:string,params:Record<string,unknown>={})
 }
 export const privacyTransport={list:()=>request<PrivacyExclusion[]>('privacy_exclusions'),replace:(entries:PrivacyExclusion[])=>request<PrivacyExclusion[]>('privacy_exclusions_set',{entries})};
 export const weeklyTransport={review:(startDate:string)=>request<WeeklyReview>('weekly_review',{startDate})};
+export const workOutcomeTransport={list:(date:string)=>request<WorkOutcomes>('work_outcomes',{date})};
 export const manualNoteTransport={list:(date:string)=>request<ManualNote[]>('manual_notes',{date}),add:(note:Omit<ManualNote,'id'|'createdAt'>)=>request<ManualNote>('manual_note_add',note),remove:(id:string)=>request<boolean>('manual_note_remove',{id})};
 export const archiveTransport={
  export:()=>request<{path:string;bytes:number;events:number}>('export_archive'),

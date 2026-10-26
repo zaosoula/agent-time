@@ -35,6 +35,8 @@ For a browser development preview, run `npm run native:build` then `npm run dev`
 - **Agent time:** union of observed hook/tool and sampled running intervals for each independent root/Dispatch, then summed across roots. Counted intervals suspend after the configurable Agent idle threshold without a new agent event (five minutes by default); tracked actions still group across gaps of up to one minute. It is execution wall time, not CPU time or billable time. Native child time is separate from parent-inclusive duration.
 - **Elapsed activity:** union of human and agent activity intervals, counting overlaps once.
 
+**My day → Local work evidence** reads nearby commits from local branches and observed worktree HEADs only when opened. It shows Git commit time and subject beside the project's recorded Mac and agent time. A commit is context, not proof that a particular agent made it; this view does not change attribution, store code, or contact a Git remote. If Git is unavailable, time capture continues normally.
+
 Orca polling supplies inferred intervals between matching fresh observations, sampled approximately every five seconds. Hook execution boundaries supply observed intervals. Missing events, sleep, interruptions and long observation gaps remain unknown rather than becoming overnight time. Source events retain uncertainty; this is not yet billing-ready timesheet software.
 
 ## Hook setup
