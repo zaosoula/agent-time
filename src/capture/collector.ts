@@ -24,6 +24,7 @@ import {diagnosticSummary} from './diagnostics.ts';
 import {sourceStates} from './source-state.ts';
 import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {weeklyReview} from './weekly.ts';
+import {localWorkOutcomes} from './work-outcomes.ts';
 import {storageUsage} from './storage-usage.ts';
 import {captureChecks} from './capture-checks.ts';
 import {recoveryNotices} from './recovery.ts';
@@ -338,6 +339,7 @@ export class Collector {
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
   weeklyReview(startDate:string){return weeklyReview(this.summary(15000),startDate);}
+  workOutcomes(date:string){return localWorkOutcomes(this.summary(15000),date);}
   manualNotes(date:string){return this.store.manualNotes(date);}
   addManualNote(input:Omit<ManualNote,'id'|'createdAt'>){this.requireOwner();return this.store.addManualNote(input);}
   removeManualNote(id:string){this.requireOwner();return this.store.removeManualNote(id);}
