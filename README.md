@@ -4,6 +4,8 @@ A local macOS time-capture preview for Orca agent sessions. Built with Vue 3, Ty
 
 The app shows a daily timeline, projects, agent sessions and orchestration identities, capture health, and CSV export. Session details retain Run, Task, Dispatch and provider session IDs. Data stays on this Mac; prompts, tool output and keystroke contents are not stored. When enabled, selected Orca tab titles are stored as activity metadata.
 
+The bundled [local MCP server](docs/mcp.md) lets Claude Code and Codex query captured time and report current task context without changing measured totals.
+
 ## Run the desktop app
 
 Development prerequisites: Node 26.9+, npm, Rust/Cargo and Xcode.

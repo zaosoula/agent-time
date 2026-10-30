@@ -11,6 +11,7 @@
     "pricing:check": "node scripts/check-pricing.ts",
     "typecheck": "vue-tsc --noEmit",
     "capture": "node src/capture/cli.ts",
+    "mcp": "node src/mcp/server.ts",
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
     "tauri": "tauri",
@@ -21,12 +22,14 @@
   },
   "dependencies": {
     "@lucide/vue": "1.55.0",
+    "@modelcontextprotocol/server": "^2.4.0",
     "@tauri-apps/api": "2.12.3",
     "@tauri-apps/plugin-deep-link": "^2.6.2",
     "@tauri-apps/plugin-process": "^2.4.0",
     "@tauri-apps/plugin-updater": "^2.14.0",
     "reka-ui": "2.11.0",
-    "vue": "3.5.43"
+    "vue": "3.5.43",
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@tauri-apps/cli": "2.12.2",

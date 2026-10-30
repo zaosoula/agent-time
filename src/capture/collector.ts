@@ -6,6 +6,7 @@ import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool,spoolStatus } from './hooks.ts';
+import {validAgentReport} from '../mcp/report.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -272,7 +273,7 @@ export class Collector {
     return enabled===true;
   }
   private drainHooks(){
-    const accept=(event:CaptureEvent)=>this.acceptHook(event);
+    const accept=(event:CaptureEvent)=>event.source==='agent_report'?validAgentReport(event):this.acceptHook(event);
     const issues=importSpool(join(this.output,'spool'),this.store,accept);
     for(const path of this.legacyHookSpools){
       try{const info=lstatSync(path);if(info.isDirectory()&&!info.isSymbolicLink())issues.push(...importSpool(path,this.store,accept));}catch{/* Retired legacy directories can be removed after existing sessions exit. */}
