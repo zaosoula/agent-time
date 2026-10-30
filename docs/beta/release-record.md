@@ -1,8 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.12` candidate — 2026-10-30
+## `0.2.0-beta.12` published — 2026-10-31
 
-This candidate contains the human-time reconciliation flow in [updater notes](0.2.0-beta.12-notes.md): one review queue, day-level acceptance of captured project matches, aligned weekly reviewed time, guided future website rules, direct split edits, and safe undo of older independent decisions. Local preparation passed the five-file version check, 254 Node tests, the UI typecheck/build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 17 locked Rust tests. Apple Silicon signing and notarization, protected publication, and public artifact checks are recorded below as they complete. The beta.11 limitations on clean installation, live OTA recovery, the provisional macOS 13.5 floor, and uninterrupted soak remain open unless this candidate supplies new evidence.
+This release contains the human-time reconciliation flow in [updater notes](0.2.0-beta.12-notes.md): one review queue, day-level acceptance of captured project matches, aligned weekly reviewed time, guided future website rules, direct split edits, and safe undo of older independent decisions. Local preparation passed the five-file version check, 254 Node tests, the UI typecheck/build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 17 locked Rust tests.
+
+GitHub's Apple Silicon [release run 41140476471](https://github.com/zaosoula/agent-time/actions/runs/41140476471) built exact `main` commit `8fbf5ae21d3004f0e1b4d21061d95f97a2f12c28`, passed candidate checks, Developer ID signing, notarization, staging, and protected publication. Before publication approval, the downloaded artifact's version, commit, notes, manifest, and signature matched the staged metadata. Its DMG passed stapler validation; the mounted arm64 app passed strict nested code-signature verification and Gatekeeper assessment as a notarized Developer ID app. The release owner requested publication and the protected `beta-publication` review approved the candidate with the open limits recorded below.
+
+Independently downloaded public files matched the staged DMG SHA-256 `509d3a3221211a130cef27da898b0d73f35b46cfd86d922cc67af79781b9cb53` and updater archive SHA-256 `4452d468718b05a4f9ba5174d9abbba552657aa77497a6c63fa9c933e99b8ce7`; the hosted signature matched the staged signature. The [public update feed](https://agent-time.ezyostudio.com/beta/latest.json) exactly matches the staged `darwin-aarch64` manifest, and the [landing page](https://agent-time.ezyostudio.com/) offers the [beta.12 DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.12/Agent%20Time_0.2.0-beta.12_aarch64.dmg). Clean installation, live OTA recovery, the provisional macOS 13.5 floor, and an uninterrupted beta.12 soak remain unverified.
 
 ## `0.2.0-beta.11` published — 2026-10-24
 
