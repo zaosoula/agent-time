@@ -2,7 +2,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,unlinkSync,writeFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
-import {join} from 'node:path';
+import {basename,isAbsolute,join} from 'node:path';
 import {homedir} from 'node:os';
 import {makeEvent,type CaptureEvent,type Interval,type Summary} from '../capture/events.ts';
 import {minuteCreditSeconds,summarize} from '../capture/correlate.ts';
@@ -57,18 +57,25 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
   const idle=Number(settings.humanIdleMinutes),agentIdle=Number(settings.agentIdleMinutes);
   const summary=applyHumanDecisions(summarize(events,{idleThreshold:Number.isFinite(idle)&&idle>0?idle*60:300,agentIdleThreshold:Number.isFinite(agentIdle)&&agentIdle>0?agentIdle*60:300}),decisions,splits);
   const clipped=summary.intervals.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(from,i.start),end:Math.min(to,i.end)}));
+  const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
+  for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}
+  for(const session of summary.sessions)if(session.cwd&&session.sessionId)sessionPaths.set(`${session.provider}:${session.sessionId}`,session.cwd);
   for(const interval of clipped)if(interval.state==='grouped'&&!interval.sourceEventIds.length){
-   interval.sourceEventIds=[...new Set(summary.intervals.filter(source=>source.state!=='grouped'&&source.state!=='human'&&source.sessionId===interval.sessionId&&source.provider===interval.provider&&source.end>interval.start&&source.start<interval.end).flatMap(source=>source.sourceEventIds))].slice(0,32);
+   interval.sourceEventIds=[...new Set((underlying.get(`${interval.provider}:${interval.sessionId}`)||[]).filter(source=>source.end>interval.start&&source.start<interval.end).flatMap(source=>source.sourceEventIds))].slice(0,32);
   }
   for(const interval of clipped)if(!interval.workspaceId&&interval.sessionId){
-   const session=summary.sessions.find(s=>s.sessionId===interval.sessionId&&s.provider===interval.provider);
-   if(session?.cwd)interval.workspaceId=`session::${projectPathFromWorktree(session.cwd)}`;
+   const cwd=sessionPaths.get(`${interval.provider}:${interval.sessionId}`);
+   if(cwd)interval.workspaceId=`session::${projectPathFromWorktree(cwd)}`;
   }
   const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(lookback));
   return {summary:{...summary,intervals:clipped},events,from,to,truncatedBefore};
  }finally{db.close();}
 }
-const projectOf=(i:Interval)=>i.workspaceId?.split('::').at(-1)||null;
+const canonicalProject=(value:string)=>{const path=value.includes('::')?value.split('::').at(-1)||value:value;return isAbsolute(path)?projectPathFromWorktree(path):path;};
+const projectOf=(i:Interval)=>{const path=i.workspaceId?.split('::').at(-1);return path?canonicalProject(path):null;};
+const issueKeys=(value:unknown):string[]=>typeof value==='string'?[...new Set([...value.slice(0,512).matchAll(/\b([a-z][a-z0-9]{1,15}-[1-9][0-9]{0,8})\b/gi)].map(match=>match[1]!.toUpperCase()).filter(key=>issuePattern.test(key)))]:[];
+const workspaceIssueFromId=(workspaceId?:string)=>{const path=workspaceId?.split('::').at(-1);const keys=issueKeys(path?basename(path):'');return keys.length===1?keys[0]!:null;};
+const workspaceIssue=(i:Interval)=>workspaceIssueFromId(i.workspaceId);
 const agentInterval=(i:Interval)=>!i.child&&i.state==='grouped';
 const humanInterval=(i:Interval)=>i.state==='human';
 const spans=(items:Interval[])=>items.map(i=>[i.start,i.end] as [number,number]);
@@ -76,39 +83,64 @@ const publicInterval=<T extends Interval>(i:T)=>{const {browserUrl,browserTitle,
 function totals(items:Interval[]){
  const human=items.filter(humanInterval),agent=items.filter(agentInterval),bySession=new Map<string,Interval[]>();
  for(const interval of agent){const key=JSON.stringify([interval.hostId,interval.dispatchId||interval.sessionId]);const group=bySession.get(key)||[];group.push(interval);bySession.set(key,group);}
- return {humanActiveSeconds:minuteCreditSeconds(spans(human)),agentRunningSeconds:[...bySession.values()].reduce((sum,group)=>sum+minuteCreditSeconds(spans(group)),0),overlapMergedWallSeconds:minuteCreditSeconds(spans([...human,...agent]))};
+ const humanActiveSeconds=minuteCreditSeconds(spans(human)),agentRunningSeconds=[...bySession.values()].reduce((sum,group)=>sum+minuteCreditSeconds(spans(group)),0),overlapMergedWallSeconds=minuteCreditSeconds(spans([...human,...agent]));
+ return {humanActiveSeconds,agentRunningSeconds,overlapMergedWallSeconds,hours:{humanActive:(humanActiveSeconds/3600).toFixed(2),agentRunning:(agentRunningSeconds/3600).toFixed(2),overlapMergedWall:(overlapMergedWallSeconds/3600).toFixed(2)}};
 }
 function perDay(rows:ReturnType<typeof inRange>){
  const pieces:typeof rows=[];
  for(const row of rows){let cursor=row.start;while(cursor<row.end){const date=dateOf(cursor),next=new Date(dateStart(date)*1000);next.setDate(next.getDate()+1);const end=Math.min(row.end,next.getTime()/1000);pieces.push({...row,start:cursor,end});cursor=end;}}
  return [...new Set(pieces.map(i=>dateOf(i.start)))].sort().map(date=>({date,...totals(pieces.filter(i=>dateOf(i.start)===date))}));
 }
-function contextFor(i:Interval,events:CaptureEvent[]):CaptureEvent|null{
+interface AttributionIndex {bySession:Map<string,CaptureEvent[]>;byProject:Map<string,CaptureEvent[]>;pageKeys:Map<string,string[]>;}
+function attributionIndex(events:CaptureEvent[]):AttributionIndex{
+ const index:AttributionIndex={bySession:new Map(),byProject:new Map(),pageKeys:new Map()};
+ for(const event of events){
+  if(event.source==='agent_report'&&event.kind==='work_context'){
+   if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`,rows=index.bySession.get(key)||[];rows.push(event);index.bySession.set(key,rows);}
+   if(typeof event.data?.project==='string'){const project=canonicalProject(event.data.project),rows=index.byProject.get(project)||[];rows.push(event);index.byProject.set(project,rows);}
+  }
+  if(event.source==='macos'&&event.kind==='activity'){
+   const keys=[...new Set([...issueKeys(event.data?.browserUrl),...issueKeys(event.data?.browserTitle),...issueKeys(event.data?.orcaSelectedTabTitle),...issueKeys(event.data?.tabTitle)])];
+   if(keys.length)index.pageKeys.set(event.eventId,keys);
+  }
+ }
+ for(const rows of [...index.bySession.values(),...index.byProject.values()])rows.sort((a,b)=>a.observedAt-b.observedAt);
+ return index;
+}
+function recent(rows:CaptureEvent[],at:number,maxAge:number):CaptureEvent[]{
+ let low=0,high=rows.length;
+ while(low<high){const middle=(low+high)>>>1;if(rows[middle]!.observedAt<=at)low=middle+1;else high=middle;}
+ const result:CaptureEvent[]=[];
+ for(let index=low-1;index>=0&&at-rows[index]!.observedAt<=maxAge;index--)result.push(rows[index]!);
+ return result;
+}
+function contextFor(i:Interval,index:AttributionIndex):CaptureEvent|null{
  if(!i.sessionId||!i.provider)return null;
- const contexts=events.filter(e=>e.source==='agent_report'&&e.kind==='work_context'&&e.provider===i.provider&&e.sessionId===i.sessionId&&e.observedAt<=i.start&&i.start-e.observedAt<=43200);
- return contexts.at(-1)||null;
+ return recent(index.bySession.get(`${i.provider}:${i.sessionId}`)||[],i.start,43200)[0]||null;
 }
-function suggestedIssue(i:Interval,events:CaptureEvent[]):{issueKey:string;evidence:string[]}|null{
+function suggestedIssue(i:Interval,index:AttributionIndex):{issueKey:string;evidence:string[]}|null{
  if(i.state!=='human')return null;
- const project=projectOf(i);if(!project)return null;
- const candidates=events.filter(e=>e.source==='agent_report'&&e.kind==='work_context'&&e.data?.project===project&&typeof e.data?.issueKey==='string'&&e.observedAt<=i.end&&i.start-e.observedAt<=1800);
- const keys=[...new Set(candidates.map(e=>String(e.data?.issueKey)))];
- return keys.length===1?{issueKey:keys[0]!,evidence:candidates.filter(e=>e.data?.issueKey===keys[0]).map(e=>e.eventId)}:null;
+ const project=projectOf(i),candidates=project?recent(index.byProject.get(project)||[],i.end,1800).filter(e=>typeof e.data?.issueKey==='string'):[];
+ const pageKeys=i.sourceEventIds.flatMap(id=>index.pageKeys.get(id)||[]);
+ const keys=[...new Set([...candidates.map(e=>String(e.data?.issueKey)),...pageKeys])];
+ return keys.length===1?{issueKey:keys[0]!,evidence:[...candidates.filter(e=>e.data?.issueKey===keys[0]).map(e=>e.eventId),...i.sourceEventIds.filter(id=>index.pageKeys.get(id)?.includes(keys[0]!))]}:null;
 }
-function attribution(i:Interval,events:CaptureEvent[]){
- const context=contextFor(i,events),issueKey=context?.data?.issueKey;
- const observedProject=projectOf(i),reportedProject=typeof context?.data?.project==='string'?context.data.project:null;
- const suggestion=suggestedIssue(i,events);
- return {issueKey:typeof issueKey==='string'?issueKey:null,project:observedProject||reportedProject,
+function attribution(i:Interval,index:AttributionIndex){
+ const context=contextFor(i,index),issueKey=context?.data?.issueKey;
+ const observedProject=projectOf(i),reportedProject=typeof context?.data?.project==='string'?canonicalProject(context.data.project):null;
+ const suggestion=suggestedIssue(i,index);
+ const reportedKey=typeof issueKey==='string'?issueKey:null,pathKey=workspaceIssue(i),issueConflict=Boolean(reportedKey&&pathKey&&reportedKey!==pathKey);
+ return {issueKey:issueConflict?null:reportedKey||pathKey,project:observedProject||reportedProject,
   suggestedIssueKey:suggestion?.issueKey||null,
-  confidence:context&&reportedProject&&observedProject&&reportedProject!==observedProject?'conflict':i.userAttribution==='assigned'?'manual':observedProject?'observed-project':context?'agent-reported':'unattributed',
+  confidence:issueConflict||context&&reportedProject&&observedProject&&reportedProject!==observedProject?'conflict':i.userAttribution==='assigned'?'manual':pathKey?'workspace-key':observedProject?'observed-project':context?'agent-reported':'unattributed',
+  attributionRule:issueConflict?'conflicting-issue-signals':reportedKey?'agent-reported-session':pathKey?'orca-worktree-name':suggestion?'page-key-suggestion':'none',
   evidence:context?[...i.sourceEventIds,context.eventId]:suggestion?[...i.sourceEventIds,...suggestion.evidence]:i.sourceEventIds};
 }
-const inRange=(s:Snapshot)=>s.summary.intervals.map(i=>({...i,...attribution(i,s.events)}));
+const inRange=(s:Snapshot)=>{const index=attributionIndex(s.events);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
 export function timeForIssue(s:Snapshot,issueKey:string){
  if(!issuePattern.test(issueKey))throw new Error('Invalid Linear issue key');
- const rows=inRange(s).filter(i=>i.issueKey===issueKey);
- const suggestions=inRange(s).filter(i=>i.state==='human'&&i.suggestedIssueKey===issueKey);
+ const attributed=inRange(s),rows=attributed.filter(i=>i.issueKey===issueKey);
+ const suggestions=attributed.filter(i=>i.state==='human'&&i.suggestedIssueKey===issueKey);
  const days=perDay(rows);
  return {issueKey,...totals(rows),days,intervals:rows.slice(0,500).map(publicInterval),moreIntervals:rows.length>500,
   suggestedHumanSeconds:totals(suggestions).humanActiveSeconds,suggestedHumanIntervals:suggestions.slice(0,100).map(publicInterval),moreSuggestedHumanIntervals:suggestions.length>100,
@@ -116,19 +148,39 @@ export function timeForIssue(s:Snapshot,issueKey:string){
 }
 export function timeForProject(s:Snapshot,project:string){
  if(!project||project.length>512)throw new Error('Invalid project');
- const rows=inRange(s).filter(i=>i.project===project);
+ const normalized=canonicalProject(project),rows=inRange(s).filter(i=>i.project===normalized);
  const issues=[...new Set(rows.map(i=>i.issueKey||'Unmatched'))].sort().map(issueKey=>({issueKey,...totals(rows.filter(i=>(i.issueKey||'Unmatched')===issueKey))}));
- return {project,...totals(rows),issues,days:perDay(rows),captureCoverage:coverage(s),truncatedBefore:s.truncatedBefore};
+ return {project:normalized,...totals(rows),issues,days:perDay(rows),captureCoverage:coverage(s),truncatedBefore:s.truncatedBefore};
 }
 export function timeline(s:Snapshot,project?:string){
- const rows=inRange(s).filter(i=>!project||i.project===project);
- return {intervals:rows.slice(0,500).map(publicInterval),moreIntervals:rows.length>500,totals:totals(rows),truncatedBefore:s.truncatedBefore};
+ const normalized=project?canonicalProject(project):undefined,rows=inRange(s).filter(i=>!normalized||i.project===normalized);
+ const measured=rows.filter(i=>humanInterval(i)||agentInterval(i));
+ const boundaries=measured.flatMap((row,index)=>[{at:row.start,index,open:true},{at:row.end,index,open:false}]).sort((a,b)=>a.at-b.at||Number(a.open)-Number(b.open));
+ const active=new Set<number>(),segments:Array<{start:number;end:number;state:'human'|'agent'|'both';agentCount:number;projects:string[];issueKeys:string[];sourceEventIds:string[]}>=[];
+ let previous:number|null=null,segmentCount=0;
+ for(let offset=0;offset<boundaries.length;){const at=boundaries[offset]!.at;
+  if(previous!==null&&at>previous&&active.size){
+   segmentCount++;
+   if(segments.length<500){const current=[...active].map(index=>measured[index]!),human=current.some(humanInterval),agents=current.filter(agentInterval);
+    segments.push({start:previous,end:at,state:human&&agents.length?'both':human?'human':'agent',agentCount:agents.length,projects:[...new Set(current.map(i=>i.project).filter((value):value is string=>Boolean(value)))],issueKeys:[...new Set(current.map(i=>i.issueKey).filter((value):value is string=>Boolean(value)))],sourceEventIds:[...new Set(current.flatMap(i=>i.evidence))].slice(0,32)});
+   }
+  }
+  while(offset<boundaries.length&&boundaries[offset]!.at===at){const boundary=boundaries[offset++]!;if(boundary.open)active.add(boundary.index);else active.delete(boundary.index);}
+  previous=at;
+ }
+ return {segments,moreSegments:segmentCount>500,totals:totals(rows),truncatedBefore:s.truncatedBefore};
 }
 export function sessions(s:Snapshot,filter:{provider?:string;workspace?:string;issueKey?:string}){
+ const index=attributionIndex(s.events),firstSeen=new Map<string,number>();
+ for(const event of s.events)if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
  const rows=s.summary.sessions.filter(session=>session.lastObservedAt>=s.from&&session.lastObservedAt<s.to&&
   (!filter.provider||session.provider===filter.provider)&&(!filter.workspace||session.workspaceId===filter.workspace));
- const filtered=filter.issueKey?rows.filter(session=>s.events.some(e=>e.source==='agent_report'&&e.kind==='work_context'&&e.provider===session.provider&&e.sessionId===session.sessionId&&e.data?.issueKey===filter.issueKey)):rows;
- return {sessions:filtered.slice(0,500).map(({title,cwd,...safe})=>safe),moreSessions:filtered.length>500};
+ const linked=rows.map(session=>{
+  const key=`${session.provider}:${session.sessionId}`,workspaceKey=workspaceIssueFromId(session.workspaceId),reportedKeys=[...new Set((index.bySession.get(key)||[]).map(e=>e.data?.issueKey).filter((value):value is string=>typeof value==='string'))];
+  return {session,issueKeys:[...new Set([...(workspaceKey?[workspaceKey]:[]),...reportedKeys])],firstObservedAt:firstSeen.get(key)||null};
+ });
+ const filtered=filter.issueKey?linked.filter(row=>row.issueKeys.includes(filter.issueKey!)):linked;
+ return {sessions:filtered.slice(0,500).map(({session,issueKeys,firstObservedAt})=>{const {title,cwd,...safe}=session;return {...safe,firstObservedAt,issueKeys};}),moreSessions:filtered.length>500,truncatedBefore:s.truncatedBefore};
 }
 export function coverage(s:Snapshot){
  const issues=[...s.summary.coverage,...s.summary.unresolved].filter(i=>i.observedAt===undefined||i.observedAt>=s.from&&i.observedAt<s.to);
@@ -167,16 +219,17 @@ export function coverageForRange(output:string,from:number,to:number){
 }
 export function unattributed(s:Snapshot){
  const groups=groupHumanReview(s.summary.intervals).filter(g=>['unmatched','conflict'].includes(humanReviewState(g)));
+ const index=attributionIndex(s.events);
  return {groups:groups.slice(0,500).map(g=>{
   const interval=s.summary.intervals.find(i=>i.state==='human'&&i.start>=g.start&&i.end<=g.end);
-  return {start:g.start,end:g.end,seconds:g.seconds,label:interval?.browserDomain||interval?.foregroundName||interval?.foregroundBundleId||'Mac activity',projectPath:g.projectPath||null,reason:humanReviewState(g),eventIds:g.pairs.flat(),suggestedIssueKey:interval?suggestedIssue(interval,s.events)?.issueKey||null:null};
+  return {start:g.start,end:g.end,seconds:g.seconds,label:interval?.browserDomain||interval?.foregroundName||interval?.foregroundBundleId||'Mac activity',projectPath:g.projectPath||null,reason:humanReviewState(g),eventIds:g.pairs.flat(),suggestedIssueKey:interval?suggestedIssue(interval,index)?.issueKey||null:null};
  }),moreGroups:groups.length>500};
 }
 export function explainAttribution(s:Snapshot,eventId:string){
  if(!uuidPattern.test(eventId))throw new Error('Invalid event ID');
  const interval=s.summary.intervals.find(i=>i.sourceEventIds.includes(eventId));
  if(!interval)return {eventId,found:false};
- return {eventId,found:true,interval:publicInterval({...interval,...attribution(interval,s.events)}),note:'Reported context is a suggestion; only observed intervals contribute measured time'};
+ return {eventId,found:true,interval:publicInterval({...interval,...attribution(interval,attributionIndex(s.events))}),note:'Reported context is a suggestion; only observed intervals contribute measured time'};
 }
 
 export function readReport(output:string,requestId:string):CaptureEvent|null{

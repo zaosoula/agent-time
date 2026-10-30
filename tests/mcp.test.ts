@@ -7,7 +7,7 @@ import {randomUUID} from 'node:crypto';
 import {createServer} from 'node:net';
 import {EventStore} from '../src/capture/store.ts';
 import {makeEvent} from '../src/capture/events.ts';
-import {coverage,coverageForRange,currentWork,explainAttribution,inferRecentSession,snapshot,timeForIssue,timeForProject,timeline,unattributed,verifyPort,writeReport} from '../src/mcp/data.ts';
+import {coverage,coverageForRange,currentWork,explainAttribution,inferRecentSession,sessions,snapshot,timeForIssue,timeForProject,timeline,unattributed,verifyPort,writeReport} from '../src/mcp/data.ts';
 import {validAgentReport} from '../src/mcp/report.ts';
 import {importSpool} from '../src/capture/hooks.ts';
 
@@ -52,7 +52,8 @@ test('reported issue context links only its own hook session; parallel agent wal
   assert.equal(issue.agentRunningSeconds,60);
   assert.equal(project.agentRunningSeconds,120);
   assert.equal(project.overlapMergedWallSeconds,60);
-  assert.equal(timeline(s).intervals.filter(i=>i.state==='grouped').length,2);
+  assert.equal(timeline(s).segments.filter(i=>i.state==='agent').length,1);
+  assert.equal(timeline(s).segments[0]?.agentCount,2);
   assert.equal(explainAttribution(s,s.summary.intervals.find(i=>i.state==='grouped')!.sourceEventIds[0]!).found,true);
   assert.equal(coverage(s).issues.length,0);
   assert.equal(unattributed(s).groups.length,0);
@@ -142,6 +143,37 @@ test('new context is queryable before the collector imports its spool event',()=
   put(store,'prompt_submitted',at,{...who,hostId:'local',terminalHandle:'pending-terminal'});
   put(store,'response_stop',at+60,{...who,hostId:'local',terminalHandle:'pending-terminal'});
   assert.equal(timeForIssue(snapshot(output,at-3,at+90),'EZYO-863').agentRunningSeconds,60);
+  store.close();
+ }finally{rmSync(output,{recursive:true,force:true});}
+});
+
+test('Orca worktree keys link measured time while Linear page keys stay suggestions',()=>{
+ const output=fixture();try{
+  const store=new EventStore(join(output,'events.sqlite')),at=today(),workspaceId='test::/tmp/kuva/.orca/workspaces/ezyo-655-backoffice';
+  const who={provider:'claude',sessionId:'historic',workspaceId,hostId:'local',terminalHandle:'term'};
+  put(store,'prompt_submitted',at,who);put(store,'response_stop',at+60,who);
+  for(const offset of [70,80])store.put(makeEvent('macos','activity',{observedAt:at+offset,monotonicAt:at+offset,data:{foregroundBundleId:'com.brave.Browser',idleSeconds:0,browserDomain:'linear.app',browserUrl:'https://linear.app/ezyostudio/issue/EZYO-666/example',browserTitle:'EZYO-666'}}));
+  const s=snapshot(output,at-1,at+100);
+  assert.equal(timeForIssue(s,'EZYO-655').agentRunningSeconds,60);
+  assert.equal(timeForProject(s,'/tmp/kuva').agentRunningSeconds,60);
+  assert.equal(timeForProject(s,workspaceId).agentRunningSeconds,60);
+  assert.equal(sessions(s,{issueKey:'EZYO-655'}).sessions.length,1);
+  assert.equal(timeForIssue(s,'EZYO-666').humanActiveSeconds,0);
+  assert.ok(timeForIssue(s,'EZYO-666').suggestedHumanSeconds>0);
+  assert.equal(unattributed(s).groups[0]?.suggestedIssueKey,'EZYO-666');
+  store.close();
+ }finally{rmSync(output,{recursive:true,force:true});}
+});
+
+test('timeline merges overlapping human and agent activity into a both segment',()=>{
+ const output=fixture();try{
+  const store=new EventStore(join(output,'events.sqlite')),at=today(),who={provider:'codex',sessionId:'s',workspaceId:'test::/tmp/project',hostId:'local',terminalHandle:'t'};
+  put(store,'prompt_submitted',at,who);put(store,'response_stop',at+60,who);
+  for(const offset of [10,20])store.put(makeEvent('macos','activity',{observedAt:at+offset,monotonicAt:at+offset,workspaceId:who.workspaceId,data:{foregroundBundleId:'com.stablyai.orca',idleSeconds:0,tabId:'tab-a'}}));
+  const result=timeline(snapshot(output,at-1,at+70));
+  assert.ok(result.segments.some(segment=>segment.state==='both'));
+  assert.equal(result.totals.agentRunningSeconds,60);
+  assert.equal(result.totals.overlapMergedWallSeconds,60);
   store.close();
  }finally{rmSync(output,{recursive:true,force:true});}
 });
