@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.12` candidate — 2026-10-30
+
+This candidate contains the human-time reconciliation flow in [updater notes](0.2.0-beta.12-notes.md): one review queue, day-level acceptance of captured project matches, aligned weekly reviewed time, guided future website rules, direct split edits, and safe undo of older independent decisions. Local preparation passed the five-file version check, 254 Node tests, the UI typecheck/build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 17 locked Rust tests. Apple Silicon signing and notarization, protected publication, and public artifact checks are recorded below as they complete. The beta.11 limitations on clean installation, live OTA recovery, the provisional macOS 13.5 floor, and uninterrupted soak remain open unless this candidate supplies new evidence.
+
 ## `0.2.0-beta.11` published — 2026-10-24
 
 The candidate includes the polish fixes merged in [PR #24](https://github.com/zaosoula/agent-time/pull/24). [PR #25](https://github.com/zaosoula/agent-time/pull/25) advanced the version declarations and added [updater notes](0.2.0-beta.11-notes.md); its Apple Silicon checks passed. GitHub's Apple Silicon [build-only run 40031109735](https://github.com/zaosoula/agent-time/actions/runs/40031109735) built exact `main` commit `559aba1608cc5ed1496fb415ba6b97d2e01efdbf`, passed 247 JavaScript and 17 Rust tests, signed and notarized the app and DMG, and uploaded a private candidate. The publish job was skipped. The owner then requested public beta.11 publication.

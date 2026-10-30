@@ -7,7 +7,7 @@ import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
-export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;eventIds:string[];}
+export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;canUndo:boolean;eventIds:string[];}
 export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;}
 const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
@@ -129,17 +129,24 @@ export class EventStore {
       this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
-  reviewActions(limit=30):ReviewAction[]{
-    const rows=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions ORDER BY at DESC,rowid DESC LIMIT ?').all(limit);
-    const latest=this.db.prepare('SELECT id,at,mode,project_path,before_json,undone_at FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();
-    if(latest&&!rows.some(row=>row.id===latest.id))rows.push(latest);
-    return rows.map(row=>{const pairs=JSON.parse(String(row.before_json)) as Array<{start:string;end:string}>;return {id:String(row.id),at:Number(row.at),mode:row.mode as ReviewAction['mode'],projectPath:row.project_path===null?null:String(row.project_path),count:pairs.length,undoneAt:row.undone_at===null?null:Number(row.undone_at),eventIds:[...new Set(pairs.flatMap(pair=>[pair.start,pair.end]))]};});
+  reviewActions(limit=100):ReviewAction[]{
+    const rows=this.db.prepare('SELECT id,at,mode,project_path,before_json,after_json,undone_at FROM review_actions ORDER BY at DESC,rowid DESC LIMIT ?').all(limit);
+    const touched=new Set<string>();
+    return rows.map(row=>{
+      const pairs=JSON.parse(String(row.before_json)) as Array<{start:string;end:string}>,keys=pairs.map(pair=>`${pair.start}:${pair.end}`),active=row.undone_at===null;
+      const canUndo=active&&!keys.some(key=>touched.has(key))&&JSON.stringify(this.reviewSnapshot(pairs.map(pair=>[pair.start,pair.end])))===String(row.after_json);
+      if(active)for(const key of keys)touched.add(key);
+      return {id:String(row.id),at:Number(row.at),mode:row.mode as ReviewAction['mode'],projectPath:row.project_path===null?null:String(row.project_path),count:pairs.length,undoneAt:active?null:Number(row.undone_at),canUndo,eventIds:[...new Set(pairs.flatMap(pair=>[pair.start,pair.end]))]};
+    });
   }
   undoReviewAction(id:string):void{
-    const action=this.db.prepare('SELECT id,before_json,after_json FROM review_actions WHERE undone_at IS NULL ORDER BY at DESC,rowid DESC LIMIT 1').get();
-    if(!action||action.id!==id)throw new Error('Only the latest review change can be undone');
+    const action=this.db.prepare('SELECT rowid,id,at,before_json,after_json FROM review_actions WHERE id=? AND undone_at IS NULL').get(id);
+    if(!action)throw new Error('Review decision is no longer available');
     type Snapshot=Array<{start:string;end:string;decision:{mode:'assigned'|'unassigned';project_path:string|null}|null;split:{split_at:number;before_path:string|null;after_path:string|null}|null}>;
     const before=JSON.parse(String(action.before_json)) as Snapshot,after=JSON.parse(String(action.after_json)) as Snapshot;
+    const keys=new Set(before.map(item=>`${item.start}:${item.end}`));
+    const later=this.db.prepare('SELECT before_json FROM review_actions WHERE undone_at IS NULL AND (at>? OR (at=? AND rowid>?))').all(action.at,action.at,action.rowid);
+    if(later.some(row=>(JSON.parse(String(row.before_json)) as Snapshot).some(item=>keys.has(`${item.start}:${item.end}`))))throw new Error('A later review changed this activity; reset it from the activity row instead');
     this.db.exec('BEGIN');
     try{
       if(JSON.stringify(this.reviewSnapshot(after.map(item=>[item.start,item.end])))!==JSON.stringify(after))throw new Error('Review data changed; refresh before undoing');

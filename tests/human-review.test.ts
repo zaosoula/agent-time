@@ -5,7 +5,8 @@ import {join} from 'node:path';
 import {tmpdir} from 'node:os';
 import {Collector} from '../src/capture/collector.ts';
 import {makeEvent} from '../src/capture/events.ts';
-import {groupHumanReview} from '../src/capture/human-review.ts';
+import {groupHumanReview,humanReviewState} from '../src/capture/human-review.ts';
+import {EventStore} from '../src/capture/store.ts';
 import {summaryForDate} from '../src/capture/daily.ts';
 import {reviewedCsv,weeklyReview} from '../src/capture/weekly.ts';
 
@@ -68,6 +69,23 @@ test('a human interval can be assigned, left unassigned, undone, and restored af
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });
 
+test('an existing split can be changed directly and the edit can be undone',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-split-edit-'));
+ const collector=new Collector(output);
+ try{
+  const now=Date.now()/1000;
+  const first=makeEvent('macos','activity',{observedAt:now,monotonicAt:1,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}});
+  const second=makeEvent('macos','activity',{observedAt:now+6,monotonicAt:7,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}});
+  collector.store.put(first);collector.store.put(second);
+  const pair:[string,string]=[first.eventId,second.eventId];
+  collector.setHumanGroupSplit([pair],now+2,output);
+  const edited=collector.setHumanGroupSplit([pair],now+4,undefined,output);
+  assert.equal(edited.intervals.find(i=>i.state==='human'&&i.reviewSegment==='after')?.workspaceId,`manual::${output}`);
+  collector.undoReviewAction(collector.reviewHistory()[0]!.id);
+  assert.equal(collector.summary().intervals.find(i=>i.state==='human'&&i.reviewSegment==='before')?.workspaceId,`manual::${output}`);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
 test('review groups nearby observations of one page but keeps separate pages separate',()=>{
  const base={state:'human' as const,proof:'inferred' as const,browserDomain:'example.com',foregroundName:'Brave'};
  const groups=groupHumanReview([
@@ -78,6 +96,41 @@ test('review groups nearby observations of one page but keeps separate pages sep
  assert.equal(groups.length,2);
  assert.deepEqual(groups[1]?.pairs,[['a','b'],['b','c']]);
  assert.deepEqual(groups[0]?.pairs,[['c','d']]);
+ assert.equal(humanReviewState(groups[0]!),'unmatched');
+});
+
+test('review queue distinguishes captured project evidence from a user decision',()=>{
+ const base={key:'x',start:0,end:60,seconds:60,label:'Editor',detail:'Editor',pairs:[['a','b']] as Array<[string,string]>};
+ assert.equal(humanReviewState({...base,projectPath:'/project'}),'captured');
+ assert.equal(humanReviewState({...base,attributionSource:'conflict',projectPath:'/project'}),'conflict');
+ assert.equal(humanReviewState({...base,projectPath:'/project',userAttribution:'assigned'}),'reviewed');
+});
+
+test('an older independent review decision can be undone without reverting newer work',()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-review-undo-'));
+ const store=new EventStore(join(output,'events.sqlite'));
+ try{
+  store.setHumanDecisions([['a','b']],'assigned','/project-a');
+  store.setHumanDecisions([['c','d']],'assigned','/project-b');
+  const actions=store.reviewActions(),older=actions[1]!;
+  assert.equal(older.canUndo,true);
+  store.undoReviewAction(older.id);
+  assert.deepEqual(store.humanDecisions().map(item=>item.projectPath),['/project-b']);
+  store.setHumanDecisions([['c','d']],'unassigned',null);
+  assert.equal(store.reviewActions().find(item=>item.id===actions[0]!.id)?.canUndo,false);
+  assert.throws(()=>store.undoReviewAction(actions[0]!.id),/later review changed/);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('an older decision cannot be undone after a later action touches the same observation',()=>{
+ const store=new EventStore(':memory:');
+ try{
+  store.setHumanDecisions([['a','b']],'assigned','/project-a');
+  const older=store.reviewActions()[0]!;
+  store.setHumanDecisions([['a','b'],['c','d']],'assigned','/project-a');
+  assert.equal(store.reviewActions().find(action=>action.id===older.id)?.canUndo,false);
+  assert.throws(()=>store.undoReviewAction(older.id),/later review changed/);
+ }finally{store.close();}
 });
 
 test('day review survives restart and reopens only when that day changes',async()=>{
@@ -85,9 +138,13 @@ test('day review survives restart and reopens only when that day changes',async(
  let collector=new Collector(output);
  try{
   const at=new Date(2026,9,22,10).getTime()/1000,date='2026-10-22';
-  collector.store.put(makeEvent('macos','activity',{observedAt:at,monotonicAt:1,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}}));
-  collector.store.put(makeEvent('macos','activity',{observedAt:at+10,monotonicAt:11,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}}));
+  const first=makeEvent('macos','activity',{observedAt:at,monotonicAt:1,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}});
+  const second=makeEvent('macos','activity',{observedAt:at+10,monotonicAt:11,data:{idleSeconds:0,foregroundBundleId:'com.example.Editor'}});
+  collector.store.put(first);collector.store.put(second);
   assert.equal(collector.dayReviewStatus(date).completedAt,null);
+  assert.equal(collector.dayReviewStatus(date).pendingGroups,1);
+  assert.throws(()=>collector.markDayReview(date),/remaining activity groups/);
+  collector.setHumanDecision([[first.eventId,second.eventId]],'unassigned');
   assert.equal(collector.markDayReview(date).stale,false);
   await collector.close();collector=new Collector(output);
   assert.equal(collector.dayReviewStatus(date).stale,false);
@@ -95,5 +152,22 @@ test('day review survives restart and reopens only when that day changes',async(
   assert.equal(collector.dayReviewStatus(date).stale,false);
   collector.store.put(makeEvent('capture','coverage',{observedAt:at+20,monotonicAt:13,data:{reason:'This day has a gap'}}));
   assert.equal(collector.dayReviewStatus(date).stale,true);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('one day review accepts already captured project matches',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-day-captured-'));
+ const collector=new Collector(output);
+ try{
+  const at=new Date(2026,9,22,10).getTime()/1000,date='2026-10-22';
+  for(const offset of [0,10])collector.store.put(makeEvent('macos','activity',{observedAt:at+offset,monotonicAt:1+offset,workspaceId:'observed::/project',data:{idleSeconds:0,foregroundBundleId:'com.brave.Browser',browserDomain:'example.com',browserUrl:'https://example.com/page'}}));
+  assert.equal(collector.dayReviewStatus(date).pendingGroups,0);
+  assert.equal(collector.dayReviewStatus(date).capturedGroups,1);
+  assert.equal(collector.markDayReview(date).stale,false);
+  const week=collector.weeklyReview('2026-10-19');
+  assert.equal(week.projects.find(row=>row.project==='/project')?.reviewedSeconds,10);
+  collector.store.put(makeEvent('capture','coverage',{observedAt:at+20,monotonicAt:21,data:{reason:'New gap'}}));
+  collector.summary();
+  assert.equal(collector.weeklyReview('2026-10-19').projects.find(row=>row.project==='/project')?.reviewedSeconds,0);
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });

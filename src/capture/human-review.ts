@@ -36,6 +36,13 @@ export interface HumanReviewGroup {
  pairs:Array<[string,string]>;
 }
 
+export type HumanReviewState='unmatched'|'conflict'|'captured'|'reviewed';
+export function humanReviewState(group:HumanReviewGroup):HumanReviewState {
+ if(group.userAttribution)return 'reviewed';
+ if(group.attributionSource==='conflict')return 'conflict';
+ return group.projectPath?'captured':'unmatched';
+}
+
 function identity(interval:Interval):string {
  return interval.browserUrl||interval.browserOrigin||interval.browserDomain||interval.tabId||interval.tabTitle||interval.foregroundBundleId||interval.foregroundName||'Unknown app';
 }

@@ -16,7 +16,7 @@ import {HookInstallation,type HookProvider} from './hook-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
 import {WebsiteResolver,websiteKey,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
-import {applyHumanDecisions,groupHumanReview,humanIntervalKey} from './human-review.ts';
+import {applyHumanDecisions,groupHumanReview,humanIntervalKey,humanReviewState} from './human-review.ts';
 import {unobservedGaps} from './gaps.ts';
 import {agents,browsers,pollers,agentById,sourceMetadata,browserByBundle} from './sources/registry.ts';
 import {outdatedHookTargets} from './hook-warning.ts';
@@ -191,12 +191,12 @@ export class Collector {
   }
   reviewHistory(){return this.store.reviewActions();}
   private dayReviewSnapshot(date:string,source:Summary){
-    const day=summaryForDate(source,date),groups=groupHumanReview(day.intervals),unmatched=groups.filter(group=>!group.projectPath&&!group.userAttribution),conflicts=groups.filter(group=>group.attributionSource==='conflict'&&!group.userAttribution),gaps=unobservedGaps(day.intervals);
+    const day=summaryForDate(source,date),groups=groupHumanReview(day.intervals),pending=groups.filter(group=>['unmatched','conflict'].includes(humanReviewState(group))),captured=groups.filter(group=>humanReviewState(group)==='captured'),unmatched=pending.filter(group=>humanReviewState(group)==='unmatched'),conflicts=pending.filter(group=>humanReviewState(group)==='conflict'),gaps=unobservedGaps(day.intervals);
     const start=new Date(`${date}T00:00:00`),end=new Date(start);end.setDate(end.getDate()+1);
     const issues=dailyCaptureIssues(source,start.getTime()/1000,end.getTime()/1000);
     const fingerprint=createHash('sha256').update(JSON.stringify({intervals:day.intervals,issues,notes:this.store.manualNotes(date)})).digest('hex');
     const saved=this.store.dayReview(date);
-    return {date,completedAt:saved?.completedAt||null,stale:Boolean(saved&&saved.fingerprint!==fingerprint),hasActivity:day.intervals.length>0,unmatchedSeconds:unmatched.reduce((total,group)=>total+group.seconds,0),conflicts:conflicts.length,gaps:gaps.length,fingerprint};
+    return {date,completedAt:saved?.completedAt||null,stale:Boolean(saved&&saved.fingerprint!==fingerprint),hasActivity:day.intervals.length>0,pendingGroups:pending.length,capturedGroups:captured.length,unmatchedSeconds:unmatched.reduce((total,group)=>total+group.seconds,0),conflicts:conflicts.length,gaps:gaps.length,fingerprint};
   }
   dayReviewStatus(date:string){
     const summary=this.summary(),start=new Date(`${date}T00:00:00`),earliest=new Date(start),latest=new Date(start);
@@ -211,6 +211,7 @@ export class Collector {
   markDayReview(date:string){
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
     const snapshot=this.dayReviewSnapshot(date,this.summary());if(!snapshot.hasActivity)throw new Error('There is no captured activity to review for this day');
+    if(snapshot.pendingGroups)throw new Error(`Review ${snapshot.pendingGroups} remaining activity groups before marking this day reviewed`);
     this.store.markDayReview(date,snapshot.fingerprint);return this.dayReviewStatus(date);
   }
   undoReviewAction(id:string):Summary{
@@ -338,7 +339,16 @@ export class Collector {
     this.summaryCache={revision,safeRevision:this.store.incrementalSafetyRevision(),at:Date.now(),value:summary,rowid,lastActivity,maxObservedAt,eventsRef:new WeakRef(events),eventsRowid:rowid};return summary;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
-  weeklyReview(startDate:string){return weeklyReview(this.summary(15000),startDate);}
+  weeklyReview(startDate:string){
+    const summary=this.summary(15000),start=new Date(`${startDate}T00:00:00`),accepted=new Set<string>();
+    if(!Number.isNaN(start.getTime()))for(let offset=0;offset<7;offset++){
+      const day=new Date(start);day.setDate(day.getDate()+offset);
+      const date=`${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
+      const snapshot=this.dayReviewSnapshot(date,summary);
+      if(snapshot.completedAt&&!snapshot.stale&&!snapshot.pendingGroups)accepted.add(date);
+    }
+    return weeklyReview(summary,startDate,accepted);
+  }
   workOutcomes(date:string){return localWorkOutcomes(this.summary(15000),date);}
   manualNotes(date:string){return this.store.manualNotes(date);}
   addManualNote(input:Omit<ManualNote,'id'|'createdAt'>){this.requireOwner();return this.store.addManualNote(input);}
