@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.14` candidate — 2026-10-31
+
+This candidate reduces the desktop day payload, collector summary allocations, and local MCP date-query memory, and gives the unfocused desktop a one-minute summary cadence. See [updater notes](0.2.0-beta.14-notes.md) and the [memory audit](../performance/2026-10-31-memory-audit.md). On one read-only 986,286-event backup, the isolated collector day request fell from 11.1 seconds and 1,388 MB peak RSS to 7.4 seconds and 1,051 MB peak RSS; full and day summaries matched the previous JSON hashes exactly. The full suite passed 272 JavaScript tests, UI build and typecheck, production dependency audit, sidecar build, and 18 locked Rust tests locally. Signed build, notarization, and hosted-byte verification are pending the Apple Silicon release workflow.
+
+The full-history reducer still requires a versioned causal checkpoint to lower peak memory further. The minimum macOS floor and clean-machine soak limits recorded below remain unconfirmed. These limits do not change the captured history in this candidate.
+
 ## `0.2.0-beta.13` published — 2026-10-31
 
 This release adds the local MCP server and optional Claude Code/Codex setup described in [updater notes](0.2.0-beta.13-notes.md). The release build checks that MCP code and dependencies are present in the updater archive and that the bundled server answers an MCP initialize request. Local preparation passed the five-file version check, 269 JavaScript tests, the UI build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests.
