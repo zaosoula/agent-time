@@ -27,6 +27,12 @@ test('reported timeline reads one validated day only',async()=>{
  assert.deepEqual(await dispatchRequest({id:'reported',method:'reported_work',params:{date:'2026-10-31'}},c),{id:'reported',result:[{date:'2026-10-31'}]});
  for(const params of [{date:'yesterday'},{date:'2026-02-31'},{date:'2026-10-31',path:'/tmp'},{date:42}])assert.ok('error' in await dispatchRequest({id:'reported',method:'reported_work',params},c));
 });
+test('Claude status line setup accepts only discovered target IDs',async()=>{
+ const targetId='0123456789abcdef',controller={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),claudeStatusLineStatus:()=>({targets:[]}),installClaudeStatusLine:(id:string)=>id,removeClaudeStatusLine:(id:string)=>id};
+ assert.deepEqual(await dispatchRequest({id:'line',method:'claude_status_line_status'},controller),{id:'line',result:{targets:[]}});
+ assert.deepEqual(await dispatchRequest({id:'line',method:'claude_status_line_install',params:{targetId}},controller),{id:'line',result:targetId});
+ for(const params of [{targetId:'../settings'},{targetId,command:'bad'},{}])assert.ok('error' in await dispatchRequest({id:'line',method:'claude_status_line_install',params},controller));
+});
 test('human review accepts bounded event pairs and rejects extra or malformed decisions',async()=>{
  let changes=0;
  const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),setHumanDecision:(pairs:Array<[string,string]>,mode:string,path?:string)=>{changes++;return {pairs,mode,path};}};

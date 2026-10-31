@@ -16,6 +16,7 @@ import {appendActivitySummary} from './incremental-summary.ts';
 import {UsageReader} from '../usage/reader.ts';
 import {HookInstallation,type HookProvider} from './hook-installation.ts';
 import {McpInstallation} from './mcp-installation.ts';
+import {ClaudeStatusLineInstallation} from './claude-statusline-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
 import {WebsiteResolver,websiteKey,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
@@ -43,7 +44,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number;eventsRef?:WeakRef<CaptureEvent[]>;eventsRowid?:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;private mcpInstallation:McpInstallation;
+  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number;eventsRef?:WeakRef<CaptureEvent[]>;eventsRowid?:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;private mcpInstallation:McpInstallation;private claudeStatusLine:ClaudeStatusLineInstallation;
   private interval:number; private runId?:string; private reader:typeof callOrca;
   private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
   private lastOrcaAccessibility:AccessibilityCapture|null=null;
@@ -74,7 +75,7 @@ export class Collector {
       }
     }
     this.surfaceHistory=this.store.settingsEvents().sort((a,b)=>a.observedAt-b.observedAt);
-    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.mcpInstallation=new McpInstallation(output);this.syncUsage();
+    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.mcpInstallation=new McpInstallation(output);this.claudeStatusLine=new ClaudeStatusLineInstallation(output);this.syncUsage();
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
@@ -87,6 +88,9 @@ export class Collector {
   mcpStatus(){return this.mcpInstallation.status();}
   installMcp(provider:'claude'|'codex',targetIds?:string[]){return this.mcpInstallation.install(provider,targetIds);}
   removeMcp(provider:'claude'|'codex',targetIds?:string[]){return this.mcpInstallation.remove(provider,targetIds);}
+  claudeStatusLineStatus(){return this.claudeStatusLine.status();}
+  installClaudeStatusLine(targetId:string){return this.claudeStatusLine.install(targetId);}
+  removeClaudeStatusLine(targetId:string){return this.claudeStatusLine.remove(targetId);}
   captureHealth():CaptureHealth{
     const macos=this.store.recent('macos',16),hookEvents=Object.fromEntries(agents.map(agent=>[agent.id,this.store.recent('hook',24,agent.id)])) as Record<string,CaptureEvent[]>,pollerEvents=Object.fromEntries(pollers.map(source=>[source.id,this.store.recent(source.id,32)])) as Record<string,CaptureEvent[]>,capture=this.store.recent('capture',8);
     const targets=this.hookInstallation.status().targets;

@@ -2,13 +2,15 @@
 import {ref,watch,onMounted,onUnmounted,computed} from 'vue';
 import {DialogRoot,DialogPortal,DialogOverlay,DialogContent,DialogTitle,DialogDescription} from 'reka-ui';
 import {Bot,Check,RefreshCw,ShieldCheck,ArrowUpRight} from '@lucide/vue';
-import {transport,mcpTransport,relaunchHookSetup,native,openAccessibilitySettings} from './transport.ts';
+import {transport,mcpTransport,claudeStatusLineTransport,relaunchHookSetup,native,openAccessibilitySettings} from './transport.ts';
 import type {HookInstallationStatus,HookProvider} from '../capture/hook-installation.ts';
 import type {McpInstallationStatus} from '../capture/mcp-installation.ts';
+import type {ClaudeStatusLineStatus} from '../capture/claude-statusline-installation.ts';
 const props=defineProps<{mode:'onboarding'|'settings'}>();
 const emit=defineEmits<{status:[value:HookInstallationStatus]}>();
 const state=ref<HookInstallationStatus|null>(null),open=ref(false),busy=ref(false),error=ref(''),message=ref('');
 const mcpState=ref<McpInstallationStatus|null>(null),mcpSelected=ref(false),mcpError=ref(''),mcpMessage=ref('');
+const statusLineState=ref<ClaudeStatusLineStatus|null>(null),statusLineError=ref(''),statusLineMessage=ref('');
 const permissionOpen=ref(false),permissionError=ref('');
 const permissionSeenKey='agent-time.accessibility-setup-seen';
 let permissionChecking=false;
@@ -46,12 +48,14 @@ async function refresh(){if(busy.value)return;try{const next=await transport.hoo
 }}catch(e){error.value=String(e);}}
 async function install(list:HookProvider[]){busy.value=true;error.value='';message.value='';mcpError.value='';try{for(const provider of list)state.value=await transport.installHooks(provider);message.value=list.some(p=>!installed(p))||state.value?.migrationError?'Some configurations need attention. Check the details below.':'Hooks installed. Start a new session to receive events.';if(mcpSelected.value){for(const provider of list.filter((p):p is 'claude'|'codex'=>p==='claude'||p==='codex')){try{mcpState.value=await mcpTransport.install(provider);}catch(e){mcpError.value+=`${agentName(provider)} MCP: ${String(e)}\n`;}}if(!mcpError.value)mcpMessage.value='MCP tools configured. Start a new agent session to load them.';}}catch(e){error.value=String(e);}finally{busy.value=false;if(mcpSelected.value)void refreshMcp();}}
 async function refreshMcp(){try{mcpState.value=await mcpTransport.status();}catch(e){mcpError.value=String(e);}}
+async function refreshStatusLine(){try{statusLineState.value=await claudeStatusLineTransport.status();}catch(e){statusLineError.value=String(e);}}
+async function changeStatusLine(targetId:string,action:'install'|'remove'){busy.value=true;statusLineError.value='';statusLineMessage.value='';try{statusLineState.value=action==='install'?await claudeStatusLineTransport.install(targetId):await claudeStatusLineTransport.remove(targetId);statusLineMessage.value=action==='install'?'Claude will show reported work after its next status line refresh.':'Previous Claude status line restored.';}catch(e){statusLineError.value=String(e);}finally{busy.value=false;void refreshStatusLine();}}
 async function changeMcp(provider:'claude'|'codex',targetId:string,action:'install'|'remove'){busy.value=true;mcpError.value='';mcpMessage.value='';try{mcpState.value=action==='install'?await mcpTransport.install(provider,[targetId]):await mcpTransport.remove(provider,[targetId]);mcpMessage.value=action==='install'?'MCP configured. Start a new agent session to load the tools.':'MCP configuration removed. Restart the agent session to unload the tools.';}catch(e){mcpError.value=String(e);}finally{busy.value=false;void refreshMcp();}}
 async function repairTarget(provider:HookProvider,id:string){busy.value=true;error.value='';message.value='';try{state.value=await transport.installHooks(provider,[id]);message.value='Hook configuration checked. Start a new session to verify delivery.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function verify(){busy.value=true;error.value='';try{state.value=await transport.verifyHooks();message.value='Installation checked.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function dismiss(){if(busy.value)return;try{state.value=await transport.dismissHookSetup();open.value=false;void showPermission();}catch(e){error.value=String(e);}}
 function reopen(){if(props.mode!=='onboarding')return;error.value='';message.value='';permissionOpen.value=false;open.value=true;void refresh();}
-onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refresh();void refreshMcp();timer=setInterval(()=>{void refresh();},5000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);window.removeEventListener('agent-time:hook-setup',reopen);});
+onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refresh();void refreshMcp();if(props.mode==='settings')void refreshStatusLine();timer=setInterval(()=>{void refresh();},5000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);window.removeEventListener('agent-time:hook-setup',reopen);});
 </script>
 <template>
 <template v-if="mode==='onboarding'"><DialogRoot :open="open" @update:open="!$event&&dismiss()"><DialogPortal><DialogOverlay class="hook-overlay"/><DialogContent class="hook-dialog" @escape-key-down="busy&&$event.preventDefault()" @pointer-down-outside="busy&&$event.preventDefault()">
@@ -96,6 +100,11 @@ onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refr
   <div v-for="t in mcpState?.targets.filter(target=>target.provider===p)||[]" :key="t.id" class="hook-target"><div><span>{{t.label}}</span><small>{{t.detail}}</small></div><span :class="['hook-state',t.state]">{{label(t.state)}}</span><button v-if="t.state==='not-installed'||t.state==='needs-update'" class="hook-action" :disabled="busy" @click="changeMcp(p,t.id,'install')">{{t.state==='needs-update'?'Repair':'Connect'}}</button><button v-if="t.state==='installed'" class="hook-check" :disabled="busy" @click="changeMcp(p,t.id,'remove')">Remove</button></div>
   <p v-if="!mcpState" class="hook-description">Checking MCP configuration…</p><p v-if="mcpError" class="hook-error" role="alert">{{mcpError}}</p><p v-if="mcpMessage" class="hook-message" role="status">{{mcpMessage}}</p>
   <p class="hook-description">A new agent session loads the tools. Tool descriptions are available automatically; ask the agent to report the current task when you want live context.</p>
+ </div>
+ <div v-if="p==='claude'" class="hook-settings"><div class="hook-provider-heading"><h3>Claude status line</h3><button class="hook-check" :disabled="busy" @click="refreshStatusLine"><RefreshCw :size="13"/> Check</button></div>
+  <p class="hook-description">Show this Claude session’s MCP reported task and elapsed counter below the conversation. Existing status line output is kept. This does not add time to tracked totals.</p>
+  <div v-for="t in statusLineState?.targets||[]" :key="t.id" class="hook-target"><div><span>{{t.label}}</span><small>{{t.detail}}</small></div><span :class="['hook-state',t.state]">{{label(t.state)}}</span><button v-if="t.state==='not-installed'||t.state==='needs-update'" class="hook-action" :disabled="busy||!statusLineState?.runtimeReady" @click="changeStatusLine(t.id,'install')">{{t.state==='needs-update'?'Repair':'Show task in Claude'}}</button><button v-if="t.state==='installed'" class="hook-check" :disabled="busy" @click="changeStatusLine(t.id,'remove')">Restore previous</button></div>
+  <p v-if="!statusLineState" class="hook-description">Checking Claude status lines…</p><p v-if="statusLineError" class="hook-error" role="alert">{{statusLineError}}</p><p v-if="statusLineMessage" class="hook-message" role="status">{{statusLineMessage}}</p>
  </div>
 </section>
 </template>

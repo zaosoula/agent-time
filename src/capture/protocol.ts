@@ -5,6 +5,7 @@ import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts'
 import {validateManualNote,type ManualNote} from './store.ts';
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string):unknown;markDayReview?(date:string):unknown;}
 interface Controller {reportedWork?(date:string):unknown;}
+interface Controller {claudeStatusLineStatus?():unknown;installClaudeStatusLine?(targetId:string):unknown;removeClaudeStatusLine?(targetId:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;workOutcomes?(date:string):Promise<unknown>;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;mcpStatus?():unknown;installMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;removeMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
@@ -69,6 +70,12 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       if(!handler)throw new Error('MCP installation unavailable');
       return {id,result:handler.call(controller,params.provider,params.targetIds as string[]|undefined)};
     }
+    if(request.method==='claude_status_line_install'||request.method==='claude_status_line_remove'){
+      if(Object.keys(params).length!==1||typeof params.targetId!=='string'||!/^[a-f0-9]{16}$/.test(params.targetId))throw new Error('Invalid Claude status line target');
+      const handler=request.method==='claude_status_line_install'?controller.installClaudeStatusLine:controller.removeClaudeStatusLine;
+      if(!handler)throw new Error('Claude status line setup unavailable');
+      return {id,result:handler.call(controller,params.targetId)};
+    }
     if(request.method==='privacy_exclusions_set'){
       if(!controller.setPrivacyExclusions||Object.keys(params).length!==1||!('entries' in params))throw new Error('Invalid privacy exclusion request');
       return {id,result:controller.setPrivacyExclusions(validateExclusions(params.entries))};
@@ -125,6 +132,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='tracking_cleanup_preview'&&controller.cleanupPreview)return {id,result:controller.cleanupPreview()};
     if(request.method==='hooks_status'&&controller.hooksStatus)return {id,result:controller.hooksStatus()};
     if(request.method==='mcp_status'&&controller.mcpStatus)return {id,result:controller.mcpStatus()};
+    if(request.method==='claude_status_line_status'&&controller.claudeStatusLineStatus){if(Object.keys(params).length)throw new Error('Unsupported parameter');return {id,result:controller.claudeStatusLineStatus()};}
     if(request.method==='hooks_verify'&&controller.verifyHooks)return {id,result:controller.verifyHooks()};
     if(request.method==='hooks_dismiss'&&controller.dismissHookSetup)return {id,result:controller.dismissHookSetup()};
     if(request.method==='status')return {id,result:controller.status()};
