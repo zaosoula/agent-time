@@ -7,6 +7,7 @@ import { defaultSettings, validateSettings, storedSettings, browserEnabled, type
 import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool,spoolStatus } from './hooks.ts';
 import {validAgentReport} from '../mcp/report.ts';
+import {reportedWorkForDay} from './reported-work.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -345,6 +346,12 @@ export class Collector {
     this.summaryCache={revision,safeRevision:this.store.incrementalSafetyRevision(),at:Date.now(),value:summary,rowid,lastActivity,maxObservedAt,eventsRef:new WeakRef(events),eventsRowid:rowid};return summary;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return summaryForDate(this.summary(maxAgeMs),date);}
+  reportedWork(date:string){
+    const first=new Date(`${date}T00:00:00`),last=new Date(first);
+    last.setDate(last.getDate()+1);
+    const start=first.getTime()/1000,end=last.getTime()/1000;
+    return reportedWorkForDay(this.store.agentReports(start-86400,end),start,end,Date.now()/1000);
+  }
   weeklyReview(startDate:string){
     const summary=this.summary(15000),start=new Date(`${startDate}T00:00:00`),accepted=new Set<string>();
     if(!Number.isNaN(start.getTime()))for(let offset=0;offset<7;offset++){
