@@ -11,9 +11,9 @@ const periodStart=()=>{const month=new Date();month.setDate(1);month.setHours(0,
 export class UsageReader{
  private providers:Record<string,boolean>=Object.fromEntries(agents.map(agent=>[agent.id,true]));private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
  private limits:UsageSummary['limits']=[];private lastScan:number|null=null;private filesScanned=0;private error:string|null=null;
- private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;
- constructor(database:string,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string){
-  this.roots=roots;this.orca=orca;
+ private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;private home:string;
+ constructor(database:string,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string,home:string=homedir()){
+  this.roots=roots;this.orca=orca;this.home=home;
   this.db=new DatabaseSync(database);this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }
@@ -24,10 +24,12 @@ export class UsageReader{
  async close(){await this.stop();this.db.close();}
  private async discoverRoots(){
   if(this.roots)return this.roots;
-  const base=join(homedir(),'Library/Application Support/orca'),roots=agents.map(agent=>({provider:agent.id,accountId:'default',path:join(homedir(),agent.defaultUsagePath)}));
+  const base=join(this.home,'Library/Application Support/orca'),roots=agents.map(agent=>({provider:agent.id,accountId:'default',path:join(this.home,agent.defaultUsagePath)}));
   for(const agent of agents){
-   const folder=join(base,agent.id+'-accounts');for(const entry of await readdir(folder,{withFileTypes:true}).catch(()=>[]))if(entry.isDirectory()){
-    for(const suffix of agent.usagePaths)roots.push({provider:agent.id,accountId:entry.name,path:join(folder,entry.name,suffix)});
+   for(const directory of agent.orcaDirectories||[agent.id+'-accounts']){
+    const folder=join(base,directory);for(const entry of await readdir(folder,{withFileTypes:true}).catch(()=>[]))if(entry.isDirectory()){
+     for(const suffix of agent.usagePaths)roots.push({provider:agent.id,accountId:directory.endsWith('-profiles')?'profile:'+entry.name:entry.name,path:join(folder,entry.name,suffix)});
+    }
    }
   }return roots;
  }
