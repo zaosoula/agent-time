@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.13` candidate — 2026-10-31
+
+This candidate adds the local MCP server and optional Claude Code/Codex setup described in [updater notes](0.2.0-beta.13-notes.md). The release build now checks that MCP code and dependencies are present in the updater archive and that the bundled server answers an MCP initialize request. Local preparation passed the five-file version check, 269 JavaScript tests, the UI build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. Signed build, notarization, hosted-byte verification, and publication remain pending at this record stage.
+
+The release owner requested publication before a RAM audit. The unresolved clean-install, live OTA recovery, provisional macOS 13.5 floor, and uninterrupted soak limits recorded for beta.12 remain open. Live model use of the new MCP tools has not yet been observed in installed Claude Code or Codex clients; CLI configuration and a fixture handshake are narrower checks. Historical issue attribution remains advisory where the evidence is incomplete and is not invoice approval.
+
 ## `0.2.0-beta.12` published — 2026-10-31
 
 This release contains the human-time reconciliation flow in [updater notes](0.2.0-beta.12-notes.md): one review queue, day-level acceptance of captured project matches, aligned weekly reviewed time, guided future website rules, direct split edits, and safe undo of older independent decisions. Local preparation passed the five-file version check, 254 Node tests, the UI typecheck/build, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 17 locked Rust tests.
