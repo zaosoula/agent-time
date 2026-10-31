@@ -48,10 +48,12 @@ export class HookInstallation{
   for(const agent of agents){add(agent.id,`${agent.name} · user`,join(this.home,agent.configDirectory));if(this.env[agent.configEnv])add(agent.id,`${agent.name} · active config`,this.env[agent.configEnv]!);}
   const base=join(this.home,'Library/Application Support/orca');
   for(const agent of agents){
-   const folder=join(base,agent.id+'-accounts');let index=0;
-   for(const entry of existsSync(folder)?readdirSync(folder,{withFileTypes:true}):[]){if(!entry.isDirectory())continue;
-    const root=join(folder,entry.name);index++;
-    for(const config of agent.discoverAccount(root))add(agent.id,`${agent.name} · Orca account ${index}`,config);
+   for(const directory of agent.orcaDirectories||[agent.id+'-accounts']){
+    const folder=join(base,directory);let index=0;
+    for(const entry of existsSync(folder)?readdirSync(folder,{withFileTypes:true}):[]){if(!entry.isDirectory())continue;
+     const root=join(folder,entry.name);index++;
+     for(const config of agent.discoverAccount(root))add(agent.id,`${agent.name} · Orca ${directory.endsWith('-profiles')?'profile':'account'} ${index}`,config);
+    }
    }
   }
   return targets.map(t=>({...t,id:hash(t.path)}));

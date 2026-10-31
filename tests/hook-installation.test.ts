@@ -92,6 +92,29 @@ test('Orca account homes and explicit provider homes are covered without treatin
   const targets=manager.status().targets;assert.ok(targets.some(t=>t.path===join(f.home,'custom-codex/hooks.json')));assert.ok(targets.some(t=>t.path===join(f.home,'custom-claude/settings.json')));assert.ok(targets.some(t=>t.path===join(base,'codex-accounts/account/home/hooks.json')));assert.ok(!targets.some(t=>t.path.includes('auth-only')));
  }finally{f.close();}
 });
+test('Orca Claude profiles are separate hook targets even without an active config override',async()=>{
+ const f=fixture();try{
+  const profile=join(f.home,'Library/Application Support/orca/claude-profiles/profile/home');mkdirSync(profile,{recursive:true});
+  const path=join(profile,'settings.json');writeFileSync(path,JSON.stringify({hooks:{Stop:[{hooks:[{type:'command',command:'other-tool'}]}]}}));
+  const target=f.manager.status().targets.find(t=>t.path===path);assert.ok(target);assert.equal(target.state,'not-installed');
+  await f.manager.install('claude',[target.id]);
+  const config=JSON.parse(readFileSync(path,'utf8'));
+  assert.equal(config.hooks.Stop[0].hooks[0].command,'other-tool');
+  assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'installed');
+ }finally{f.close();}
+});
+test('an Orca Claude profile repairs hooks copied from the user configuration',async()=>{
+ const f=fixture();try{
+  await f.manager.install('claude');
+  const user=join(f.home,'.claude/settings.json'),profile=join(f.home,'Library/Application Support/orca/claude-profiles/profile/home');mkdirSync(profile,{recursive:true});
+  const path=join(profile,'settings.json'),userBytes=readFileSync(user,'utf8');writeFileSync(path,userBytes);
+  const target=f.manager.status().targets.find(t=>t.path===path)!;assert.equal(target.state,'needs-update');
+  await f.manager.install('claude',[target.id]);
+  assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'installed');
+  assert.equal(readFileSync(user,'utf8'),userBytes);
+  assert.notEqual(readFileSync(path,'utf8'),userBytes);
+ }finally{f.close();}
+});
 test('an Orca account inheriting the user Codex hooks stays installed after sync',async()=>{
  const f=fixture();try{
   const account=join(f.home,'Library/Application Support/orca/codex-accounts/account/home');mkdirSync(account,{recursive:true});

@@ -40,6 +40,16 @@ test('usage import persists cursors, retries partial lines, and ignores duplicat
   assert.ok(!JSON.stringify(reader.summary()).includes('private content'));
  }finally{await reader.close();rmSync(root,{recursive:true});}
 });
+test('usage import finds captured sessions in Orca Claude profiles',async()=>{
+ const {mkdtempSync,mkdirSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {setTimeout:sleep}=await import('node:timers/promises');const {DatabaseSync}=await import('node:sqlite');const {UsageReader}=await import('../src/usage/reader.ts');
+ const home=mkdtempSync(join(tmpdir(),'ade-orca-claude-usage-'));
+ const projects=join(home,'Library/Application Support/orca/claude-profiles/profile/home/projects');mkdirSync(projects,{recursive:true});
+ writeFileSync(join(projects,'profile-session.jsonl'),JSON.stringify({type:'assistant',timestamp:new Date().toISOString(),sessionId:'profile-session',message:{id:'profile-message',model:'claude-opus-5-5',usage:{input_tokens:10,output_tokens:20}}})+'\n');
+ const path=join(home,'usage.sqlite'),db=new DatabaseSync(path);db.exec('CREATE TABLE events(observed_at REAL,payload TEXT)');db.prepare('INSERT INTO events VALUES(?,?)').run(Date.now()/1000-10,JSON.stringify({source:'hook',provider:'claude',sessionId:'profile-session'}));db.close();
+ const reader=new UsageReader(path,undefined,async()=>({ok:true,result:{rateLimits:{},claude:{},codex:{}}}),'',home);
+ try{reader.start();for(let i=0;i<100&&reader.summary().scanning;i++)await sleep(10);assert.equal(reader.summary().days.find(d=>d.provider==='claude')?.tokens,30);}
+ finally{await reader.close();rmSync(home,{recursive:true});}
+});
 test('provider usage switches skip disabled logs while retaining previously imported totals',async()=>{
  const {mkdtempSync,mkdirSync,writeFileSync,appendFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {setTimeout:sleep}=await import('node:timers/promises');const {DatabaseSync}=await import('node:sqlite');const {UsageReader}=await import('../src/usage/reader.ts');
  const root=mkdtempSync(join(tmpdir(),'ade-usage-provider-'));mkdirSync(join(root,'claude'));mkdirSync(join(root,'codex'));const timestamp=new Date().toISOString();
