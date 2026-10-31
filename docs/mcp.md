@@ -4,11 +4,15 @@ Agent Time includes a local stdio MCP server. It reads the same SQLite capture d
 
 ## Connect an installed app
 
-The signed macOS app bundles its own Node runtime and MCP code. On a normal installation:
+In **Connect your agents**, select **Also connect local MCP tools** when installing hooks. For agents already connected, open **Settings → Agents → Local MCP tools** and connect each account configuration. Agent Time shows missing, outdated, and externally changed entries separately. It can repair or remove only entries it installed. Restart the agent session after connecting or removing tools.
+
+No skill is required for tool discovery: the MCP server publishes each tool's description and input schema. To encourage live task reporting, tell your agent: “When you begin or change a task, use Agent Time's `set_work_context` or `start_task` tool. Report the Linear issue when known, and stop task counters when finished.” This is optional guidance; declarations are separate from measured time.
+
+If you prefer manual setup, the signed macOS app bundles its own Node runtime and MCP code:
 
 ```sh
-codex mcp add --env AGENT_TIME_PROVIDER=codex agent-time -- '/Applications/Agent Time.app/Contents/MacOS/node' '/Applications/Agent Time.app/Contents/Resources/mcp/server.ts'
-claude mcp add --scope user -e AGENT_TIME_PROVIDER=claude agent-time -- '/Applications/Agent Time.app/Contents/MacOS/node' '/Applications/Agent Time.app/Contents/Resources/mcp/server.ts'
+codex mcp add --env AGENT_TIME_PROVIDER=codex --env ADE_CAPTURE_OUTPUT="$HOME/Library/Application Support/studio.ezyo.agenttime" agent-time -- '/Applications/Agent Time.app/Contents/MacOS/node' '/Applications/Agent Time.app/Contents/Resources/mcp/server.ts'
+claude mcp add --scope user agent-time -e AGENT_TIME_PROVIDER=claude ADE_CAPTURE_OUTPUT="$HOME/Library/Application Support/studio.ezyo.agenttime" -- '/Applications/Agent Time.app/Contents/MacOS/node' '/Applications/Agent Time.app/Contents/Resources/mcp/server.ts'
 ```
 
 Run `codex mcp list` or `claude mcp list` to check that the server is configured. Restart an existing agent session to load the new tools. For a development checkout, use `npm run mcp` with `ADE_CAPTURE_OUTPUT` set to the fixture or app data directory. Do not run a second collector.

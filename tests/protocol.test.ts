@@ -69,6 +69,13 @@ test('tracking cleanup requires explicit confirmation and rejects arbitrary path
  for(const params of [{},{confirmed:false},{confirmed:true,path:'/tmp'},{confirmed:'true'}])assert.ok('error' in await dispatchRequest({id:'c',method:'tracking_cleanup',params},c));
  assert.equal(removed,0);assert.ok('result' in await dispatchRequest({id:'c',method:'tracking_cleanup',params:{confirmed:true}},c));assert.equal(removed,1);
 });
+test('MCP setup accepts only known agents and discovered target IDs',async()=>{
+ let changes=0;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),mcpStatus:()=>({targets:[]}),installMcp:(provider:string)=>{changes++;return {provider};},removeMcp:(provider:string)=>{changes++;return {provider};}};
+ assert.deepEqual(await dispatchRequest({id:'m',method:'mcp_status'},c),{id:'m',result:{targets:[]}});
+ for(const params of [{provider:'other'},{provider:'claude',path:'/tmp'},{provider:'codex',targetIds:['../bad']},{}])assert.ok('error' in await dispatchRequest({id:'m',method:'mcp_install',params},c));
+ assert.equal(changes,0);assert.deepEqual(await dispatchRequest({id:'m',method:'mcp_install',params:{provider:'claude'}},c),{id:'m',result:{provider:'claude'}});
+ assert.deepEqual(await dispatchRequest({id:'m',method:'mcp_remove',params:{provider:'codex'}},c),{id:'m',result:{provider:'codex'}});
+});
 test('Linear connection protocol accepts only a client ID and fixed read operations',async()=>{
  let connects=0;
  const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),linearStatus:async()=>({phase:'disconnected'}),linearConnect:async(clientId:string)=>{connects++;return {clientId};},linearSync:async(workspaceId?:string)=>({synced:workspaceId||'all'}),linearDisconnect:async(workspaceId?:string)=>({disconnected:workspaceId||'all'})};
