@@ -39,3 +39,16 @@ test('day summary clips intervals without changing full history or crossing loca
  assert.equal(day.agentSeconds,60);assert.equal(day.humanSeconds,60);assert.equal(day.childAgentSeconds,60);
  assert.throws(()=>summaryForDate(full,'2026-02-30'),/Invalid summary date/);
 });
+test('day summary sends only relevant sessions and caveats while retaining health reasons',()=>{
+ const start=new Date(2026,9,14).getTime()/1000,next=new Date(2026,9,15).getTime()/1000;
+ const interval=(sessionId:string,from:number,to:number,child=false,agentId?:string):Interval=>({start:from,end:to,state:'grouped',proof:'observed',sourceEventIds:[],hostId:'local',sessionId,child,agentId});
+ const session=(key:string,sessionId:string,lastObservedAt:number,child=false,agentId?:string):Session=>({key,title:key,state:'idle',lastObservedAt,seconds:60,observedSeconds:60,child,proof:'observed',hostId:'local',sessionId,agentId});
+ const full:Summary={intervals:[interval('crosses',start-10,start+10),interval('child',start+20,start+40,true,'a'),interval('old',start-80,start-60)],sessions:[session('crosses','crosses',start-10),session('child','child',next+10,true,'a'),session('today-no-duration','today',start+30),session('old','old',start-70),session('other-host','crosses',start-10)],coverage:[{reason:'Today',observedAt:start+5},{reason:'Historical',observedAt:start-10}],unresolved:[{reason:'Tomorrow',observedAt:next+5}],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
+ full.sessions[4]!.hostId='remote';
+ const day=summaryForDate(full,'2026-10-14');
+ assert.deepEqual(day.sessions.map(s=>s.key),['crosses','child','today-no-duration']);
+ assert.deepEqual(day.coverage.map(i=>i.reason),['Today']);
+ assert.deepEqual(day.unresolved,[]);
+ assert.deepEqual(day.issueReasons,['Today','Historical','Tomorrow']);
+ assert.equal(full.sessions.length,5);assert.equal(full.coverage.length,2);
+});

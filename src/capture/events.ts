@@ -25,6 +25,7 @@ export interface Session {
 export interface Summary {
   intervals: Interval[]; unresolved: Issue[]; coverage: Issue[]; sessions: Session[];
   humanSeconds: number; agentSeconds: number; elapsedSeconds: number; childAgentSeconds: number;
+  issueReasons?: string[];
 }
 export interface Verdict { scenario: string; mode: 'live' | 'simulated'; status: 'pass' | 'fail' | 'unsupported' | 'unverified'; evidence: string; }
 const epoch = randomUUID();

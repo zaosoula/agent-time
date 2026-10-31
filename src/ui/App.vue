@@ -170,7 +170,7 @@ const timelineProjects=computed(()=>{
   return (a.sessionId||a.key).localeCompare(b.sessionId||b.key)||(a.child?1:0)-(b.child?1:0);
  })}));
 });
-const issues=computed(()=>[...new Set([...summary.value.coverage,...summary.value.unresolved].map(i=>i.reason))]);
+const issues=computed(()=>summary.value.issueReasons??[...new Set([...summary.value.coverage,...summary.value.unresolved].map(i=>i.reason))]);
 const dayCaptureIssues=computed(()=>dailyCaptureIssues(summary.value,dayStart.value,dayEnd.value));
 const dayCaptureReasons=computed(()=>[...new Set(dayCaptureIssues.value.map(issue=>issue.reason))]);
 const confidence=computed(()=>dayConfidence(summary.value,captureHealth.value?.sources||[],status.value?.sources.filter(source=>source.kind==='agent').map(source=>source.id)||[],dayStart.value,dayEnd.value,isToday.value));

@@ -31,7 +31,17 @@ export function summaryForDate(summary:Summary,date:string):Summary {
  const end=new Date(start);end.setDate(end.getDate()+1);
  const from=start.getTime()/1000,to=end.getTime()/1000;
  const intervals=summary.intervals.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(i.start,from),end:Math.min(i.end,to)}));
- const day={...summary,intervals};
+ const evidence=new Set(intervals.flatMap(i=>[
+  ...(i.sessionId?[JSON.stringify([i.hostId??null,'session',i.sessionId,i.child===true,i.agentId??null])]:[]),
+  ...(i.dispatchId?[JSON.stringify([i.hostId??null,'dispatch',i.dispatchId,i.child===true,i.agentId??null])]:[]),
+ ]));
+ const sessions=summary.sessions.filter(s=>s.lastObservedAt>=from&&s.lastObservedAt<to||
+  Boolean(s.sessionId&&evidence.has(JSON.stringify([s.hostId??null,'session',s.sessionId,s.child===true,s.agentId??null])))||
+  Boolean(s.dispatchId&&evidence.has(JSON.stringify([s.hostId??null,'dispatch',s.dispatchId,s.child===true,s.agentId??null]))));
+ const coverage=summary.coverage.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
+ const unresolved=summary.unresolved.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
+ const issueReasons=summary.issueReasons??[...new Set([...summary.coverage,...summary.unresolved].map(issue=>issue.reason))];
+ const day={...summary,intervals,sessions,coverage,unresolved,issueReasons};
  const children=new Map<string,Array<[number,number]>>();
  for(const interval of intervals.filter(i=>i.child&&i.state==='grouped')){
   const key=JSON.stringify([interval.hostId,interval.sessionId,interval.agentId]);
