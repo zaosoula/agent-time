@@ -90,7 +90,7 @@ test('a first-install DMG becomes public only after its uploaded version is sele
   const path = `/install/${version}/${encodeURIComponent(name)}`;
   try {
     const publicPage = await (await fetch(base + '/')).text();
-    assert.match(publicPage, /See your work time/);
+    assert.match(publicPage, /counts your agents/);
     assert.doesNotMatch(publicPage, /Download Agent Time for Mac/);
     assert.match(publicPage, /Public beta/);
     assert.doesNotMatch(publicPage, /Closed beta|Private invite/);
