@@ -1,5 +1,5 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {dailyCaptureIssues,dailyTotals,summaryForDate,workingAgentCount} from '../src/capture/daily.ts';import type {Summary,Interval,Session} from '../src/capture/events.ts';
+import {dailyCaptureIssues,dailyTotals,recentWorkingAgentCount,summaryForDate,workingAgentCount} from '../src/capture/daily.ts';import type {CaptureEvent,Summary,Interval,Session} from '../src/capture/events.ts';
 test('daily caveats show only this day and omit the static Orca scope notice',()=>{
  const base:Summary={intervals:[],sessions:[],coverage:[{reason:'Poll failed',observedAt:100},{reason:'Old failure',observedAt:99},{reason:'Only this Orca host is observed; remote execution has not been verified',observedAt:101}],unresolved:[{reason:'Open tool',observedAt:199},{reason:'Tomorrow',observedAt:200}],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
  assert.deepEqual(dailyCaptureIssues(base,100,200).map(issue=>issue.reason),['Poll failed','Open tool']);
@@ -10,6 +10,17 @@ test('working agent snapshot matches My day recency and stops on pause',()=>{
  const summary:Summary={intervals:[],sessions:[session('working',at-5),session('running',at-19),session('working',at-20),session('waiting',at-2),session('working',at-1,0)],coverage:[],unresolved:[],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
  assert.equal(workingAgentCount(summary,now),2);
  assert.equal(workingAgentCount(summary,now,false),0);
+});
+test('recent worker and hook evidence counts live agents without double-counting a terminal',()=>{
+ const now=1000;
+ const event=(id:string,at:number,source:string,kind:string,extra:Partial<CaptureEvent>={}):CaptureEvent=>({eventId:id,source,kind,observedAt:at,monotonicAt:at,collectorEpoch:'epoch',...extra});
+ const workers=[event('root',995,'orca','worker',{hostId:'local',dispatchId:'d1',terminalHandle:'t1',data:{fresh:true,state:'working'}}),event('old',970,'orca','worker',{hostId:'local',dispatchId:'d2',terminalHandle:'t2',data:{fresh:true,state:'working'}})];
+ const hooks=[event('root-tool',996,'hook','tool_start',{hostId:'local',sessionId:'s1',terminalHandle:'t1'}),event('child-tool',997,'hook','tool_start',{hostId:'local',sessionId:'s1',agentId:'child',terminalHandle:'t1'}),event('ended',998,'hook','tool_end',{hostId:'local',sessionId:'s2',terminalHandle:'t2'})];
+ assert.equal(recentWorkingAgentCount(workers,hooks,now),2);
+ assert.equal(recentWorkingAgentCount(workers,[...hooks,event('unbound',999,'hook','tool_start',{hostId:'local',sessionId:'unbound'})],now),2);
+ assert.equal(recentWorkingAgentCount(workers,[...hooks,event('same-dispatch',999,'hook','tool_start',{hostId:'local',sessionId:'s3',dispatchId:'d1'})],now),2);
+ assert.equal(recentWorkingAgentCount([event('done',999,'orca','worker',{hostId:'local',dispatchId:'d1',terminalHandle:'t1',data:{fresh:false,state:'done'}}),...workers],hooks,now),2);
+ assert.equal(recentWorkingAgentCount(workers,hooks,1020),0);
 });
 test('menu bar totals clip to local today, union overlap, and keep independent agents separate',()=>{
  const now=new Date(2026,9,12,12),midnight=new Date(2026,9,12).getTime()/1000;

@@ -60,7 +60,7 @@ const projectCaption=(group:TimelineProjectGroup)=>[
  !group.sessions.length&&group.websites.length?`${group.websites.length} websites`:undefined,
 ].filter(Boolean).join(' · ');
 const busy=computed(()=>captureBusy.value||settingsBusy.value);
-let refreshJob:Promise<void>|undefined,refreshRevision=0;
+let refreshJob:Promise<void>|undefined,refreshRevision=0,lastSummaryAt=0,lastSummaryDate='';
 const dateString=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const selectedDate=ref(dateString(new Date()));
 const viewport=ref<TimeRange|null>(null);
@@ -161,7 +161,7 @@ const humanUnassigned=computed(()=>{
  return minuteCreditSeconds(remaining);
 });
 const elapsedTime=computed(()=>minuteCreditSeconds(filteredIntervals.value.filter(i=>i.state==='grouped'||i.state==='human').map(i=>[i.start,i.end])));
-const runningCount=computed(()=>creditedSessions.value.filter(s=>['working','running'].includes(s.state)&&now.value-s.lastObservedAt<20).length);
+const runningCount=computed(()=>project.value==='all'&&typeof status.value?.workingAgents==='number'?status.value.workingAgents:creditedSessions.value.filter(s=>['working','running'].includes(s.state)&&now.value-s.lastObservedAt<20).length);
 const runs=computed(()=>[...new Set(creditedSessions.value.map(s=>s.runId).filter(Boolean))].length);
 const timelineProjects=computed(()=>{
  return groupTimelineProjects(timelineEligible.value,filteredIntervals.value.filter(i=>i.state==='human'),humanBySession.value,bars,projectName,projectFromWorkspace,!search.value.trim()).map(project=>({...project,sessions:project.sessions.sort((a,b)=>{
@@ -303,8 +303,9 @@ function handleDeepLink(urls:string[]){for(const raw of urls){try{const url=new 
 async function listenDeepLinks(){if(!native)return;const {getCurrent,onOpenUrl}=await import('@tauri-apps/plugin-deep-link');const dispose=await onOpenUrl(handleDeepLink);if(unmounted)dispose();else unlistenDeepLink=dispose;handleDeepLink(await getCurrent()||[]);}
 function refresh():Promise<void>{
  if(refreshJob)return refreshJob;const revision=refreshRevision;
- const date=selectedDate.value;
- refreshJob=(async()=>{try{const [s,meta,health]=await Promise.all([transport.summary(date),transport.status(),transport.captureHealth()]);if(unmounted||revision!==refreshRevision||date!==selectedDate.value)return;summary.value=s;status.value=meta;captureHealth.value=health;error.value='';}catch(e){if(!unmounted&&revision===refreshRevision)error.value=String(e);}})().finally(()=>{refreshJob=undefined;});return refreshJob;
+ const date=selectedDate.value,background=native&&!document.hasFocus();
+ const fetchSummary=!background||date!==lastSummaryDate||Date.now()-lastSummaryAt>=60000;
+ refreshJob=(async()=>{try{const [s,meta,health]=await Promise.all([fetchSummary?transport.summary(date,background):Promise.resolve(null),transport.status(),transport.captureHealth()]);if(unmounted||revision!==refreshRevision||date!==selectedDate.value)return;if(s){summary.value=s;lastSummaryAt=Date.now();lastSummaryDate=date;}status.value=meta;captureHealth.value=health;error.value='';}catch(e){if(!unmounted&&revision===refreshRevision)error.value=String(e);}})().finally(()=>{refreshJob=undefined;});return refreshJob;
 }
 watch(selectedDate,()=>{viewport.value=null;dayReview.value=null;void loadDayReview();refreshRevision++;const pending=refreshJob;if(pending)void pending.then(()=>refresh());else void refresh();});
 async function toggleCapture(){captureBusy.value=true;refreshRevision++;try{status.value=status.value?.running?await transport.stop():await transport.start();error.value='';}catch(e){error.value=String(e);}finally{captureBusy.value=false;void refresh();}}
@@ -327,8 +328,9 @@ function exportCsv(){
  const url=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));const a=document.createElement('a');a.href=url;a.download=`agent-time-${project.value==='all'?'all-projects':project.value.replace(/[^a-zA-Z0-9_-]/g,'-')}-${selectedDate.value}.csv`;a.click();URL.revokeObjectURL(url);
 }
 function openSettings(e:KeyboardEvent){if(e.key==='Escape'&&noteAnchor.value){noteAnchor.value=null;e.preventDefault();return;}if(e.key==='Escape'&&exportOpen.value){exportOpen.value=false;e.preventDefault();return;}if((e.metaKey||e.ctrlKey)&&e.key===','){e.preventDefault();navigate('settings');}else if(e.key==='Escape'&&selected.value){selected.value=null;}}
-onMounted(()=>{void listenNavigation();void listenDeepLinks();void refresh();void loadDayReview();timer=setInterval(()=>{void refresh();},5000);dayReviewTimer=setInterval(()=>{void loadDayReview();},60000);let previousDay=dateString(new Date());clockTimer=setInterval(()=>{now.value=Date.now()/1000;const currentDay=dateString(new Date());if(currentDay!==previousDay){if(selectedDate.value===previousDay)selectedDate.value=currentDay;previousDay=currentDay;}},1000);window.addEventListener('keydown',openSettings);});
-onUnmounted(()=>{unmounted=true;unlistenNavigation?.();unlistenDeepLink?.();clearInterval(timer);clearInterval(dayReviewTimer);clearInterval(clockTimer);window.removeEventListener('keydown',openSettings);});
+function refreshOnFocus(){const pending=refreshJob;if(pending)void pending.then(()=>refresh());else void refresh();}
+onMounted(()=>{void listenNavigation();void listenDeepLinks();void refresh();void loadDayReview();timer=setInterval(()=>{void refresh();},5000);dayReviewTimer=setInterval(()=>{void loadDayReview();},60000);let previousDay=dateString(new Date());clockTimer=setInterval(()=>{now.value=Date.now()/1000;const currentDay=dateString(new Date());if(currentDay!==previousDay){if(selectedDate.value===previousDay)selectedDate.value=currentDay;previousDay=currentDay;}},1000);window.addEventListener('keydown',openSettings);window.addEventListener('focus',refreshOnFocus);});
+onUnmounted(()=>{unmounted=true;unlistenNavigation?.();unlistenDeepLink?.();clearInterval(timer);clearInterval(dayReviewTimer);clearInterval(clockTimer);window.removeEventListener('keydown',openSettings);window.removeEventListener('focus',refreshOnFocus);});
 </script>
 <template>
 <TooltipProvider :delay-duration="350">

@@ -269,6 +269,7 @@ test('display summaries can lag briefly while an exact summary sees new capture'
   const first=c.summary();
   c.store.put(makeEvent('hook','session_start',{provider:'claude',sessionId:'fresh',hostId:'local'}));
   assert.equal(c.summary(15000),first);
+  c.trayStatus();assert.equal(c.summary(60000),first);
   assert.ok(c.summary().sessions.some(s=>s.sessionId==='fresh'));
  }finally{await c.close();rmSync(path,{recursive:true});}
 });

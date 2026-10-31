@@ -79,8 +79,8 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:await controller.start(duration)};
     }
     if(request.method==='summary'&&params.date!==undefined){
-      if(Object.keys(params).length!==1||typeof params.date!=='string'||!controller.summaryForDate)throw new Error('Invalid summary date');
-      return {id,result:controller.summaryForDate(params.date,15000)};
+      if(Object.keys(params).some(key=>key!=='date'&&key!=='background')||typeof params.date!=='string'||params.background!==undefined&&typeof params.background!=='boolean'||!controller.summaryForDate)throw new Error('Invalid summary date');
+      return {id,result:controller.summaryForDate(params.date,params.background===true?60000:15000)};
     }
     if(request.method==='weekly_review'){
       if(!controller.weeklyReview||Object.keys(params).length!==1||typeof params.startDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.startDate))throw new Error('Invalid week start');
