@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.15` candidate — 2026-10-31
+## `0.2.0-beta.15` published — 2026-10-31
 
-This candidate adds explicit discovery of Orca Claude profiles for hooks, local MCP setup, and captured-session token usage. It can repair copied user hooks as a profile-specific installation and adopt an unchanged copied app-managed MCP entry without rewriting the profile file. See [updater notes](0.2.0-beta.15-notes.md). The active profile was inspected read-only; its existing hook commands and MCP entry match the user-root configuration, while no profile-specific hook ledger exists. Local verification passed 278 JavaScript tests, typecheck, and UI build. Signed build, notarization, and public-byte verification remain pending the Apple Silicon release workflow.
+This release adds explicit discovery of Orca Claude profiles for hooks, local MCP setup, and captured-session token usage. It can repair copied user hooks as a profile-specific installation and adopt an unchanged copied app-managed MCP entry without rewriting the profile file. See [updater notes](0.2.0-beta.15-notes.md). The active profile was inspected read-only; its existing hook commands and MCP entry match the user-root configuration, while no profile-specific hook ledger exists. Local verification passed 278 JavaScript tests, typecheck, and UI build.
+
+GitHub's Apple Silicon [release run 41200023653](https://github.com/zaosoula/agent-time/actions/runs/41200023653) built exact `main` commit `d18a670c97a1f3f520ca2e25f126a0840883fd63`; candidate, signed build, staging, and publication jobs succeeded. The hosted updater archive matched staged SHA-256 `c213a99a97243a1a05b97b64a1327e969915aeab748af1f24aad657afb98183f`. The public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.15/Agent%20Time_0.2.0-beta.15_aarch64.dmg) independently downloaded at SHA-256 `0a0ce2d73bb80ce11e09412aa98fd00e5346309f17d93e485aacfc86e1c8a997`, matching the staged hash. It passed stapler validation; its mounted app passed strict nested code-signature verification and Gatekeeper assessment as a notarized Developer ID app. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.15 for `darwin-aarch64` with an updater signature. The local app and live Orca profile were not modified by these release checks.
 
 The MCP's reported task and elapsed counters remain available through its tools; they are not displayed in the app UI or counted as measured time. This release does not change that behavior.
 
