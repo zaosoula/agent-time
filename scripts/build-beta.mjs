@@ -76,6 +76,7 @@ for(const suffix of [
  '/Contents/MacOS/widget-snapshot',
  '/Contents/Resources/icon.icns',
  '/Contents/Resources/mcp/server.ts',
+ '/Contents/Resources/mcp/claude-statusline-cli.ts',
  '/Contents/Resources/node_modules/@modelcontextprotocol/server/package.json',
  '/Contents/Resources/node_modules/@modelcontextprotocol/core/package.json',
  '/Contents/Resources/node_modules/zod/package.json',
@@ -108,6 +109,8 @@ try{
  const mcp=spawnSync(join(app,'Contents/MacOS/node'),[join(app,'Contents/Resources/mcp/server.ts')],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'release-smoke',version:'1'}}})+'\n',encoding:'utf8',timeout:15000,env:{...process.env,HOME:smokeHome,ADE_CAPTURE_OUTPUT:join(smokeHome,'capture')}});
  let handshake;try{handshake=JSON.parse(mcp.stdout.trim().split('\n')[0]);}catch{}
  if(mcp.status!==0||handshake?.result?.serverInfo?.name!=='agent-time')throw new Error(`Bundled MCP server could not start: ${mcp.stderr.slice(0,1000)}`);
+ const statusLine=spawnSync(join(app,'Contents/MacOS/node'),[join(app,'Contents/Resources/mcp/claude-statusline-cli.ts'),join(smokeHome,'capture'),join(smokeHome,'missing-ledger.json'),'smoke'],{input:'{"session_id":"smoke"}\n',encoding:'utf8',timeout:5000,env:{...process.env,HOME:smokeHome}});
+ if(statusLine.status!==0||statusLine.stdout.trim())throw new Error(`Bundled Claude status line could not start cleanly: ${statusLine.stderr.slice(0,1000)}`);
 }finally{rmSync(smokeHome,{recursive:true,force:true});}
 validateStaple(app);validateStaple(container);
 run('spctl',['--assess','--type','execute','--verbose=4',app]);

@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.16` candidate — 2026-10-31
+
+This candidate simplifies My day, shows MCP-reported task context and elapsed counters on the timeline without adding them to measured totals, and adds an opt-in Claude Code status line that preserves an existing line and requires a matching session ID. See [updater notes](0.2.0-beta.16-notes.md). The Claude status line is not automatically installed on existing Macs; its control is in Settings → Agents → Claude Code.
+
+Local preparation passed the five-file version check, 286 JavaScript tests, the UI build and typecheck, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The release build now checks that the Claude status line helper is present in the updater archive and starts successfully from the signed bundle. Publication evidence, signed artifact hashes, and live feed verification are pending the GitHub Apple Silicon release run.
+
 ## `0.2.0-beta.15` published — 2026-10-31
 
 This release adds explicit discovery of Orca Claude profiles for hooks, local MCP setup, and captured-session token usage. It can repair copied user hooks as a profile-specific installation and adopt an unchanged copied app-managed MCP entry without rewriting the profile file. See [updater notes](0.2.0-beta.15-notes.md). The active profile was inspected read-only; its existing hook commands and MCP entry match the user-root configuration, while no profile-specific hook ledger exists. Local verification passed 278 JavaScript tests, typecheck, and UI build.
