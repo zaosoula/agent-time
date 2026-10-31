@@ -4,6 +4,7 @@ import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {validateManualNote,type ManualNote} from './store.ts';
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string):unknown;markDayReview?(date:string):unknown;}
+interface Controller {reportedWork?(date:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;weeklyReview?(startDate:string):unknown;workOutcomes?(date:string):Promise<unknown>;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;mcpStatus?():unknown;installMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;removeMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
@@ -79,8 +80,12 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:await controller.start(duration)};
     }
     if(request.method==='summary'&&params.date!==undefined){
-      if(Object.keys(params).length!==1||typeof params.date!=='string'||!controller.summaryForDate)throw new Error('Invalid summary date');
-      return {id,result:controller.summaryForDate(params.date,15000)};
+      if(Object.keys(params).some(key=>key!=='date'&&key!=='background')||typeof params.date!=='string'||params.background!==undefined&&typeof params.background!=='boolean'||!controller.summaryForDate)throw new Error('Invalid summary date');
+      return {id,result:controller.summaryForDate(params.date,params.background===true?60000:15000)};
+    }
+    if(request.method==='reported_work'){
+      if(!controller.reportedWork||Object.keys(params).length!==1||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date)||Number.isNaN(new Date(`${params.date}T00:00:00`).getTime())||new Date(`${params.date}T00:00:00`).toLocaleDateString('en-CA')!==params.date)throw new Error('Invalid reported work date');
+      return {id,result:controller.reportedWork(params.date)};
     }
     if(request.method==='weekly_review'){
       if(!controller.weeklyReview||Object.keys(params).length!==1||typeof params.startDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.startDate))throw new Error('Invalid week start');

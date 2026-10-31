@@ -11,6 +11,7 @@ export interface BrowserSource {
 export interface AgentSource {
   kind:'agent';id:string;name:string;setting:string;usageSetting:string;defaultEnabled:boolean;
   configDirectory:string;configFile:string;configEnv:string;
+  orcaDirectories?:string[];
   discoverAccount(root:string):string[];
   hookEvents:string[];legacyConfigSuffix?:string;
   trustNote?:string;

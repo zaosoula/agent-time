@@ -28,6 +28,7 @@ export class EventStore {
     }
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
   }
   put(event: CaptureEvent): boolean {
     validateEvent(event);
@@ -71,9 +72,26 @@ export class EventStore {
   events(): CaptureEvent[] {
     // Preserve causal insertion order across process epochs. Reducers sort per source epoch.
     const events:CaptureEvent[]=[];
-    for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate())
-      events.push(JSON.parse(String(row.payload)) as CaptureEvent);
+    const pooled=new Map<string,string>();
+    const intern=(value:unknown)=>{
+      if(typeof value!=='string')return value;
+      const previous=pooled.get(value);if(previous!==undefined)return previous;
+      pooled.set(value,value);return value;
+    };
+    const identityFields=['source','kind','hostId','workspaceId','sessionId','agentId','dispatchId','terminalHandle','terminalIncarnation','provider','runId','taskId','cwd'] as const;
+    const detailFields=['foregroundBundleId','foregroundName','browserDomain','state','outcome','toolName','hook'] as const;
+    for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate()){
+      const event=JSON.parse(String(row.payload)) as CaptureEvent;
+      for(const key of identityFields)if(typeof event[key]==='string')(event as unknown as Record<string,unknown>)[key]=intern(event[key]);
+      if(event.source==='macos'||event.source==='orca'||event.source==='capture')event.collectorEpoch=intern(event.collectorEpoch) as string;
+      if(event.data)for(const key of detailFields)if(typeof event.data[key]==='string')event.data[key]=intern(event.data[key]);
+      events.push(event);
+    }
     return events;
+  }
+  agentReports(start:number,end:number):CaptureEvent[]{
+    return this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").all(start,end)
+      .map(row=>JSON.parse(String(row.payload)) as CaptureEvent);
   }
   lastEventRowid():number{return Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) rowid FROM events').get()?.rowid||0);}
   eventsAfterRowid(rowid:number):Array<{rowid:number;event:CaptureEvent}>{

@@ -24,10 +24,13 @@ export class McpInstallation {
   const add=(provider:Provider,label:string,home:string,configHome:string,override:boolean)=>{const key=provider+':'+resolve(configHome);if(seen.has(key))return;seen.add(key);all.push({id:hash(key),provider,label,home:resolve(home),configHome:resolve(configHome),override});};
   for(const provider of ['claude','codex'] as const){
    const agent=agentById.get(provider);if(!agent)continue;
-   const active=this.env[agent.configEnv];add(provider,`${agent.name} · user`,this.home,active||(provider==='claude'?this.home:join(this.home,agent.configDirectory)),Boolean(active));
-   const base=join(this.home,'Library/Application Support/orca',provider+'-accounts');let index=0;
-   for(const item of existsSync(base)?readdirSync(base,{withFileTypes:true}):[]){if(!item.isDirectory())continue;index++;
-    for(const folder of agent.discoverAccount(join(base,item.name)))add(provider,`${agent.name} · Orca account ${index}`,folder,folder,true);
+   const active=this.env[agent.configEnv];add(provider,`${agent.name} · user`,this.home,provider==='claude'?this.home:join(this.home,agent.configDirectory),false);
+   if(active)add(provider,`${agent.name} · active config`,this.home,active,true);
+   for(const directory of agent.orcaDirectories||[provider+'-accounts']){
+    const base=join(this.home,'Library/Application Support/orca',directory);let index=0;
+    for(const item of existsSync(base)?readdirSync(base,{withFileTypes:true}):[]){if(!item.isDirectory())continue;index++;
+     for(const folder of agent.discoverAccount(join(base,item.name)))add(provider,`${agent.name} · Orca ${directory.endsWith('-profiles')?'profile':'account'} ${index}`,folder,folder,true);
+    }
    }
   }
   return all;
@@ -52,11 +55,13 @@ export class McpInstallation {
  private records():Record<string,Entry>{if(!existsSync(this.ledger))return {};const parsed:unknown=JSON.parse(readFileSync(this.ledger,'utf8'));if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))throw new Error('Invalid MCP installation record');return parsed as Record<string,Entry>;}
  private save(records:Record<string,Entry>){mkdirSync(dirname(this.ledger),{recursive:true,mode:0o700});const temp=this.ledger+'.'+randomUUID()+'.tmp';writeFileSync(temp,JSON.stringify(records,null,2),{mode:0o600,flag:'wx'});renameSync(temp,this.ledger);}
  private desired(provider:Provider):Entry{return {command:this.runtime.node,args:[this.runtime.server],env:{AGENT_TIME_PROVIDER:provider,ADE_CAPTURE_OUTPUT:this.output}};}
+ private copiedManagedEntry(current:Entry,previous:Entry|undefined,records:Record<string,Entry>,desired:Entry){return !previous&&same(current,desired)&&Object.values(records).some(entry=>owned(entry)&&same(entry,current));}
  status():McpInstallationStatus{
   const runtimeReady=existsSync(this.runtime.node)&&existsSync(this.runtime.server);let records:Record<string,Entry>={};try{records=this.records();}catch{return {runtimeReady,targets:this.targets().map(t=>({id:t.id,provider:t.provider,label:t.label,state:'error',detail:'MCP installation record needs repair'}))};}
   return {runtimeReady,targets:this.targets().map(target=>{try{
    const current=this.read(target),previous=records[target.id],desired=this.desired(target.provider);
    if(!current)return {id:target.id,provider:target.provider,label:target.label,state:'not-installed',detail:'Agent Time tools are not configured'};
+   if(this.copiedManagedEntry(current,previous,records,desired))return {id:target.id,provider:target.provider,label:target.label,state:'needs-update',detail:'Copied Agent Time tools can be linked to this configuration'};
    if(!previous||!owned(previous)||!same(current,previous))return {id:target.id,provider:target.provider,label:target.label,state:'conflict',detail:'This Agent Time entry was changed outside the app; it will not be overwritten'};
    if(!runtimeReady||!same(current,desired))return {id:target.id,provider:target.provider,label:target.label,state:'needs-update',detail:'The MCP runtime or data path needs repair'};
    return {id:target.id,provider:target.provider,label:target.label,state:'installed',detail:'Configured; start a new agent session to load tools'};
@@ -68,12 +73,12 @@ export class McpInstallation {
   const records=this.records(),selected=targets.filter(t=>!targetIds||targetIds.includes(t.id));
   for(const target of selected){
    const current=this.read(target),previous=records[target.id],desired=this.desired(provider);
-   if(current&&(!previous||!owned(previous)||!same(current,previous)))throw new Error(`${target.label}: existing Agent Time MCP entry is not app-managed`);
+   if(current&&!this.copiedManagedEntry(current,previous,records,desired)&&(!previous||!owned(previous)||!same(current,previous)))throw new Error(`${target.label}: existing Agent Time MCP entry is not app-managed`);
    if(!this.binary(provider))throw new Error(`${target.label}: ${provider} CLI is not installed`);
   }
   for(const target of selected){
    const current=this.read(target),previous=records[target.id],desired=this.desired(provider);
-   if(current&&same(current,desired))continue;
+   if(current&&same(current,desired)){if(this.copiedManagedEntry(current,previous,records,desired)){records[target.id]=desired;this.save(records);}continue;}
    // CLI removal is needed before re-adding a managed entry on both providers.
    if(current)this.run(target,['remove','agent-time']);
    try{this.run(target,provider==='claude'?['add','--scope','user','agent-time','-e',`AGENT_TIME_PROVIDER=${provider}`,`ADE_CAPTURE_OUTPUT=${this.output}`,'--',desired.command,...desired.args]:['add','--env',`AGENT_TIME_PROVIDER=${provider}`,'--env',`ADE_CAPTURE_OUTPUT=${this.output}`,'agent-time','--',desired.command,...desired.args]);}

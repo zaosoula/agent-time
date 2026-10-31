@@ -8,6 +8,13 @@ test('capture caveats retain the observation time for daily review',()=>{
  assert.deepEqual(summary.coverage.map(issue=>issue.observedAt),[123]);
  assert.deepEqual(summary.unresolved.map(issue=>issue.observedAt),[456]);
 });
+test('SQLite-unique replay matches general replay without mutating insertion order',()=>{
+ const events=[e('first',10,'tool_start',{sessionId:'s',terminalHandle:'t',hostId:'local',data:{toolId:'one'}}),e('second',20,'tool_end',{sessionId:'s',terminalHandle:'t',hostId:'local',data:{toolId:'one'}}),e('gap',30,'coverage',{source:'orca',data:{reason:'Poll failed'}})];
+ const before=events.map(event=>event.eventId);
+ assert.deepEqual(summarize(events,{alreadyUnique:true}),summarize(events));
+ assert.deepEqual(events.map(event=>event.eventId),before);
+ assert.deepEqual(summarize([...events,events[0]!]),summarize(events));
+});
 test('a completed prompt-to-response turn includes reasoning gaps without double-counting tool execution',()=>{
  const root={sessionId:'s1',terminalHandle:'t1',hostId:'local',provider:'codex'};
  const s=summarize([e('prompt',0,'prompt_submitted',root),e('tool-start',10,'tool_start',{...root,data:{toolId:'a'}}),e('tool-end',20,'tool_end',{...root,data:{toolId:'a'}}),e('stop',60,'response_stop',root)]);

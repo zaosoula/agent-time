@@ -47,9 +47,14 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
  if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>31*86400)throw new Error('Invalid bounded time range');
  const db=database(output),lookback=Math.max(0,from-3600);
  try{
-  const rows=db.prepare('SELECT payload FROM events WHERE observed_at>=? AND observed_at<? ORDER BY rowid LIMIT ?').all(lookback,to,maxEvents+1);
-  if(rows.length>maxEvents)throw new Error('Too many events for one query; use a shorter date range');
-  const events=[...rows.map(row=>JSON.parse(String(row.payload)) as CaptureEvent),...pendingReports(output).filter(e=>e.observedAt>=lookback&&e.observedAt<to)];
+  const count=Number(db.prepare('SELECT COUNT(*) AS count FROM events WHERE observed_at>=? AND observed_at<?').get(lookback,to)?.count||0);
+  if(count>maxEvents)throw new Error('Too many events for one query; use a shorter date range');
+  const events:CaptureEvent[]=[];
+  for(const row of db.prepare('SELECT payload FROM events WHERE observed_at>=? AND observed_at<? ORDER BY rowid').iterate(lookback,to)){
+   if(events.length>=maxEvents)throw new Error('Too many events for one query; use a shorter date range');
+   events.push(JSON.parse(String(row.payload)) as CaptureEvent);
+  }
+  events.push(...pendingReports(output).filter(e=>e.observedAt>=lookback&&e.observedAt<to));
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
   const settingsPath=join(output,'settings.json');let settings:Record<string,unknown>={};
