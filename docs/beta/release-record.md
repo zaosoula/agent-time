@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.15` candidate — 2026-10-31
+
+This candidate adds explicit discovery of Orca Claude profiles for hooks, local MCP setup, and captured-session token usage. It can repair copied user hooks as a profile-specific installation and adopt an unchanged copied app-managed MCP entry without rewriting the profile file. See [updater notes](0.2.0-beta.15-notes.md). The active profile was inspected read-only; its existing hook commands and MCP entry match the user-root configuration, while no profile-specific hook ledger exists. Local verification passed 278 JavaScript tests, typecheck, and UI build. Signed build, notarization, and public-byte verification remain pending the Apple Silicon release workflow.
+
+The MCP's reported task and elapsed counters remain available through its tools; they are not displayed in the app UI or counted as measured time. This release does not change that behavior.
+
 ## `0.2.0-beta.14` published — 2026-10-31
 
 This release reduces the desktop day payload, collector summary allocations, and local MCP date-query memory, and gives the unfocused desktop a one-minute summary cadence. See [updater notes](0.2.0-beta.14-notes.md) and the [memory audit](../performance/2026-10-31-memory-audit.md). On one read-only 986,286-event backup, the isolated collector day request fell from 11.1 seconds and 1,388 MB peak RSS to 7.4 seconds and 1,051 MB peak RSS; full and day summaries matched the previous JSON hashes exactly. The full suite passed 272 JavaScript tests, UI build and typecheck, production dependency audit, sidecar build, and 18 locked Rust tests locally.
