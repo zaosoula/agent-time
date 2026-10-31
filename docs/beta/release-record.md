@@ -1,10 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.16` candidate — 2026-10-31
+## `0.2.0-beta.16` published — 2026-10-31
 
 This candidate simplifies My day, shows MCP-reported task context and elapsed counters on the timeline without adding them to measured totals, and adds an opt-in Claude Code status line that preserves an existing line and requires a matching session ID. See [updater notes](0.2.0-beta.16-notes.md). The Claude status line is not automatically installed on existing Macs; its control is in Settings → Agents → Claude Code.
 
-Local preparation passed the five-file version check, 286 JavaScript tests, the UI build and typecheck, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The release build now checks that the Claude status line helper is present in the updater archive and starts successfully from the signed bundle. Publication evidence, signed artifact hashes, and live feed verification are pending the GitHub Apple Silicon release run.
+Local preparation passed the five-file version check, 286 JavaScript tests, the UI build and typecheck, a production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The release build checks that the Claude status line helper is present in the updater archive and starts successfully from the signed bundle.
+
+GitHub's Apple Silicon [release run 41241555539](https://github.com/zaosoula/agent-time/actions/runs/41241555539) built exact `main` commit `7fbad51f87c986e56e2f4711f4d3d4fc41ed8e90`; candidate, signed build, notarization, staging, and publication jobs succeeded. The independently downloaded updater archive matched staged SHA-256 `1fd07d10b237313c82199d65aecdfa1379c8dbffbe059bbd6bd87485064a805f`. The public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.16/Agent%20Time_0.2.0-beta.16_aarch64.dmg) independently matched staged SHA-256 `93d569ece9a955ca0028d65ab7e839bed8372439699a68332f54e87f04a1589e`. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.16 for `darwin-aarch64` with an updater signature, and the public landing page displays beta.16. No in-app OTA on the local Mac was performed as part of publication.
 
 ## `0.2.0-beta.15` published — 2026-10-31
 
