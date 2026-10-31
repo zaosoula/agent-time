@@ -17,4 +17,8 @@ copyFileSync('.capture/bin/widget-snapshot',`src-tauri/binaries/widget-snapshot-
 execFileSync('node',['scripts/build-widget.mjs'],{stdio:'inherit',env:process.env});
 cpSync('src/usage','src-tauri/resources/usage',{recursive:true});writeFileSync('src-tauri/resources/usage/package.json','{"type":"module"}\n');
 cpSync('src/capture','src-tauri/resources/capture',{recursive:true});writeFileSync('src-tauri/resources/capture/package.json','{"type":"module"}\n');
+cpSync('src/mcp','src-tauri/resources/mcp',{recursive:true});writeFileSync('src-tauri/resources/mcp/package.json','{"type":"module"}\n');
+mkdirSync('src-tauri/resources/node_modules/@modelcontextprotocol',{recursive:true});
+for(const name of ['server','core'])cpSync(`node_modules/@modelcontextprotocol/${name}`,`src-tauri/resources/node_modules/@modelcontextprotocol/${name}`,{recursive:true});
+cpSync('node_modules/zod','src-tauri/resources/node_modules/zod',{recursive:true});
 console.log(`Prepared Node ${process.version} and macOS helper for ${target}`);

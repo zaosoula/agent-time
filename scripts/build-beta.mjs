@@ -75,6 +75,10 @@ for(const suffix of [
  '/Contents/PlugIns/AgentTimeWidget.appex/Contents/MacOS/AgentTimeWidget',
  '/Contents/MacOS/widget-snapshot',
  '/Contents/Resources/icon.icns',
+ '/Contents/Resources/mcp/server.ts',
+ '/Contents/Resources/node_modules/@modelcontextprotocol/server/package.json',
+ '/Contents/Resources/node_modules/@modelcontextprotocol/core/package.json',
+ '/Contents/Resources/node_modules/zod/package.json',
 ])if(!archiveEntries.some(entry=>entry.endsWith(suffix)))throw new Error(`Updater archive is missing ${suffix}`);
 const bundledFiles=[];
 function visit(folder){for(const entry of readdirSync(folder,{withFileTypes:true})){
@@ -101,6 +105,9 @@ try{
  const collector=spawnSync(join(app,'Contents/MacOS/node'),[join(app,'Contents/Resources/capture/cli.ts'),'protocol','--output',join(smokeHome,'capture'),'--probe',join(app,'Contents/MacOS/agent-activity'),'--keychain',join(app,'Contents/MacOS/linear-keychain')],{input:'{"id":"smoke","method":"status","params":{}}\n',encoding:'utf8',timeout:15000,env:{...process.env,HOME:smokeHome}});
  let reply;try{reply=JSON.parse(collector.stdout.trim());}catch{}
  if(collector.status!==0||reply?.id!=='smoke'||reply?.result?.surfaces?.macosActivity!==true)throw new Error(`Bundled collector could not start: ${collector.stderr.slice(0,1000)}`);
+ const mcp=spawnSync(join(app,'Contents/MacOS/node'),[join(app,'Contents/Resources/mcp/server.ts')],{input:JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'release-smoke',version:'1'}}})+'\n',encoding:'utf8',timeout:15000,env:{...process.env,HOME:smokeHome,ADE_CAPTURE_OUTPUT:join(smokeHome,'capture')}});
+ let handshake;try{handshake=JSON.parse(mcp.stdout.trim().split('\n')[0]);}catch{}
+ if(mcp.status!==0||handshake?.result?.serverInfo?.name!=='agent-time')throw new Error(`Bundled MCP server could not start: ${mcp.stderr.slice(0,1000)}`);
 }finally{rmSync(smokeHome,{recursive:true,force:true});}
 validateStaple(app);validateStaple(container);
 run('spctl',['--assess','--type','execute','--verbose=4',app]);

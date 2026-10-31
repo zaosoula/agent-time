@@ -6,6 +6,7 @@ import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool,spoolStatus } from './hooks.ts';
+import {validAgentReport} from '../mcp/report.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -13,6 +14,7 @@ import { dailyCaptureIssues,dailyTotals,summaryForDate,workingAgentCount } from 
 import {appendActivitySummary} from './incremental-summary.ts';
 import {UsageReader} from '../usage/reader.ts';
 import {HookInstallation,type HookProvider} from './hook-installation.ts';
+import {McpInstallation} from './mcp-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
 import {WebsiteResolver,websiteKey,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
@@ -40,7 +42,7 @@ export class Collector {
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
   private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
-  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number;eventsRef?:WeakRef<CaptureEvent[]>;eventsRowid?:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;
+  private summaryCache:{revision:string;safeRevision:string;at:number;value:Summary;rowid:number;lastActivity?:CaptureEvent;maxObservedAt:number;eventsRef?:WeakRef<CaptureEvent[]>;eventsRowid?:number}|undefined;private usageReader:UsageReader;private hookInstallation:HookInstallation;private mcpInstallation:McpInstallation;
   private interval:number; private runId?:string; private reader:typeof callOrca;
   private focusedTabs:FocusedOrcaTab[]=[];private focusedTabsAt=0;
   private lastOrcaAccessibility:AccessibilityCapture|null=null;
@@ -71,7 +73,7 @@ export class Collector {
       }
     }
     this.surfaceHistory=this.store.settingsEvents().sort((a,b)=>a.observedAt-b.observedAt);
-    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.syncUsage();
+    this.usageReader=new UsageReader(join(output,'events.sqlite'),undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.mcpInstallation=new McpInstallation(output);this.syncUsage();
   }
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
@@ -80,6 +82,9 @@ export class Collector {
   cleanupPreview(){return this.hookInstallation.cleanupPreview();}
   cleanupTracking(){return this.hookInstallation.cleanup();}
   hooksStatus(){return this.hookInstallation.status();}
+  mcpStatus(){return this.mcpInstallation.status();}
+  installMcp(provider:'claude'|'codex',targetIds?:string[]){return this.mcpInstallation.install(provider,targetIds);}
+  removeMcp(provider:'claude'|'codex',targetIds?:string[]){return this.mcpInstallation.remove(provider,targetIds);}
   captureHealth():CaptureHealth{
     const macos=this.store.recent('macos',16),hookEvents=Object.fromEntries(agents.map(agent=>[agent.id,this.store.recent('hook',24,agent.id)])) as Record<string,CaptureEvent[]>,pollerEvents=Object.fromEntries(pollers.map(source=>[source.id,this.store.recent(source.id,32)])) as Record<string,CaptureEvent[]>,capture=this.store.recent('capture',8);
     const targets=this.hookInstallation.status().targets;
@@ -272,7 +277,7 @@ export class Collector {
     return enabled===true;
   }
   private drainHooks(){
-    const accept=(event:CaptureEvent)=>this.acceptHook(event);
+    const accept=(event:CaptureEvent)=>event.source==='agent_report'?validAgentReport(event):this.acceptHook(event);
     const issues=importSpool(join(this.output,'spool'),this.store,accept);
     for(const path of this.legacyHookSpools){
       try{const info=lstatSync(path);if(info.isDirectory()&&!info.isSymbolicLink())issues.push(...importSpool(path,this.store,accept));}catch{/* Retired legacy directories can be removed after existing sessions exit. */}
