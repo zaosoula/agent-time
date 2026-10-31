@@ -1,4 +1,4 @@
-import type { Issue, Summary } from './events.ts';
+import type { CaptureEvent, Issue, Summary } from './events.ts';
 import { groupIntervals, minuteCreditSeconds } from './correlate.ts';
 import { staticOrcaScopeReason } from './observation-retention.ts';
 export function dailyCaptureIssues(summary:Summary,from:number,to:number):Issue[] {
@@ -24,6 +24,31 @@ export function workingAgentCount(summary:Summary,now=new Date(),running=true):n
  return summary.sessions.filter(session=>session.seconds>0&&['working','running'].includes(session.state)&&now.getTime()/1000-session.lastObservedAt<20).length;
 }
 
+// The tray can count recent activity without replaying the entire archive.
+// Capture remains the source of truth; this is only the live indicator.
+export function recentWorkingAgentCount(workers:CaptureEvent[],hooks:CaptureEvent[],now=Date.now()/1000):number {
+ const recent=(event:CaptureEvent)=>event.observedAt<=now&&now-event.observedAt<20;
+ const latestWorkers=new Map<string,CaptureEvent>();
+ for(const event of workers.filter(recent).sort((a,b)=>b.observedAt-a.observedAt)){
+  if(event.kind!=='worker'||!event.dispatchId)continue;
+  const key=JSON.stringify([event.hostId??null,event.dispatchId]);
+  if(!latestWorkers.has(key))latestWorkers.set(key,event);
+ }
+ const activeWorkers=[...latestWorkers.values()].filter(event=>event.data?.fresh===true&&event.data?.state==='working'&&!['succeeded','failed','completed','cancelled','abandoned'].includes(String(event.data?.outcome)));
+ const workerTerminals=new Set(activeWorkers.filter(event=>event.terminalHandle).map(event=>JSON.stringify([event.hostId??null,event.terminalHandle])));
+ const workerDispatches=new Set(activeWorkers.map(event=>JSON.stringify([event.hostId??null,event.dispatchId])));
+ const latestHooks=new Map<string,CaptureEvent>();
+ for(const event of hooks.filter(recent).sort((a,b)=>b.observedAt-a.observedAt)){
+  if(!event.sessionId||!event.terminalHandle&&!event.dispatchId)continue;
+  const key=JSON.stringify([event.hostId??null,event.sessionId,event.agentId??null]);
+  if(!latestHooks.has(key))latestHooks.set(key,event);
+ }
+ const hookCount=[...latestHooks.values()].filter(event=>event.kind==='tool_start'&&
+  (Boolean(event.agentId)||!workerDispatches.has(JSON.stringify([event.hostId??null,event.dispatchId]))&&
+   !workerTerminals.has(JSON.stringify([event.hostId??null,event.terminalHandle])))).length;
+ return activeWorkers.length+hookCount;
+}
+
 export function summaryForDate(summary:Summary,date:string):Summary {
  if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('Invalid summary date');
  const start=new Date(`${date}T00:00:00`);
@@ -31,7 +56,17 @@ export function summaryForDate(summary:Summary,date:string):Summary {
  const end=new Date(start);end.setDate(end.getDate()+1);
  const from=start.getTime()/1000,to=end.getTime()/1000;
  const intervals=summary.intervals.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(i.start,from),end:Math.min(i.end,to)}));
- const day={...summary,intervals};
+ const evidence=new Set(intervals.flatMap(i=>[
+  ...(i.sessionId?[JSON.stringify([i.hostId??null,'session',i.sessionId,i.child===true,i.agentId??null])]:[]),
+  ...(i.dispatchId?[JSON.stringify([i.hostId??null,'dispatch',i.dispatchId,i.child===true,i.agentId??null])]:[]),
+ ]));
+ const sessions=summary.sessions.filter(s=>s.lastObservedAt>=from&&s.lastObservedAt<to||
+  Boolean(s.sessionId&&evidence.has(JSON.stringify([s.hostId??null,'session',s.sessionId,s.child===true,s.agentId??null])))||
+  Boolean(s.dispatchId&&evidence.has(JSON.stringify([s.hostId??null,'dispatch',s.dispatchId,s.child===true,s.agentId??null]))));
+ const coverage=summary.coverage.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
+ const unresolved=summary.unresolved.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
+ const issueReasons=summary.issueReasons??[...new Set([...summary.coverage,...summary.unresolved].map(issue=>issue.reason))];
+ const day={...summary,intervals,sessions,coverage,unresolved,issueReasons};
  const children=new Map<string,Array<[number,number]>>();
  for(const interval of intervals.filter(i=>i.child&&i.state==='grouped')){
   const key=JSON.stringify([interval.hostId,interval.sessionId,interval.agentId]);

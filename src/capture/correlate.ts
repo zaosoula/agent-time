@@ -24,14 +24,19 @@ export function groupIntervals(intervals:Array<[number,number]>,maxGap=60,blocke
  return grouped;
 }
 const settled=(e:CaptureEvent)=>['succeeded','failed','completed','cancelled','abandoned'].includes(String(e.data?.outcome));
-export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;agentIdleThreshold?:number;maxGap?:number}={}):Summary {
+export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;agentIdleThreshold?:number;maxGap?:number;alreadyUnique?:boolean}={}):Summary {
  const maxGap=options.maxGap??15,idle=options.idleThreshold??300,agentIdle=options.agentIdleThreshold??300;
  if(!Number.isFinite(idle)||idle<=0||!Number.isFinite(agentIdle)||agentIdle<=0)throw new Error('invalid idle threshold');
- const unique:CaptureEvent[]=[],byId=new Map<string,number>();
- for(const event of input){
-  const index=byId.get(event.eventId);
-  if(index===undefined){byId.set(event.eventId,unique.length);unique.push(event);}
-  else unique[index]=event;
+ // SQLite's event_id primary key guarantees this for collector reads. Keep
+ // the general reducer's last-duplicate-wins behavior for other callers.
+ const unique:CaptureEvent[]=options.alreadyUnique?input.slice():[];
+ if(!options.alreadyUnique){
+  const byId=new Map<string,number>();
+  for(const event of input){
+   const index=byId.get(event.eventId);
+   if(index===undefined){byId.set(event.eventId,unique.length);unique.push(event);}
+   else unique[index]=event;
+  }
  }
  // Preserve per-epoch causal order even when wall time rolls backwards, with a transitive global ordering.
  const epochGroups=new Map<string,CaptureEvent[]>();
@@ -276,7 +281,9 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  const groupedActivity=[...roots,...children].flatMap(([key,ranges])=>grouped(key,ranges));
  const humanRanges=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);
- const observedAt=new Map(unique.map(event=>[event.eventId,event.observedAt]));
+ const issueIds=new Set([...coverage,...unresolved].map(issue=>issue.eventId).filter((id):id is string=>Boolean(id)));
+ const observedAt=new Map<string,number>();
+ for(const event of unique)if(issueIds.has(event.eventId))observedAt.set(event.eventId,event.observedAt);
  const dated=(issues:Issue[])=>issues.map(issue=>({...issue,observedAt:issue.eventId?observedAt.get(issue.eventId):undefined}));
  return {intervals,unresolved:dated(unresolved),coverage:dated(coverage),sessions:[...sessions.values()],humanSeconds:minuteCreditSeconds(humanRanges),agentSeconds:[...roots].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),childAgentSeconds:[...children].reduce((sum,[key,r])=>sum+minuteCreditSeconds(grouped(key,r)),0),elapsedSeconds:minuteCreditSeconds([...groupedActivity,...humanRanges])};
 }

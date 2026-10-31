@@ -71,8 +71,21 @@ export class EventStore {
   events(): CaptureEvent[] {
     // Preserve causal insertion order across process epochs. Reducers sort per source epoch.
     const events:CaptureEvent[]=[];
-    for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate())
-      events.push(JSON.parse(String(row.payload)) as CaptureEvent);
+    const pooled=new Map<string,string>();
+    const intern=(value:unknown)=>{
+      if(typeof value!=='string')return value;
+      const previous=pooled.get(value);if(previous!==undefined)return previous;
+      pooled.set(value,value);return value;
+    };
+    const identityFields=['source','kind','hostId','workspaceId','sessionId','agentId','dispatchId','terminalHandle','terminalIncarnation','provider','runId','taskId','cwd'] as const;
+    const detailFields=['foregroundBundleId','foregroundName','browserDomain','state','outcome','toolName','hook'] as const;
+    for(const row of this.db.prepare('SELECT payload FROM events ORDER BY rowid').iterate()){
+      const event=JSON.parse(String(row.payload)) as CaptureEvent;
+      for(const key of identityFields)if(typeof event[key]==='string')(event as unknown as Record<string,unknown>)[key]=intern(event[key]);
+      if(event.source==='macos'||event.source==='orca'||event.source==='capture')event.collectorEpoch=intern(event.collectorEpoch) as string;
+      if(event.data)for(const key of detailFields)if(typeof event.data[key]==='string')event.data[key]=intern(event.data[key]);
+      events.push(event);
+    }
     return events;
   }
   lastEventRowid():number{return Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) rowid FROM events').get()?.rowid||0);}

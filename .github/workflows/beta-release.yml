@@ -12,7 +12,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish after the protected release job is approved
+        description: Publish automatically after the signed build passes
         required: true
         default: false
         type: boolean
