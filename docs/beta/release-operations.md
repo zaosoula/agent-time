@@ -1,6 +1,6 @@
 # Public beta release procedure
 
-A release owner must complete [release-record.md](release-record.md) for every candidate. These steps stage an artifact; they do not publish an installer or promote the update feed automatically.
+A release owner must complete [release-record.md](release-record.md) for every candidate. The GitHub workflow publishes automatically after a successful signed build when `publish: true` is selected; `publish: false` stages a private artifact only.
 
 ## Protected inputs
 
@@ -16,16 +16,16 @@ Do not put the private key, notary key, passwords, or certificate export in the 
 
 ## GitHub Actions release path
 
-The manually triggered [beta-release workflow](../../.github/workflows/beta-release.yml) runs on a GitHub Apple Silicon Mac. It checks the candidate, builds and verifies the Developer ID signed and notarized app and DMG, and saves the archive, signature, DMG, manifest, hashes, source commit, and release notes as a 14-day Actions artifact. It accepts only `main` and requires the version in npm, Tauri, Cargo, and both lockfiles to match the requested version. A normal run leaves the public download and OTA feed unchanged.
+The manually triggered [beta-release workflow](../../.github/workflows/beta-release.yml) runs on a GitHub Apple Silicon Mac. It checks the candidate, builds and verifies the Developer ID signed and notarized app and DMG, and saves the archive, signature, DMG, manifest, hashes, source commit, and release notes as a 14-day Actions artifact. It accepts only `main` and requires the version in npm, Tauri, Cargo, and both lockfiles to match the requested version. Its default `publish: false` run leaves the public download and OTA feed unchanged.
 
 Create two GitHub environments before using the workflow:
 
 - `beta-signing`: restrict deployments to `main`. Store `APPLE_CERTIFICATE_B64` (base64 `.p12` containing the Developer ID Application certificate and private key), `APPLE_CERTIFICATE_PASSWORD`, `APPLE_API_KEY_P8` (contents of the App Store Connect `.p8` key), `APPLE_API_KEY`, `APPLE_API_ISSUER`, `TAURI_SIGNING_PRIVATE_KEY`, and `BETA_UPDATER_PUBLIC_KEY`. Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` only if the updater key has a password. Export the certificate from Keychain Access to a protected `.p12`, then add its base64 contents directly as an environment secret; never commit the export or paste it into an issue or chat.
-- `beta-publication`: restrict deployments to `main`, require the release owner as reviewer, and store only `FEED_UPLOAD_TOKEN`. Approval here authorizes the selected version to become the public DMG and the OTA update. The workflow does not publish when its `publish` input is false.
+- `beta-publication`: restrict deployments to `main` and store only `FEED_UPLOAD_TOKEN`. It has no required reviewer. When `publish: true` is selected, publication follows the successful signed build without a separate GitHub approval.
 
-After bumping the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock`, commit it to `main`. Run **Build and publish Agent Time beta** with `expected_version`, release notes, and `publish: true`. The build artifact appears while the publication job waits for environment approval. Record its hashes and test that exact build on a clean Apple Silicon Mac, including update and recovery checks where a test feed is available. Approve `beta-publication` only when the release record gates are accepted. Publication uploads immutable versioned files, verifies hosted archive and signature bytes, then promotes the update manifest and selects the DMG. The installed app will offer the higher signed version on its next check. Choose `publish: false` for a build-only rehearsal; a later publication run builds a new artifact and requires its own review.
+After bumping the version in `package.json`, `package-lock.json`, `src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, and `src-tauri/Cargo.lock`, commit it to `main`. Review the source revision, release record, and remaining gates before running **Build and publish Agent Time beta** with `expected_version`, release notes, and `publish: true`. Publication then uploads immutable versioned files, verifies hosted archive and signature bytes, promotes the update manifest, and selects the DMG. The installed app will offer the higher signed version on its next check. Choose `publish: false` for a build-only rehearsal and inspect that artifact before a separate publication run; the later run builds a new artifact.
 
-The runner's temporary Keychain and API key file are removed after the build. GitHub environment protection limits when secrets are released to a job; review workflow changes and the source commit before approving a release. A failed or partial upload leaves the version for operator review; the workflow never overwrites an existing immutable artifact.
+The runner's temporary Keychain and API key file are removed after the build. GitHub environment protection limits which branch can access release secrets; review workflow changes and the source commit before dispatching a publishing run. A failed or partial upload leaves the version for operator review; the workflow never overwrites an existing immutable artifact.
 
 ## Build and stage
 

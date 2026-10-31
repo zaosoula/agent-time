@@ -331,7 +331,7 @@ export class Collector {
     const cached=previous?.safeRevision===safeRevision?previous.eventsRef?.deref():undefined;
     const eventRows=cached&&previous?.eventsRowid!==undefined?previous.eventsRowid===previous.rowid?newRows||this.store.eventsAfterRowid(previous.eventsRowid):this.store.eventsAfterRowid(previous.eventsRowid):undefined;
     const events=cached&&eventRows?[...cached,...eventRows.map(row=>row.event)]:this.store.events();
-    const summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60}),this.store.humanDecisions(),this.store.humanSplits());
+    const summary=applyHumanDecisions(summarize(events,{idleThreshold:this.surfaces.humanIdleMinutes*60,agentIdleThreshold:this.surfaces.agentIdleMinutes*60,alreadyUnique:true}),this.store.humanDecisions(),this.store.humanSplits());
     const terminals=new Map(events.filter(e=>e.kind==='terminal').map(e=>[e.terminalHandle,e]));
     for(const s of summary.sessions){const t=terminals.get(s.terminalHandle);if(t&&!s.child){s.title=String(t.data?.title||s.title).replace(/^[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏✳◐◓◑◒]\s*/, '');s.cwd=t.cwd||s.cwd;}}
     let lastActivity:CaptureEvent|undefined,maxObservedAt=-Infinity;
