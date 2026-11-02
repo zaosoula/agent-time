@@ -1,8 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.18` candidate — 2026-11-02
+## `0.2.0-beta.18` published — 2026-11-02
 
-The installed beta.17 app displayed “Unsupported operation or parameters” and left My day at zero while its collector was running. The Tauri bridge rejected the new `reported_work` request used by the dashboard, and its `Promise.all` refresh discarded the measured summary when that optional request failed. The bridge also rejected background summary requests and other newer desktop methods. Beta.18 admits the exact bounded request shapes used by the UI and lets the measured dashboard refresh independently of optional reported work. See [updater notes](0.2.0-beta.18-notes.md). Signing, publication, and an in-app OTA remain to be verified.
+The installed beta.17 app displayed “Unsupported operation or parameters” and left My day at zero while its collector was running. The Tauri bridge rejected the new `reported_work` request used by the dashboard, and its `Promise.all` refresh discarded the measured summary when that optional request failed. The bridge also rejected background summary requests and other newer desktop methods. Beta.18 admits the exact bounded request shapes used by the UI and lets the measured dashboard refresh independently of optional reported work. See [updater notes](0.2.0-beta.18-notes.md).
+
+Local checks passed the five-file version check, UI build and typecheck, production dependency audit, sidecar packaging, and 19 locked Rust tests. The full local JavaScript run passed 280 tests before the Mac ran out of disk space; the six affected storage tests all passed when rerun after removing this candidate's generated Rust build files. GitHub's Apple Silicon [release run 41466273918](https://github.com/zaosoula/agent-time/actions/runs/41466273918) passed its full candidate checks, Developer ID signing, notarization, staging, and publication for exact commit `1b4144a3b199afa1f52207c9b0eb1136daad5a34`.
+
+The public [update feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.18 for `darwin-aarch64`, and the landing page displays beta.18. An independent public updater-archive download matched staged SHA-256 `a87060c32d1e1d86139b5d5b22af8f941ca8841f2d35784699953be6c422c136`; the public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.18/Agent%20Time_0.2.0-beta.18_aarch64.dmg) matched staged SHA-256 `37079c93db378e9ae2599fa8782868bba3d1a544e425e2a518dc5b15ab765f2f`. A real in-app beta.17-to-beta.18 update on the owner's Mac has not yet been observed.
 
 ## `0.2.0-beta.17` published — 2026-11-02
 
