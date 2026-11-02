@@ -1,10 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.17` candidate — 2026-11-02
+## `0.2.0-beta.17` published — 2026-11-02
 
 This candidate bounds hook-delivery lookups and pauses automatic hook-status polling while the repair dialog is open. On the release Mac's 1,064,903-event database, the prior status query took 2.7–3.7 seconds per check. A read-only query using the existing hook index read a bounded 20,000 recent hook events in 37 ms after warming; a separate indexed query plan test passes. Creating a new index on a temporary database backup took 11.8 seconds, so this candidate uses the existing index and adds no database migration. See [updater notes](0.2.0-beta.17-notes.md).
 
-Local preparation passed the five-file version check, 286 JavaScript tests, UI build and typecheck, production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The first full JavaScript run had one Orca helper sampling timeout under heavy host load; that case passed alone, its wait was extended without changing its assertions, and the second full run passed. Publication evidence is pending.
+Local preparation passed the five-file version check, 286 JavaScript tests, UI build and typecheck, production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The first full JavaScript run had one Orca helper sampling timeout under heavy host load; that case passed alone, its wait was extended without changing its assertions, and the second full run passed.
+
+GitHub's Apple Silicon [release run 41372292778](https://github.com/zaosoula/agent-time/actions/runs/41372292778) built exact `main` commit `a6165d7f921a4ce03f04265bf9f70a01c55071c0`; candidate, signed build, notarization, staging, and publication jobs succeeded. The public updater archive independently matched staged SHA-256 `5a75120c5c655ed061ac163271eb6d6f1d0e64c52f58e326b5e8ee1859ff9f33`. The public [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.17/Agent%20Time_0.2.0-beta.17_aarch64.dmg) independently matched staged SHA-256 `2a808d483d095b7eba49e91f6e3f338141f4a8dc7c08bdeb497cb03b8afa5f1a`. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.17 for `darwin-aarch64` with an updater signature, and the public landing page displays beta.17. No in-app OTA on the local Mac was performed as part of publication.
 
 ## `0.2.0-beta.16` published — 2026-10-31
 
