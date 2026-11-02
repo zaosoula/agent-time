@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.18` candidate — 2026-11-02
+
+The installed beta.17 app displayed “Unsupported operation or parameters” and left My day at zero while its collector was running. The Tauri bridge rejected the new `reported_work` request used by the dashboard, and its `Promise.all` refresh discarded the measured summary when that optional request failed. The bridge also rejected background summary requests and other newer desktop methods. Beta.18 admits the exact bounded request shapes used by the UI and lets the measured dashboard refresh independently of optional reported work. See [updater notes](0.2.0-beta.18-notes.md). Signing, publication, and an in-app OTA remain to be verified.
+
 ## `0.2.0-beta.17` published — 2026-11-02
 
 This candidate bounds hook-delivery lookups and pauses automatic hook-status polling while the repair dialog is open. On the release Mac's 1,064,903-event database, the prior status query took 2.7–3.7 seconds per check. A read-only query using the existing hook index read a bounded 20,000 recent hook events in 37 ms after warming; a separate indexed query plan test passes. Creating a new index on a temporary database backup took 11.8 seconds, so this candidate uses the existing index and adds no database migration. See [updater notes](0.2.0-beta.17-notes.md).

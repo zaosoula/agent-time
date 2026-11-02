@@ -143,15 +143,15 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
  let source_setting=|key:&str|key.len()<=64&&key!="browserTracking"&&key.bytes().all(|b|b.is_ascii_alphanumeric())&&(key.starts_with("browser")&&key.as_bytes().get(7).map(|b|b.is_ascii_uppercase()).unwrap_or(false)||key.ends_with("Hooks")||key.ends_with("TokenUsage")||key.ends_with("Polling"));
  match method {
-  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect"|"review_history" if p.is_empty()=>Ok(()),
+  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect"|"review_history" if p.is_empty()=>Ok(()),
   "review_undo" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).unwrap_or(false)=>Ok(()),
   "human_group_split" if p.len()>=2 && p.len()<=4 && p.get("splitAt").and_then(Value::as_f64).map(f64::is_finite).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false) && ["beforeProject","afterProject"].iter().all(|key|p.get(*key).map(|value|value.as_str().is_some()).unwrap_or(true)) && p.keys().all(|key|["pairs","splitAt","beforeProject","afterProject"].contains(&key.as_str()))=>Ok(()),
-  "day_review_status"|"day_review_mark" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|date.len()==10&&date.bytes().enumerate().all(|(index,byte)|if index==4||index==7{byte==b'-'}else{byte.is_ascii_digit()})).unwrap_or(false)=>Ok(()),
+  "day_review_status"|"day_review_mark"|"reported_work"|"work_outcomes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|date.len()==10&&date.bytes().enumerate().all(|(index,byte)|if index==4||index==7{byte==b'-'}else{byte.is_ascii_digit()})).unwrap_or(false)=>Ok(()),
   "archive_preview"|"archive_import" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "archive_delete" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "storage_restore_prepare" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "privacy_exclusions_set" if p.len()==1 && p.get("entries").and_then(Value::as_array).map(|entries|entries.len()<=100&&entries.iter().all(|entry|entry.as_object().map(|item|item.len()==2&&["app","site"].contains(&item.get("kind").and_then(Value::as_str).unwrap_or(""))&&item.get("value").and_then(Value::as_str).map(|value|!value.is_empty()&&value.len()<=253).unwrap_or(false)).unwrap_or(false))).unwrap_or(false)=>Ok(()),
-  "summary" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
+  "summary" if (p.len()==1||p.len()==2) && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false) && (p.len()==1||p.get("background").and_then(Value::as_bool).is_some())=>Ok(()),
   "weekly_review" if p.len()==1 && p.get("startDate").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_notes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_note_add" if p.len()==4 && p.get("start").and_then(Value::as_f64).zip(p.get("end").and_then(Value::as_f64)).map(|(start,end)|start.is_finite()&&end.is_finite()&&end>start&&end-start<=86400.0).unwrap_or(false) && p.get("project").and_then(Value::as_str).map(|value|value.len()<=256).unwrap_or(false) && p.get("note").and_then(Value::as_str).map(|value|!value.trim().is_empty()&&value.len()<=500).unwrap_or(false)=>Ok(()),
@@ -164,6 +164,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "tracking_cleanup" if p.len()==1 && p.get("confirmed")==Some(&Value::Bool(true))=>Ok(()),
   "hooks_install" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(source_id).unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
   "mcp_install"|"mcp_remove" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(|id|id=="claude"||id=="codex").unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
+  "claude_status_line_install"|"claude_status_line_remove" if p.len()==1 && p.get("targetId").and_then(Value::as_str).map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false)=>Ok(()),
   "settings" if p.iter().all(|(k,v)|if ["humanIdleMinutes","agentIdleMinutes"].contains(&k.as_str()){v.as_u64().map(|n|(1..=60).contains(&n)).unwrap_or(false)}else{(["macosActivity","orcaPolling","tokenUsage"].contains(&k.as_str())||source_setting(k))&&v.is_boolean()})=>Ok(()),
   "start" if p.is_empty() || p.len()==1 && p.get("durationSeconds").and_then(Value::as_f64).map(|n|n.is_finite()&&n>=1.0&&n<=86400.0).unwrap_or(false)=>Ok(()),
   _=>Err("Unsupported operation or parameters".into())
@@ -314,6 +315,23 @@ pub fn run(){
  assert!(validate_method("mcp_remove",&json!({"provider":"codex","targetIds":["0123456789abcdef"]})).is_ok());
  assert!(validate_method("mcp_install",&json!({"provider":"other"})).is_err());
  assert!(validate_method("mcp_remove",&json!({"provider":"claude","path":"/tmp"})).is_err());
+}}
+#[cfg(test)]mod desktop_request_contract_tests{use super::*;#[test]fn dashboard_and_reported_work_requests_are_bounded(){
+ assert!(validate_method("summary",&json!({"date":"2026-11-02","background":true})).is_ok());
+ assert!(validate_method("summary",&json!({"date":"2026-11-02","background":"true"})).is_err());
+ assert!(validate_method("summary",&json!({"date":"2026-11-02","extra":true})).is_err());
+ for method in ["reported_work","work_outcomes"] {
+  assert!(validate_method(method,&json!({"date":"2026-11-02"})).is_ok());
+  assert!(validate_method(method,&json!({"date":"2026-11-02","extra":true})).is_err());
+  assert!(validate_method(method,&json!({"date":"yesterday"})).is_err());
+ }
+ assert!(validate_method("claude_status_line_status",&json!({})).is_ok());
+ assert!(validate_method("claude_status_line_status",&json!({"targetId":"0123456789abcdef"})).is_err());
+ for method in ["claude_status_line_install","claude_status_line_remove"] {
+  assert!(validate_method(method,&json!({"targetId":"0123456789abcdef"})).is_ok());
+  assert!(validate_method(method,&json!({"targetId":"../other"})).is_err());
+  assert!(validate_method(method,&json!({"targetId":"0123456789abcdef","extra":true})).is_err());
+ }
 }}
 #[cfg(test)]mod storage_protocol_tests{use super::*;#[test]fn replacement_requires_explicit_archive_and_confirmation(){
  assert!(validate_method("storage_compact_prepare",&json!({})).is_ok());
