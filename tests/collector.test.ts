@@ -234,7 +234,7 @@ test('selected Orca terminal samples become workspace and tab intervals without 
  writeFileSync(helper,`#!/bin/sh\nsleep .2\necho '${activity}'\nsleep .2\necho '${activity}'\n`,{mode:0o755});
  const layout={ok:true,result:{visualLayouts:[{worktreeId:'workspace-1',root:{tabs:[{tabId:'tab-1',title:'Write spec',activeLeafId:'leaf-1',panes:{type:'terminal',leafId:'leaf-1',handle:'term-1'}}]}}]}};
  const c=new Collector(path,helper,5,undefined,async()=>layout);c.updateSettings({orcaPolling:false});
- try{await c.start(30);for(let i=0;i<60&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(50);const samples=c.store.events().filter(e=>e.kind==='activity');assert.equal(samples.length,2);assert.ok(samples.every(e=>e.workspaceId==='workspace-1'&&e.data?.tabId==='tab-1'));assert.equal(c.summary().intervals.find(i=>i.state==='human')?.tabId,'tab-1');}
+ try{await c.start(30);for(let i=0;i<200&&c.store.events().filter(e=>e.kind==='activity').length<2;i++)await sleep(50);const samples=c.store.events().filter(e=>e.kind==='activity');assert.equal(samples.length,2);assert.ok(samples.every(e=>e.workspaceId==='workspace-1'&&e.data?.tabId==='tab-1'));assert.equal(c.summary().intervals.find(i=>i.state==='human')?.tabId,'tab-1');}
  finally{await c.close();rmSync(path,{recursive:true});}
 });
 test('selected Orca worktree samples remain project-attributed when no tab metadata matches',async()=>{

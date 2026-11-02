@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.17` candidate — 2026-11-02
+
+This candidate bounds hook-delivery lookups and pauses automatic hook-status polling while the repair dialog is open. On the release Mac's 1,064,903-event database, the prior status query took 2.7–3.7 seconds per check. A read-only query using the existing hook index read a bounded 20,000 recent hook events in 37 ms after warming; a separate indexed query plan test passes. Creating a new index on a temporary database backup took 11.8 seconds, so this candidate uses the existing index and adds no database migration. See [updater notes](0.2.0-beta.17-notes.md).
+
+Local preparation passed the five-file version check, 286 JavaScript tests, UI build and typecheck, production dependency audit with zero reported vulnerabilities, Apple Silicon sidecar packaging, and 18 locked Rust tests. The first full JavaScript run had one Orca helper sampling timeout under heavy host load; that case passed alone, its wait was extended without changing its assertions, and the second full run passed. Publication evidence is pending.
+
 ## `0.2.0-beta.16` published — 2026-10-31
 
 This candidate simplifies My day, shows MCP-reported task context and elapsed counters on the timeline without adding them to measured totals, and adds an opt-in Claude Code status line that preserves an existing line and requires a matching session ID. See [updater notes](0.2.0-beta.16-notes.md). The Claude status line is not automatically installed on existing Macs; its control is in Settings → Agents → Claude Code.
