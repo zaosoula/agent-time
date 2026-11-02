@@ -51,13 +51,17 @@ test('recent capture-health reads use the source index and retain row order',asy
  try{
   for(let n=0;n<30;n++)store.put({...event,eventId:`noise-${n}`,source:'orca',observedAt:n});
   store.put({...event,eventId:'capture-1',source:'capture',observedAt:31});
-  store.put({...event,eventId:'hook-claude',source:'hook',provider:'claude',observedAt:32});
+  store.put({...event,eventId:'hook-claude',source:'hook',provider:'claude',runtimeId:'installation/runtime',observedAt:32});
   store.put({...event,eventId:'capture-2',source:'capture',observedAt:33});
   assert.deepEqual(store.recent('capture',2).map(item=>item.eventId),['capture-2','capture-1']);
   assert.deepEqual(store.recent('hook',2,'claude').map(item=>item.eventId),['hook-claude']);
   const db=new DatabaseSync(path,{readOnly:true});
   const plan=String(db.prepare("EXPLAIN QUERY PLAN SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?").all('capture',2)[0]?.detail);
-  assert.match(plan,/events_source_recent/);db.close();
+  assert.match(plan,/events_source_recent/);
+  const runtimeSql="SELECT json_extract(payload,'$.runtimeId') runtime,observed_at at FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' ORDER BY observed_at DESC LIMIT 20000";
+  assert.equal(db.prepare(runtimeSql).all().find(row=>row.runtime==='installation/runtime')?.at,32);
+  assert.match(String(db.prepare('EXPLAIN QUERY PLAN '+runtimeSql).get()?.detail),/events_hooks/);
+  db.close();
  }finally{store.close();rmSync(root,{recursive:true});}
 });
 test('settled worker and unchanged terminal snapshots are stored once across restarts',()=>{

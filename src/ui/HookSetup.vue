@@ -16,7 +16,7 @@ const permissionSeenKey='agent-time.accessibility-setup-seen';
 let permissionChecking=false;
 watch(state,value=>{if(value)emit('status',value);});
 const selected=ref<HookProvider[]>([]);
-let timer:ReturnType<typeof setInterval>|undefined,unmounted=false,promptedIssueKey:string|null=null;
+let timer:ReturnType<typeof setInterval>|undefined,unmounted=false,promptedIssueKey:string|null=null,refreshing=false;
 const providers=computed(()=>state.value?.agents.map(agent=>agent.id)||[]);
 const agentName=(id:string)=>state.value?.agents.find(agent=>agent.id===id)?.name||id;
 const targets=(provider:HookProvider)=>state.value?.targets.filter(t=>t.provider===provider)||[];
@@ -26,7 +26,7 @@ const hasFailures=computed(()=>state.value?.targets.some(t=>t.state==='error')||
 const repairTargets=computed(()=>state.value?.targets.filter(t=>t.state==='needs-update'||t.state==='error')||[]);
 const repairing=computed(()=>Boolean(state.value?.setupSeen&&repairTargets.value.length));
 const allInstalled=computed(()=>Boolean(state.value&&providers.value.length&&providers.value.every(installed)&&!hasFailures.value));
-const received=(n:number|null)=>n?new Date(n*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'Waiting for an event';
+const received=(n:number|null)=>n?new Date(n*1000).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'}):'No recent event observed';
 const label=(s:string)=>({'not-installed':'Not installed',installed:'Installed','needs-update':'Update needed',error:'Needs attention'}[s]||s);
 async function showPermission(){
  if(props.mode!=='onboarding'||!native||open.value||permissionOpen.value||permissionChecking||localStorage.getItem(permissionSeenKey)==='1')return;
@@ -37,7 +37,7 @@ async function showPermission(){
 }
 function dismissPermission(){localStorage.setItem(permissionSeenKey,'1');permissionOpen.value=false;}
 async function openPermission(){permissionError.value='';try{await openAccessibilitySettings();dismissPermission();}catch(e){permissionError.value=String(e);}}
-async function refresh(){if(busy.value)return;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(!next.setupSeen&&!selected.value.length)selected.value=next.agents.map(agent=>agent.id);if(props.mode==='onboarding'){
+async function refresh(){if(busy.value||refreshing)return;refreshing=true;try{const next=await transport.hooksStatus();if(unmounted)return;state.value=next;if(!next.setupSeen&&!selected.value.length)selected.value=next.agents.map(agent=>agent.id);if(props.mode==='onboarding'){
   if(!next.setupSeen)open.value=true;
   else {const issues=next.targets.filter(t=>t.state==='needs-update'||t.state==='error');const key=issues.map(t=>`${t.id}:${t.state}`).sort().join('|')+(next.migrationError?`|migration:${next.migrationError}`:'');
     if(key&&message.value==='Hooks installed. Start a new session to receive events.')message.value='';
@@ -45,7 +45,7 @@ async function refresh(){if(busy.value)return;try{const next=await transport.hoo
     else if(key!==promptedIssueKey){message.value='';selected.value=[...new Set(issues.map(t=>t.provider))];promptedIssueKey=key;permissionOpen.value=false;open.value=true;}
   }
   if(!open.value)void showPermission();
-}}catch(e){error.value=String(e);}}
+}}catch(e){error.value=String(e);}finally{refreshing=false;}}
 async function install(list:HookProvider[]){busy.value=true;error.value='';message.value='';mcpError.value='';try{for(const provider of list)state.value=await transport.installHooks(provider);message.value=list.some(p=>!installed(p))||state.value?.migrationError?'Some configurations need attention. Check the details below.':'Hooks installed. Start a new session to receive events.';if(mcpSelected.value){for(const provider of list.filter((p):p is 'claude'|'codex'=>p==='claude'||p==='codex')){try{mcpState.value=await mcpTransport.install(provider);}catch(e){mcpError.value+=`${agentName(provider)} MCP: ${String(e)}\n`;}}if(!mcpError.value)mcpMessage.value='MCP tools configured. Start a new agent session to load them.';}}catch(e){error.value=String(e);}finally{busy.value=false;if(mcpSelected.value)void refreshMcp();}}
 async function refreshMcp(){try{mcpState.value=await mcpTransport.status();}catch(e){mcpError.value=String(e);}}
 async function refreshStatusLine(){try{statusLineState.value=await claudeStatusLineTransport.status();}catch(e){statusLineError.value=String(e);}}
@@ -55,7 +55,7 @@ async function repairTarget(provider:HookProvider,id:string){busy.value=true;err
 async function verify(){busy.value=true;error.value='';try{state.value=await transport.verifyHooks();message.value='Installation checked.';}catch(e){error.value=String(e);}finally{busy.value=false;}}
 async function dismiss(){if(busy.value)return;try{state.value=await transport.dismissHookSetup();open.value=false;void showPermission();}catch(e){error.value=String(e);}}
 function reopen(){if(props.mode!=='onboarding')return;error.value='';message.value='';permissionOpen.value=false;open.value=true;void refresh();}
-onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refresh();void refreshMcp();if(props.mode==='settings')void refreshStatusLine();timer=setInterval(()=>{void refresh();},5000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);window.removeEventListener('agent-time:hook-setup',reopen);});
+onMounted(()=>{window.addEventListener('agent-time:hook-setup',reopen);void refresh();void refreshMcp();if(props.mode==='settings')void refreshStatusLine();timer=setInterval(()=>{if(!open.value)void refresh();},30000);});onUnmounted(()=>{unmounted=true;clearInterval(timer);window.removeEventListener('agent-time:hook-setup',reopen);});
 </script>
 <template>
 <template v-if="mode==='onboarding'"><DialogRoot :open="open" @update:open="!$event&&dismiss()"><DialogPortal><DialogOverlay class="hook-overlay"/><DialogContent class="hook-dialog" @escape-key-down="busy&&$event.preventDefault()" @pointer-down-outside="busy&&$event.preventDefault()">

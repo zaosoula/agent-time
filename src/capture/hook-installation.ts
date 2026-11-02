@@ -99,9 +99,19 @@ export class HookInstallation{
   }return found;
  }
  status():HookInstallationStatus{
+  const discovered=this.targets();
   let lastEvents:Map<string,number>=new Map();
-  try{const db=new DatabaseSync(join(this.output,'events.sqlite'),{readOnly:true});try{for(const row of db.prepare("SELECT json_extract(payload,'$.runtimeId') runtime,MAX(observed_at) at FROM events WHERE json_extract(payload,'$.source')='hook' GROUP BY 1").all() as Array<{runtime:string;at:number}>)lastEvents.set(row.runtime,row.at);}finally{db.close();}}catch{}
-  const ready=this.ready(),discovered=this.targets(),targets=discovered.map(t=>{
+  try{const db=new DatabaseSync(join(this.output,'events.sqlite'),{readOnly:true});try{
+   const wanted=new Set(discovered.map(target=>`${target.id}/${runtimeVersion}`));
+   // The observed-at hook index gives newest delivery first. Stop once every
+   // discovered runtime is found, and cap work for dormant installations.
+   const recent=db.prepare("SELECT json_extract(payload,'$.runtimeId') runtime,observed_at at FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' ORDER BY observed_at DESC LIMIT 20000");
+   for(const row of recent.iterate()){
+    const runtime=String(row.runtime||'');if(!wanted.has(runtime))continue;
+    lastEvents.set(runtime,Number(row.at));wanted.delete(runtime);if(!wanted.size)break;
+   }
+  }finally{db.close();}}catch{}
+  const ready=this.ready(),targets=discovered.map(t=>{
    let state:HookTarget['state']='not-installed',error:string|null=null,reason:string|null=null;
    let matchedId:string|undefined;
    try{
