@@ -171,3 +171,24 @@ test('one day review accepts already captured project matches',async()=>{
   assert.equal(collector.weeklyReview('2026-10-19').projects.find(row=>row.project==='/project')?.reviewedSeconds,0);
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });
+
+test('day review fingerprints are versioned and a failed legacy check is not repeated',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-review-fingerprint-'));
+ let collector=new Collector(output);
+ try{
+  const now=Date.now()/1000;
+  const data={idleSeconds:0,foregroundBundleId:'com.apple.Terminal',foregroundName:'Terminal'};
+  const first=makeEvent('macos','activity',{observedAt:now,monotonicAt:1,data}),second=makeEvent('macos','activity',{observedAt:now+2,monotonicAt:3,data});
+  collector.store.put(first);collector.store.put(second);
+  collector.setHumanDecision([[first.eventId,second.eventId]],'unassigned');
+  const day=new Date(now*1000),date=`${day.getFullYear()}-${String(day.getMonth()+1).padStart(2,'0')}-${String(day.getDate()).padStart(2,'0')}`;
+  collector.markDayReview(date);
+  assert.match(collector.store.dayReview(date)?.fingerprint??'',/^v2:/);
+  // A review saved by an earlier version that matches neither fingerprint form.
+  collector.store.markDayReview(date,'unprefixed-legacy-fingerprint');
+  assert.equal((collector.dayReviewStatus(date) as {stale:boolean}).stale,true);
+  assert.equal(collector.store.dayReview(date)?.fingerprint,'v2:legacy-stale');
+  await collector.close();collector=new Collector(output);
+  assert.equal((collector.dayReviewStatus(date) as {stale:boolean}).stale,true);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});

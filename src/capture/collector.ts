@@ -56,6 +56,10 @@ const exportTemporaryAgeMs=60*60_000;
 const reviewIssues=(day:Summary)=>[...day.coverage,...day.unresolved].filter(issue=>issue.reason!==staticOrcaScopeReason);
 function sortedByJson<T>(items:T[]):T[]{return items.map(item=>[JSON.stringify(item),item] as const).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0).map(([,item])=>item);}
 function reviewFingerprint(intervals:unknown[],issues:unknown[],notes:unknown[]){return createHash('sha256').update(JSON.stringify({intervals,issues,notes})).digest('hex');}
+/** Prefix of order-independent fingerprints; unprefixed ones come from earlier versions. */
+const FINGERPRINT_VERSION='v2:';
+/** Stored after a failed legacy check so the costly check is never repeated. */
+const LEGACY_STALE_FINGERPRINT=`${FINGERPRINT_VERSION}legacy-stale`;
 
 export class Collector {
   readonly output:string; readonly store:EventStore;
@@ -93,6 +97,7 @@ export class Collector {
   private storageTask:Promise<unknown>|undefined;
   /** Problems found while opening the data directory; capture continues with safe defaults. */
   private startupIssues:string[]=[];
+  private legacySummaryRelease:ReturnType<typeof setTimeout>|undefined;
   private legacyFingerprintChecked=new Set<string>();
   constructor(output:string,probe?:string,interval=5,runId?:string,reader:typeof callOrca=callOrca,keychainPath=resolve('.capture/bin/linear-keychain')) {
     this.interval=interval;this.runId=runId;this.reader=reader;
@@ -337,16 +342,17 @@ export class Collector {
     const notes=this.store.manualNotes(date);
     // The fingerprint ignores interval order: a bounded day window can list the
     // same intervals in another order than a replay of the whole history did.
-    const fingerprint=reviewFingerprint(sortedByJson(day.intervals),sortedByJson(reviewIssues(day)),notes);
+    const fingerprint=FINGERPRINT_VERSION+reviewFingerprint(sortedByJson(day.intervals),sortedByJson(reviewIssues(day)),notes);
     const saved=this.store.dayReview(date);
     let stale=Boolean(saved&&saved.fingerprint!==fingerprint);
-    if(stale&&saved&&!this.legacyFingerprintChecked.has(date)){
+    if(stale&&saved&&!saved.fingerprint.startsWith(FINGERPRINT_VERSION)&&!this.legacyFingerprintChecked.has(date)){
       // Reviews saved by earlier versions hashed the whole-history order. Check
       // that form once, and store the order-independent fingerprint if it matches.
       this.legacyFingerprintChecked.add(date);
       let legacy=saved.fingerprint===reviewFingerprint(day.intervals,reviewIssues(day),notes);
-      if(!legacy){const full=summaryForDate(this.summary(),date);legacy=saved.fingerprint===reviewFingerprint(full.intervals,reviewIssues(full),notes);}
-      if(legacy){stale=false;if(this.lockOwned||!existsSync(join(this.output,'capture.lock')))this.store.updateDayReviewFingerprint(date,fingerprint);}
+      if(!legacy){const full=summaryForDate(this.legacyFullSummary(),date);legacy=saved.fingerprint===reviewFingerprint(full.intervals,reviewIssues(full),notes);}
+      if(this.lockOwned||!existsSync(join(this.output,'capture.lock')))this.store.updateDayReviewFingerprint(date,legacy?fingerprint:LEGACY_STALE_FINGERPRINT);
+      if(legacy)stale=false;
     }
     return {date,completedAt:saved?.completedAt||null,stale,hasActivity:day.intervals.length>0,pendingGroups:pending.length,capturedGroups:captured.length,unmatchedSeconds:unmatched.reduce((total,group)=>total+group.seconds,0),conflicts:conflicts.length,gaps:gaps.length,fingerprint};
   }
@@ -530,6 +536,18 @@ export class Collector {
     const summary=applyHumanDecisions(summarize(events,{...this.summaryOptions(),alreadyUnique:true}),this.store.humanDecisions(),this.store.humanSplits());
     applyTerminalTitles(summary,events);
     this.summaryCache={revision,at:Date.now(),value:summary};return summary;
+  }
+  /**
+   * Whole-history summary for the one-time legacy fingerprint check. It is kept
+   * only briefly so checking several days at startup shares one replay, then
+   * released: holding the full history keeps hundreds of MB resident.
+   */
+  private legacyFullSummary():Summary{
+    const value=this.summary();
+    clearTimeout(this.legacySummaryRelease);
+    this.legacySummaryRelease=setTimeout(()=>{this.summaryCache=undefined;},30_000);
+    this.legacySummaryRelease.unref?.();
+    return value;
   }
   summaryForDate(date:string,maxAgeMs=0):Summary{return this.daySummary(date,maxAgeMs);}
   reportedWork(date:string){
