@@ -5,6 +5,7 @@ import { validateEvent, type CaptureEvent } from './events.ts';
 import type {HumanDecision,HumanSplit} from './human-review.ts';
 import {observationKey,observationSignature} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
+import {readWindowEvents} from './summary-window.ts';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
 export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;canUndo:boolean;eventIds:string[];}
@@ -29,7 +30,13 @@ export class EventStore {
     this.db = new DatabaseSync(path);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
     this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
+    // Per-provider hook lookups must not walk every hook row when a provider is quiet.
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_hook_provider ON events(json_extract(payload,'$.provider')) WHERE json_extract(payload,'$.source')='hook'");
+    // Terminal observations are stored only on change; find the newest per handle directly.
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_terminal_handle ON events(json_extract(payload,'$.terminalHandle')) WHERE json_extract(payload,'$.kind')='terminal'");
   }
+  /** The open connection, for collaborators that must share it (see UsageReader). */
+  get database():DatabaseSync{return this.db;}
   put(event: CaptureEvent): boolean {
     validateEvent(event);
     const payload = JSON.stringify(event);
@@ -60,6 +67,14 @@ export class EventStore {
       this.db.exec('COMMIT');return inserted;
     }catch(error){this.db.exec('ROLLBACK');this.generation=before;throw error;}
   }
+  /** Run several writes in one commit. A nested call joins the open transaction. */
+  transaction<T>(run:()=>T):T{
+    if(this.db.isTransaction)return run();
+    const before=this.generation;
+    this.db.exec('BEGIN');
+    try{const result=run();this.db.exec('COMMIT');return result;}
+    catch(error){if(this.db.isTransaction)this.db.exec('ROLLBACK');this.generation=before;throw error;}
+  }
   count():number{return Number(this.db.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
   quickCheck():boolean{try{return this.db.prepare('PRAGMA quick_check(1)').get()?.quick_check==='ok';}catch{return false;}}
   checkpointWal():void{
@@ -88,6 +103,28 @@ export class EventStore {
       events.push(event);
     }
     return events;
+  }
+  /** Events that can shape summaries of [from,to); see summary-window.ts. */
+  windowEvents(from:number,to:number,agentIdleThreshold:number){return readWindowEvents(this.db,from,to,agentIdleThreshold);}
+  eventTimes(ids:string[]):Map<string,number>{
+    const result=new Map<string,number>(),read=this.db.prepare('SELECT observed_at FROM events WHERE event_id=?');
+    for(const id of new Set(ids)){const row=read.get(id);if(row)result.set(id,Number(row.observed_at));}
+    return result;
+  }
+  latestTerminals(handles:string[]):CaptureEvent[]{
+    const read=this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle')=? ORDER BY rowid DESC LIMIT 1");
+    return handles.flatMap(handle=>{const row=read.get(handle);return row?[JSON.parse(String(row.payload)) as CaptureEvent]:[];});
+  }
+  /** Workspace identities seen in hook and Orca terminal evidence since `since`. */
+  workspaceObservations(since:number):Array<{workspaceId:string|null;cwd:string|null}>{
+    const hooks=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' AND observed_at>=?").all(since);
+    const terminals=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL").all();
+    return [...hooks,...terminals].map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null}));
+  }
+  reviewActionEventIds(id:string):string[]{
+    const row=this.db.prepare('SELECT before_json FROM review_actions WHERE id=?').get(id);
+    if(!row)return [];
+    return (JSON.parse(String(row.before_json)) as Array<{start:string;end:string}>).flatMap(pair=>[pair.start,pair.end]);
   }
   agentReports(start:number,end:number):CaptureEvent[]{
     return this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").all(start,end)
@@ -184,6 +221,10 @@ export class EventStore {
   markDayReview(date:string,fingerprint:string):void{
     this.db.prepare('INSERT INTO day_reviews VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET completed_at=excluded.completed_at,fingerprint=excluded.fingerprint').run(date,Date.now()/1000,fingerprint);
     this.generation++;this.nonEventGeneration++;
+  }
+  /** Replace a review's fingerprint with an equivalent one, keeping when it was completed. */
+  updateDayReviewFingerprint(date:string,fingerprint:string):void{
+    this.db.prepare('UPDATE day_reviews SET fingerprint=? WHERE date=?').run(fingerprint,date);
   }
   manualNotes(date:string):ManualNote[]{
     if(!/^\d{4}-\d{2}-\d{2}$/.test(date))throw new Error('Invalid date');
@@ -310,10 +351,12 @@ export class EventStore {
   }
   recent(source:string,limit:number,provider?:string):CaptureEvent[]{
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid recent event limit');
-    const query=provider
-      ? "SELECT payload FROM events WHERE json_extract(payload,'$.source')=? AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?"
-      : "SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?";
-    const rows=provider?this.db.prepare(query).all(source,provider,limit):this.db.prepare(query).all(source,limit);
+    // Hook lookups name the source literally so SQLite can use the partial provider index.
+    const rows=provider&&source==='hook'
+      ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").all(provider,limit)
+      : provider
+        ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").all(source,provider,limit)
+        : this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?").all(source,limit);
     return rows.map(r=>JSON.parse(String(r.payload)) as CaptureEvent);
   }
   close(): void { this.db.close(); }

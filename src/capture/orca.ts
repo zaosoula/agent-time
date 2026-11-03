@@ -49,31 +49,71 @@ export function workerEvent(worker: JsonObject): CaptureEvent {
       liveness: p.liveness?.verdict || 'unverifiable' },
   });
 }
-export async function readFleet(call: (argv:string[])=>Promise<unknown> = callOrca, canContinue=()=>true):Promise<{workers:JsonObject[];coverage:Issue[]}> {
+const settledOutcomes=new Set(['succeeded','failed','completed','cancelled','abandoned']);
+/**
+ * Poll state kept between fleet reads. Run discovery lists every Run, and each
+ * Run costs one worker-list call, so quiet Runs are re-read on a slower clock.
+ */
+export class FleetCache {
+ runs:string[]=[];fullListAt=0;
+ /** Run id -> when its workers were last read, and whether any was live then. */
+ checked=new Map<string,{at:number;quiet:boolean;settled:boolean}>();
+}
+// Run-list is newest first: one page each tick finds new Runs; the full list is refreshed slowly.
+const fullRunListMs=5*60_000;
+// A Run with no fresh worker is re-read after this delay; hooks keep capturing meanwhile.
+const quietRunMs=30_000;
+// A Run whose workers have all settled is re-read only to notice reuse.
+const settledRunMs=5*60_000;
+function runState(workers:JsonObject[]){
+ const events=workers.map(object);
+ const fresh=events.some(worker=>object(object(worker.projection).evidence).liveStatus==='fresh');
+ const settled=events.length>0&&events.every(worker=>{const p=object(worker.projection);return settledOutcomes.has(String(p.outcome||worker.dispatchStatus))&&object(p.evidence).liveStatus!=='fresh';});
+ return {quiet:!fresh,settled};
+}
+export async function readFleet(call: (argv:string[])=>Promise<unknown> = callOrca, canContinue=()=>true, cache?:FleetCache, now=Date.now()):Promise<{workers:JsonObject[];coverage:Issue[]}> {
   // A default worker-list can inherit whichever coordinator is selected in Orca.
   // Enumerate explicit Runs so switching tabs cannot silently narrow capture.
   const runs:string[]=[],coverage:Issue[]=[];let cursor:string|undefined;const seen=new Set<string>();
+  const fullList=!cache||!cache.fullListAt||now-cache.fullListAt>=fullRunListMs;let complete=false,listed=false;
   try {
     do {
       if(!canContinue())throw new Error('Collection cancelled');
       const argv=['orchestration','run-list','--limit','100','--json'];if(cursor)argv.push('--cursor',cursor);
       const r=object(await call(argv));if(!r.ok||!Array.isArray(r.result?.runs))throw new Error('Run discovery unavailable');
       for(const run of r.result.runs)if(typeof run.id==='string')runs.push(run.id);
-      if(r.result.nextCursor===null||r.result.nextCursor===undefined)break;
+      listed=true;
+      if(r.result.nextCursor===null||r.result.nextCursor===undefined){complete=true;break;}
+      if(!fullList)break;
       cursor=String(r.result.nextCursor);if(seen.has(cursor))throw new Error('Repeated Run cursor');seen.add(cursor);
     }while(true);
   }catch(error){coverage.push({reason:String(error),source:'orca'});}
+  let selected=[...new Set(runs)];
+  if(cache&&listed){
+    if(fullList&&complete){cache.runs=selected;cache.fullListAt=now;const current=new Set(runs);for(const id of [...cache.checked.keys()])if(!current.has(id))cache.checked.delete(id);}
+    else cache.runs=[...new Set([...selected,...cache.runs])];
+    selected=cache.runs.filter(id=>{
+      const checked=cache.checked.get(id);
+      if(!checked||!checked.quiet)return true;
+      return now-checked.at>=(checked.settled?settledRunMs:quietRunMs);
+    });
+  }
   const workers:JsonObject[]=[];
-  for(let offset=0;offset<runs.length;offset+=4){
+  for(let offset=0;offset<selected.length;offset+=4){
     if(!canContinue())break;
-    const batch=await Promise.all(runs.slice(offset,offset+4).map(run=>readWorkers(call,run,canContinue)));
-    for(const r of batch){workers.push(...r.workers);coverage.push(...r.coverage);}
+    const ids=selected.slice(offset,offset+4);
+    const batch=await Promise.all(ids.map(run=>readWorkers(call,run,canContinue)));
+    batch.forEach((r,index)=>{
+      workers.push(...r.workers);coverage.push(...r.coverage);
+      if(cache){if(r.coverage.length)cache.checked.delete(ids[index]!);else cache.checked.set(ids[index]!,{at:now,...runState(r.workers)});}
+    });
   }
   coverage.push({reason:'Only this Orca host is observed; remote execution has not been verified',source:'orca'});
   return {workers,coverage};
 }
-export async function terminalEvents(call = callOrca): Promise<CaptureEvent[]> {
-  const receipt = object(await call(['terminal','list','--limit','1000','--json']));
+/** `read` may supply a shared terminal-list receipt (it can include visual layouts). */
+export async function terminalEvents(call = callOrca, read?:()=>Promise<unknown>): Promise<CaptureEvent[]> {
+  const receipt = object(read ? await read() : await call(['terminal','list','--limit','1000','--json']));
   if (!receipt.ok || !Array.isArray(receipt.result?.terminals)) throw new Error('Orca terminal metadata unavailable');
   const result: CaptureEvent[] = receipt.result.terminals.filter((t: JsonObject) => t.agentIdentity).map((t: JsonObject) => makeEvent('orca','terminal',{
     hostId: t.executionHostId, runtimeId: receipt._meta?.runtimeId, workspaceId: t.worktreeId,

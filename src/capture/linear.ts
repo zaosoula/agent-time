@@ -27,13 +27,18 @@ function loadJson(path:string):unknown{
  if(lstatSync(path).isSymbolicLink())throw new Error('Linear state path is a symlink');
  return JSON.parse(readFileSync(path,'utf8'));
 }
-export function keychainHelper(path:string):Keychain {
+export function keychainHelper(path:string,timeoutMs=10_000):Keychain {
  return (operation,value)=>new Promise((resolve,reject)=>{
-  const child=spawn(path,[operation],{stdio:['pipe','pipe','pipe']});
-  const chunks:Buffer[]=[];let size=0,failed=false;
+  const child=spawn(path,[operation],{stdio:['pipe','pipe','ignore']});
+  const chunks:Buffer[]=[];let size=0,failed=false,timedOut=false;
+  // A stuck Keychain prompt or helper must not hold Linear requests forever.
+  const timer=setTimeout(()=>{timedOut=true;child.kill('SIGKILL');},timeoutMs);
   child.stdout.on('data',(chunk:Buffer)=>{size+=chunk.length;if(size>16_384){failed=true;child.kill();}else chunks.push(chunk);});
-  child.on('error',reject);
+  child.stdin.on('error',()=>{/* The close handler reports the helper failure. */});
+  child.on('error',error=>{clearTimeout(timer);reject(error);});
   child.on('close',code=>{
+   clearTimeout(timer);
+   if(timedOut)return reject(new Error('macOS Keychain operation timed out'));
    if(failed)return reject(new Error('Keychain item too large'));
    if(code===2&&operation==='read')return resolve(null);
    if(code!==0)return reject(new Error('macOS Keychain operation failed'));
@@ -77,7 +82,7 @@ function cleanProject(value:any):LinearProject|null{
 export class LinearConnection {
  private cachePath:string;private caches=new Map<string,Cache>();private tokens=new Map<string,TokenSet>();
  private keychain:Keychain;private fetcher:Fetcher;private openUrl:(url:string)=>Promise<void>;private redirectUri:string;
- private loaded=false;private server:Server|null=null;private timeout:ReturnType<typeof setTimeout>|null=null;
+ private loaded=false;private loading:Promise<void>|undefined;private refreshing=new Map<string,Promise<string>>();private server:Server|null=null;private timeout:ReturnType<typeof setTimeout>|null=null;
  private autoTimer:ReturnType<typeof setInterval>;private initialTimer:ReturnType<typeof setTimeout>;private lastAutoAttempt=0;
  private error:string|null=null;private errors=new Map<string,string>();
  constructor(output:string,keychain:Keychain,fetcher:Fetcher=fetch,openUrl:(url:string)=>Promise<void>=async url=>{await exec('/usr/bin/open',[url],{timeout:5000});},redirectUri=LINEAR_REDIRECT_URI){
@@ -101,6 +106,11 @@ export class LinearConnection {
  }
  private async loadTokens(){
   if(this.loaded)return;
+  // Concurrent status/sync calls share one Keychain read.
+  this.loading||=this.readTokens().finally(()=>{this.loading=undefined;});
+  return this.loading;
+ }
+ private async readTokens(){
   const raw=await this.keychain('read');
   try{
    const parsed=raw?JSON.parse(raw):[];
@@ -130,12 +140,21 @@ export class LinearConnection {
  private async accessToken(id:string):Promise<string>{
   await this.loadTokens();const token=this.tokens.get(id);if(!token)throw new Error('Connect Linear first');
   if(Date.now()/1000<token.expiresAt-60)return token.accessToken;
+  // Linear rotates refresh tokens. Concurrent syncs must share one refresh, or
+  // the second request spends an already-rotated token and disconnects us.
+  const pending=this.refreshing.get(id);if(pending)return pending;
+  const refresh=this.refreshToken(id,token).finally(()=>{this.refreshing.delete(id);});
+  this.refreshing.set(id,refresh);return refresh;
+ }
+ private async refreshToken(id:string,token:TokenSet):Promise<string>{
   const body=new URLSearchParams({grant_type:'refresh_token',refresh_token:token.refreshToken,client_id:token.clientId});
   const response=await this.fetcher('https://api.linear.app/oauth/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body,signal:AbortSignal.timeout(15_000)});
   if(!response.ok)throw new Error('Linear connection expired; reconnect it');
   const result=await response.json() as {access_token?:string;refresh_token?:string;expires_in?:number};
   if(!result.access_token||!result.refresh_token||!Number.isFinite(result.expires_in))throw new Error('Invalid Linear refresh response');
   const next={...token,accessToken:result.access_token,refreshToken:result.refresh_token,expiresAt:Date.now()/1000+result.expires_in!};
+  // A disconnect during the refresh must not resurrect the workspace.
+  if(this.tokens.get(id)!==token)throw new Error('Linear connection changed during refresh');
   this.tokens.set(id,next);await this.saveTokens();return next.accessToken;
  }
  async connect(clientId=LINEAR_CLIENT_ID):Promise<LinearStatus>{

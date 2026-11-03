@@ -12,13 +12,32 @@ export function unionSeconds(intervals:Array<[number,number]>):number {
 export function minuteCreditSeconds(intervals:Array<[number,number]>):number {
  return groupIntervals(intervals,0).reduce((sum,[start,end])=>sum+Math.ceil((end-start)/60)*60,0);
 }
-export function groupIntervals(intervals:Array<[number,number]>,maxGap=60,blockers:Array<[number,number]>=[]):Array<[number,number]> {
+/**
+ * Blockers that may stop two activity ranges from merging. A blocker (from,to)
+ * separates `previousEnd` and `nextStart` when from<nextStart and to>previousEnd.
+ * Sorting by `from` with a running maximum of `to` answers that in O(log n).
+ */
+export class BlockerIndex {
+ private starts:number[];private maxEnds:number[];
+ constructor(blockers:Array<[number,number]>){
+  const sorted=[...blockers].sort((a,b)=>a[0]-b[0]);
+  this.starts=sorted.map(([from])=>from);this.maxEnds=[];
+  let max=-Infinity;for(const [,to] of sorted){max=Math.max(max,to);this.maxEnds.push(max);}
+ }
+ separates(previousEnd:number,nextStart:number):boolean{
+  let low=0,high=this.starts.length;
+  while(low<high){const mid=(low+high)>>>1;if(this.starts[mid]!<nextStart)low=mid+1;else high=mid;}
+  return low>0&&this.maxEnds[low-1]!>previousEnd;
+ }
+}
+export function groupIntervals(intervals:Array<[number,number]>,maxGap=60,blockers:Array<[number,number]>|BlockerIndex|BlockerIndex[]=[]):Array<[number,number]> {
  if(!Number.isFinite(maxGap)||maxGap<0)throw new Error('invalid grouping gap');
+ const indexes=Array.isArray(blockers)?blockers.length&&blockers[0] instanceof BlockerIndex?blockers as BlockerIndex[]:[new BlockerIndex(blockers as Array<[number,number]>)]:[blockers];
  const grouped:Array<[number,number]>=[];
  for(const [start,end] of [...intervals].sort((a,b)=>a[0]-b[0])){
   if(!Number.isFinite(start)||!Number.isFinite(end)||end<start)throw new Error('invalid interval');
   const last=grouped.at(-1);
-  if(last&&start-last[1]<=maxGap&&!blockers.some(([from,to])=>from<start&&to>last[1]))last[1]=Math.max(last[1],end);
+  if(last&&start-last[1]<=maxGap&&!indexes.some(index=>index.separates(last[1],start)))last[1]=Math.max(last[1],end);
   else grouped.push([start,end]);
  }
  return grouped;
@@ -45,7 +64,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  for(const group of epochGroups.values()){let time=-Infinity;for(const e of group.sort((a,b)=>a.monotonicAt-b.monotonicAt||a.eventId.localeCompare(b.eventId))){time=Math.max(time,e.observedAt);sortTime.set(e.eventId,time);}}
  const events=unique.sort((a,b)=>sortTime.get(a.eventId)!-sortTime.get(b.eventId)!||(a.collectorEpoch===b.collectorEpoch?a.monotonicAt-b.monotonicAt:0)||a.eventId.localeCompare(b.eventId));
  const intervals:Interval[]=[],unresolved:Issue[]=[],coverage:Issue[]=[],sessions=new Map<string,Session>();
- const globalFences:number[]=[],sessionFences=new Map<string,number[]>();
+ const globalFences:number[]=[],sessionFences=new Map<string,number[]>(),standaloneIntervals=new Map<string,Interval[]>();
  const workerPrevious=new Map<string,CaptureEvent>(),childLifecycle=new Map<string,CaptureEvent>();
  const active=new Map<string,{event:CaptureEvent;state:'running'|'waiting';session:Session;key:string}>();
  const provisional:Array<{event:CaptureEvent;session:Session;key:string}>=[];
@@ -70,7 +89,9 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
     s.sessionId=e.sessionId;s.cwd ||= standalone.cwd;s.provider ||= standalone.provider;
     s.runId=e.runId;s.taskId=e.taskId;s.dispatchId=e.dispatchId;s.workspaceId=e.workspaceId||s.workspaceId;
     s.lastObservedAt=Math.max(s.lastObservedAt,standalone.lastObservedAt);
-    for(const i of intervals)if(!i.child&&!i.dispatchId&&i.hostId===e.hostId&&i.sessionId===e.sessionId){i.dispatchId=e.dispatchId;i.runId=e.runId;i.taskId=e.taskId;i.workspaceId=e.workspaceId;}
+    const sessionKey=`${e.hostId}:${e.sessionId}`;
+    for(const i of standaloneIntervals.get(sessionKey)||[])if(!i.dispatchId){i.dispatchId=e.dispatchId;i.runId=e.runId;i.taskId=e.taskId;i.workspaceId=e.workspaceId;}
+    standaloneIntervals.delete(sessionKey);
     for(const [id,a] of [...active])if(a.key===standaloneKey){active.delete(id);a.key=key;a.session=s;active.set(key+id.slice(standaloneKey.length),a);}
     const turn=turnStarts.get(standaloneKey);if(turn){turnStarts.delete(standaloneKey);turnStarts.set(key,turn);}
     const oldFences=sessionFences.get(standaloneKey);if(oldFences){sessionFences.delete(standaloneKey);sessionFences.set(key,[...(sessionFences.get(key)||[]),...oldFences]);}
@@ -86,7 +107,10 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  function add(start:CaptureEvent,end:CaptureEvent,state:Interval['state'],s:Session|undefined,proof:Interval['proof']) {
   if(end.observedAt<start.observedAt){coverage.push({reason:'Clock rollback: interval left unknown',eventId:end.eventId});return;}
   if(end.observedAt===start.observedAt)return;
-  intervals.push({start:start.observedAt,end:end.observedAt,state,proof,sourceEventIds:[start.eventId,end.eventId],hostId:s?.hostId,workspaceId:s?.workspaceId,sessionId:s?.sessionId,agentId:s?.agentId,provider:s?.provider,runId:s?.runId,taskId:s?.taskId,dispatchId:s?.dispatchId,child:s?.child});
+  const interval:Interval={start:start.observedAt,end:end.observedAt,state,proof,sourceEventIds:[start.eventId,end.eventId],hostId:s?.hostId,workspaceId:s?.workspaceId,sessionId:s?.sessionId,agentId:s?.agentId,provider:s?.provider,runId:s?.runId,taskId:s?.taskId,dispatchId:s?.dispatchId,child:s?.child};
+  intervals.push(interval);
+  // Index intervals a later Dispatch binding may promote, instead of rescanning all intervals.
+  if(!interval.child&&!interval.dispatchId&&interval.sessionId!==undefined){const key=`${interval.hostId}:${interval.sessionId}`,group=standaloneIntervals.get(key)||[];group.push(interval);standaloneIntervals.set(key,group);}
  }
  function closeKey(key:string,e:CaptureEvent,bounded=true) {
   for(const [id,a] of active){if(a.key!==key)continue;
@@ -257,7 +281,14 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  };
  const waitingByKey=new Map<string,Array<[number,number]>>();
  for(const i of intervals.filter(i=>i.state==='waiting')){const key=intervalKey(i),ranges=waitingByKey.get(key)||[];ranges.push([i.start,i.end]);waitingByKey.set(key,ranges);}
- const grouped=(key:string,ranges:Array<[number,number]>)=>groupIntervals(ranges,60,[...(waitingByKey.get(key)||[]),...(idleGaps.get(key)||[]),...globalFences.map(t=>[t,t] as [number,number]),...(sessionFences.get(key)||[]).map(t=>[t,t] as [number,number])]);
+ // Global fences are indexed once; each key adds its own waits, idle gaps and fences.
+ // A key's ranges are final once built, so its grouping is computed once.
+ const globalIndex=new BlockerIndex(globalFences.map(t=>[t,t] as [number,number])),groupedByKey=new Map<string,Array<[number,number]>>();
+ const grouped=(key:string,ranges:Array<[number,number]>)=>{
+  const cached=groupedByKey.get(key);if(cached)return cached;
+  const own=new BlockerIndex([...(waitingByKey.get(key)||[]),...(idleGaps.get(key)||[]),...(sessionFences.get(key)||[]).map(t=>[t,t] as [number,number])]);
+  const result=groupIntervals(ranges,60,[globalIndex,own]);groupedByKey.set(key,result);return result;
+ };
  for(const i of running){const group=i.child?observedChildren:observedRoots,key=intervalKey(i);const ranges=group.get(key)||[];ranges.push(...capped(i,key));group.set(key,ranges);}
  for(const i of timed){
   const group=i.child?children:roots,key=intervalKey(i),ranges=group.get(key)||[];

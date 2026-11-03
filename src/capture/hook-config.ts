@@ -3,6 +3,9 @@ import { dirname } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { object } from './orca.ts';
 import {agentById} from './sources/agent-registry.ts';
+// The hook only spools one small JSON file, but a cold Node start on a busy Mac
+// can exceed two seconds. Agents abort and report slow hooks; allow headroom.
+export const hookTimeoutSeconds=10;
 export interface Manifest { path: string; existed: boolean; original: string; updated: string; entries: Record<string,unknown>; }
 function read(path:string):string { if(existsSync(path) && lstatSync(path).isSymbolicLink())throw new Error('symlink configuration refused');return existsSync(path)?readFileSync(path,'utf8'):''; }
 function write(path:string,text:string):void { mkdirSync(dirname(path),{recursive:true,mode:0o700});const tmp=path+'.'+randomUUID()+'.tmp';writeFileSync(tmp,text,{mode:0o600,flag:'wx'});renameSync(tmp,path); }
@@ -25,7 +28,7 @@ export function prepareConfig(path:string, provider:string, command:string, even
   const entries:Record<string,unknown>={};
   for(const event of events) {
     if(config.hooks[event]!==undefined && !Array.isArray(config.hooks[event]))throw new Error('unsupported matcher layout');
-    const entry={hooks:[{type:'command',command,timeout:2,statusMessage:`Agent Time: ${event}`}]};entries[event]=entry;
+    const entry={hooks:[{type:'command',command,timeout:hookTimeoutSeconds,statusMessage:`Agent Time: ${event}`}]};entries[event]=entry;
     config.hooks[event]=[...(config.hooks[event]||[]),entry];
   }
   return {path,existed:existsSync(path),original,updated:JSON.stringify(config,null,2)+'\n',entries};

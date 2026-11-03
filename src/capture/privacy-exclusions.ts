@@ -34,10 +34,18 @@ function hasObservedSite(payload:Record<string,unknown>):boolean{
 }
 export class PrivacyExclusions {
  private path:string;private entries:PrivacyExclusion[];
+ /** Set when a damaged exclusions file was set aside at startup. */
+ readonly issue:string|null=null;
  constructor(output:string){
   this.path=join(output,'privacy-exclusions.json');
   if(existsSync(this.path)&&lstatSync(this.path).isSymbolicLink())throw new Error('Privacy exclusions file must not be a symlink');
-  this.entries=existsSync(this.path)?validateExclusions(JSON.parse(readFileSync(this.path,'utf8'))):[];
+  this.entries=[];
+  if(existsSync(this.path))try{this.entries=validateExclusions(JSON.parse(readFileSync(this.path,'utf8')));}
+  catch(error){
+   // A damaged file must not stop capture. Keep it for inspection and start empty.
+   this.issue=`Privacy exclusions were unreadable and were reset; the damaged file was kept as privacy-exclusions.json.corrupt (${error instanceof Error?error.message:String(error)})`;
+   try{renameSync(this.path,this.path+'.corrupt');}catch{/* The notice still reports the reset. */}
+  }
  }
  list():PrivacyExclusion[]{return this.entries.map(item=>({...item}));}
  matches(payload:Record<string,unknown>,browserForeground=false):boolean{

@@ -212,11 +212,16 @@ test('existing shared usage settings migrate to per-agent controls and retain in
 test('status avoids history replay and dashboard/menu reuse a summary until an event changes',async()=>{
  const {makeEvent}=await import('../src/capture/events.ts');const {DatabaseSync}=await import('node:sqlite');const path=mkdtempSync(join(tmpdir(),'ade-summary-cache-'));const c=new Collector(path);
  const read=c.store.events.bind(c.store);let reads=0;c.store.events=()=>{reads++;return read();};
+ const now=new Date(),today=`${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
  try{
-  c.status();assert.equal(reads,0);const first=c.summary();c.summary();c.trayStatus();assert.equal(reads,1);
-  const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local'});c.store.put(e);assert.notDeepEqual(c.summary(),first);c.trayStatus();assert.equal(reads,1);
-  c.store.put(e);c.summary();assert.equal(reads,1);
-  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,2);
+  // Day summaries and the tray read bounded windows; they never replay the whole history.
+  c.status();const first=c.summaryForDate(today);assert.equal(c.summaryForDate(today),first);c.trayStatus();assert.equal(reads,0);
+  const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local',terminalHandle:'t'});c.store.put(e);assert.notDeepEqual(c.summaryForDate(today),first);c.trayStatus();
+  c.store.put(e);const second=c.summaryForDate(today);assert.equal(c.summaryForDate(today),second);
+  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local',terminalHandle:'t2'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summaryForDate(today).sessions.some(s=>s.sessionId==='external'));
+  assert.equal(reads,0);
+  // The dateless whole-history summary is still exact.
+  assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,1);c.summary();assert.equal(reads,1);
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
 test('Orca tab metadata remains independent of worker polling and never blocks capture',async()=>{

@@ -75,10 +75,24 @@ export function previewWebsiteRuleImpact(pattern:string,projectPath:string,inter
 function uniqueSuggestions(items:WebsiteSuggestion[]):WebsiteSuggestion[]{
  const seen=new Set<string>();return items.filter(item=>{const key=item.projectPath+':'+item.source;if(seen.has(key))return false;seen.add(key);return true;});
 }
-function localHost(host:string):boolean{
- if(host==='localhost'||host.endsWith('.localhost')||host==='127.0.0.1'||host==='[::1]'||host==='::1')return true;
- try{return readFileSync('/etc/hosts','utf8').split('\n').some(line=>{const parts=line.replace(/#.*/,'').trim().split(/\s+/);return ['127.0.0.1','::1'].includes(parts[0])&&parts.slice(1).includes(host);});}catch{return false;}
+let hostsCache:{mtimeMs:number;names:Set<string>}|null=null;
+function loopbackHostNames():Set<string>{
+ try{
+  const mtimeMs=statSync('/etc/hosts').mtimeMs;
+  if(hostsCache?.mtimeMs===mtimeMs)return hostsCache.names;
+  const names=new Set<string>();
+  for(const line of readFileSync('/etc/hosts','utf8').split('\n')){const parts=line.replace(/#.*/,'').trim().split(/\s+/);if(['127.0.0.1','::1'].includes(parts[0]!))for(const name of parts.slice(1))names.add(name);}
+  hostsCache={mtimeMs,names};return names;
+ }catch{return new Set();}
 }
+export function localHost(host:string):boolean{
+ if(host==='localhost'||host.endsWith('.localhost')||host==='127.0.0.1'||host==='[::1]'||host==='::1')return true;
+ return loopbackHostNames().has(host);
+}
+/** Local pages are revalidated against their port listener; others reuse a resolution for minutes. */
+export function isLocalWebsite(raw:string):boolean{try{return localHost(new URL(raw).hostname);}catch{return false;}}
+// A resolution is reused this long; local ports are also checked for a new listener.
+const resolutionTtlMs=5*60_000;
 interface Listener {pid:number;name:string;address:string;}
 // These host-wide helpers forward ports for many unrelated containers. Their cwd
 // reflects where the helper started, not the project serving a published port.
@@ -107,6 +121,7 @@ export class WebsiteResolver {
  private remoteIndex:{at:number;paths:string;bySlug:Map<string,string[]>}|null=null;
  private cloneIndex:{at:number;paths:string[]}|null=null;
  private run:Runner;private dockerOverride?:string;
+ private resolutions=new Map<string,{at:number;result:WebsiteResolution;listeners:string|null}>();
  constructor(output:string,run:Runner=defaultRunner,options:{dockerBinary?:string}={}){
   this.run=run;
   this.dockerOverride=options.dockerBinary;
@@ -126,7 +141,7 @@ export class WebsiteResolver {
   this.save(next);return this.rules();
  }
  removeRule(pattern:string):WebsiteRule[]{const normalized=normalizeRulePattern(pattern);this.save(this.savedRules.filter(r=>r.pattern!==normalized));return this.rules();}
- private save(next:WebsiteRule[]){writeFileSync(this.rulesPath+'.tmp',JSON.stringify(next,null,2)+'\n',{mode:0o600});renameSync(this.rulesPath+'.tmp',this.rulesPath);this.savedRules=next;}
+ private save(next:WebsiteRule[]){writeFileSync(this.rulesPath+'.tmp',JSON.stringify(next,null,2)+'\n',{mode:0o600});renameSync(this.rulesPath+'.tmp',this.rulesPath);this.savedRules=next;this.resolutions.clear();}
  private match(path:string,known:KnownWorkspace[],source:string,detail:string):Pick<WebsiteResolution,'projectPath'|'workspaceId'|'source'|'detail'>{
   const workspaces=known.filter(k=>inside(path,k.workspacePath)).sort((a,b)=>b.workspacePath.length-a.workspacePath.length);
   const selected=workspaces.length===1||workspaces[0]?.workspacePath.length>workspaces[1]?.workspacePath.length?workspaces[0]:undefined;
@@ -264,9 +279,33 @@ export class WebsiteResolver {
   const upstream=await this.portOwner(target,known);
   return upstream.match?{...upstream.match,source:'proxy_config',detail:`Proxy host ${url.hostname} routes to local port ${target}`}:null;
  }
+ private async listenerSignature(port:number):Promise<string>{
+  const stdout=await this.run('/usr/sbin/lsof',['-nP','-a',`-iTCP:${port}`,'-sTCP:LISTEN','-Fpcn'],1200);
+  return [...new Set(parseListeners(stdout||'').filter(l=>l.address.endsWith(':'+port)).map(l=>l.pid))].sort((a,b)=>a-b).join(',');
+ }
+ /**
+  * Resolve a page to a project. Results are cached per website key: a local
+  * page costs one listener check while its port keeps the same owner, and
+  * other pages are not re-examined for several minutes.
+  */
  async resolve(raw:string,known:KnownWorkspace[],recentOrca?:{workspaceId:string;observedAt:number}):Promise<WebsiteResolution|null>{
   let url:URL;try{url=new URL(raw);if(!['http:','https:'].includes(url.protocol))return null;}catch{return null;}
-  const key=websiteKey(raw,this.savedRules)!;
+  const key=websiteKey(raw,this.savedRules)!,local=localHost(url.hostname);
+  const port=Number(url.port||(url.protocol==='https:'?'443':'80'));
+  const cached=this.resolutions.get(key);
+  if(cached&&Date.now()-cached.at<resolutionTtlMs){
+   const listeners=local&&Number.isInteger(port)?await this.listenerSignature(port):null;
+   if(listeners===cached.listeners)return {...cached.result,url:raw,observedAt:Date.now()/1000};
+  }
+  const listeners=local&&Number.isInteger(port)&&port>0&&port<=65535?await this.listenerSignature(port):null;
+  const result=await this.resolveUncached(raw,url,key,known,recentOrca);
+  if(result){
+   this.resolutions.set(key,{at:Date.now(),result,listeners});
+   if(this.resolutions.size>200)this.resolutions.delete(this.resolutions.keys().next().value!);
+  }
+  return result;
+ }
+ private async resolveUncached(raw:string,url:URL,key:string,known:KnownWorkspace[],recentOrca?:{workspaceId:string;observedAt:number}):Promise<WebsiteResolution|null>{
   const result:WebsiteResolution={key,origin:url.origin,url:raw,observedAt:Date.now()/1000,suggestions:[]};
   const rule=matchingRule(url,this.savedRules);
   if(rule)return {...result,...this.match(rule.projectPath,known,'rule',`User rule ${rule.pattern}`)};

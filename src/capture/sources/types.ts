@@ -21,7 +21,15 @@ export interface AgentSource {
 }
 export interface PollSource {
   kind:'poller';id:string;name:string;setting:string;defaultEnabled:boolean;
-  poll(context:{reader:(argv:string[])=>Promise<unknown>;runId?:string;valid:()=>boolean;store:EventStore}):Promise<string|null>;
+  poll(context:{
+    reader:(argv:string[])=>Promise<unknown>;runId?:string;valid:()=>boolean;store:EventStore;
+    /** State this source keeps between polls of one collector. */
+    memory?:Record<string,unknown>;
+    /** Shared Orca terminal-list receipt for this tick. */
+    terminals?:()=>Promise<unknown>;
+    /** Record a coverage notice; the collector stores repeats of an ongoing problem once. */
+    coverage?:(reason:string)=>void;
+  }):Promise<string|null>;
   foreground?(payload:Record<string,any>,event:CaptureEvent,focusedTabs:FocusedOrcaTab[],focusedTabsAt:number):{attribution:Record<string,unknown>|null;accessibility:AccessibilityCapture}|null;
 }
 export type CaptureSource=BrowserSource|AgentSource|PollSource;

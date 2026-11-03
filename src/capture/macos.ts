@@ -40,7 +40,7 @@ export class MacActivityProbe {
  start(){
   if(this.helper||!this.settings().macosActivity)return;
   if(!this.executable||!existsSync(this.executable)){this.onMissing();return;}
-  const helper=spawn(this.executable,browserProbeArguments(browsers,this.settings()),{stdio:['ignore','pipe','pipe']});this.helper=helper;
+  const helper=spawn(this.executable,browserProbeArguments(browsers,this.settings()),{stdio:['ignore','pipe','ignore']});this.helper=helper;
   const lines=createInterface({input:helper.stdout!});
   lines.on('line',line=>{if(this.running()&&this.helper===helper&&this.settings().macosActivity)this.onLine(line);});
   helper.on('error',()=>{if(this.helper===helper)this.onError('macOS activity helper unavailable');});

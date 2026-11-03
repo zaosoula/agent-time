@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync,symlinkSync,mkdirSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync,symlinkSync,mkdirSync,existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readWorkers,orcaCliAvailable } from '../src/capture/orca.ts';
@@ -43,7 +43,9 @@ test('corrupt and partial spool files preserve valid events and replays', () => 
   assert.equal(spoolHook(event,root),true);writeFileSync(join(root,'broken.json'),'broken');writeFileSync(join(root,'partial.tmp'),'partial');
   assert.equal(spoolStatus(root).pending,2);assert.equal(spoolStatus(root).temporary,1);
   const issues=importSpool(root,store);assert.equal(store.events().length,1);assert.equal(issues.length,1);
-  assert.equal(spoolStatus(root).pending,1);
+  // The unreadable record is set aside once instead of being re-read every tick.
+  assert.equal(spoolStatus(root).pending,0);assert.ok(existsSync(join(root,'rejected','broken.json')));
+  assert.deepEqual(importSpool(root,store),[]);
   spoolHook(event,root);importSpool(root,store);assert.equal(store.events().length,1);store.close();rmSync(root,{recursive:true});
 });
 test('a database write failure leaves hook events queued for retry', () => {

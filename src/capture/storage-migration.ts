@@ -5,6 +5,8 @@ import {chmodSync,closeSync,existsSync,lstatSync,mkdirSync,openSync,readFileSync
 import {join} from 'node:path';
 import {compactCaptureCopy,type CompactCopyResult} from './compact-copy.ts';
 import {validateEvent,type CaptureEvent} from './events.ts';
+import {clearStaleLock} from './capture-lock.ts';
+import {runStorageTask} from './storage-worker.ts';
 
 const namePattern=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 const digestPattern=/^[a-f0-9]{64}$/;
@@ -64,22 +66,32 @@ function checkpoint(path:string){
  }finally{db.close();}
  if(existsSync(path+'-wal')&&statSync(path+'-wal').size>0)throw new Error('Storage still has an open write-ahead log');
 }
-export function prepareCompaction(root:string,options:{idleThreshold:number;agentIdleThreshold:number},revision:()=>string):PreparedCompaction{
+function beginCompaction(root:string,revision:()=>string){
  if(existsSync(marker(root)))throw new Error('A storage replacement is already pending');
  const source=join(root,'events.sqlite'),exports=folder(root);regular(source);
  checkpoint(source);
  const capacity=statfsSync(root),free=Number(capacity.bavail)*Number(capacity.bsize),required=statSync(source).size+64*1024*1024;
  if(free<required)throw new Error(`Preparing a recoverable copy needs about ${Math.ceil(required/1024/1024)} MB free`);
- const initial=revision(),sourceHash=hash(source),candidate=named(),backup=named(),target=join(exports,candidate);
- let report:CompactCopyResult;
- try{
-  report=compactCaptureCopy(source,target,options);
-  if(revision()!==initial||hash(source)!==sourceHash)throw new Error('Tracking data changed while the compacted copy was prepared');
-  const savingsBytes=report.beforeBytes-report.afterBytes;
-  if(savingsBytes<=0)throw new Error('Compaction would not save disk space');
-  writePending(root,{candidate,backup,sourceHash,candidateHash:hash(target),kind:'compaction'});
-  return {...report,candidate,backup,savingsBytes};
- }catch(error){rmSync(target,{force:true});throw error;}
+ const initial=revision(),sourceHash=hash(source),candidate=named(),backup=named();
+ return {source,candidate,backup,target:join(exports,candidate),sourceHash,initial};
+}
+function finishCompaction(root:string,plan:ReturnType<typeof beginCompaction>,report:CompactCopyResult,current:string):PreparedCompaction{
+ if(current!==plan.initial||hash(plan.source)!==plan.sourceHash)throw new Error('Tracking data changed while the compacted copy was prepared');
+ const savingsBytes=report.beforeBytes-report.afterBytes;
+ if(savingsBytes<=0)throw new Error('Compaction would not save disk space');
+ writePending(root,{candidate:plan.candidate,backup:plan.backup,sourceHash:plan.sourceHash,candidateHash:hash(plan.target),kind:'compaction'});
+ return {...report,candidate:plan.candidate,backup:plan.backup,savingsBytes};
+}
+export function prepareCompaction(root:string,options:{idleThreshold:number;agentIdleThreshold:number},revision:()=>string):PreparedCompaction{
+ const plan=beginCompaction(root,revision);
+ try{return finishCompaction(root,plan,compactCaptureCopy(plan.source,plan.target,options),revision());}
+ catch(error){rmSync(plan.target,{force:true});throw error;}
+}
+/** As prepareCompaction, but the copy and its verification run off this thread. */
+export async function prepareCompactionAsync(root:string,options:{idleThreshold:number;agentIdleThreshold:number},revision:()=>string,compact:(source:string,target:string,options:{idleThreshold:number;agentIdleThreshold:number})=>Promise<CompactCopyResult>=(source,target,options)=>runStorageTask({op:'compact',source,target,options})):Promise<PreparedCompaction>{
+ const plan=beginCompaction(root,revision);
+ try{return finishCompaction(root,plan,await compact(plan.source,plan.target,options),revision());}
+ catch(error){rmSync(plan.target,{force:true});throw error;}
 }
 export function prepareRestore(root:string,candidate:string):{candidate:string;backup:string;bytes:number}{
  if(existsSync(marker(root)))throw new Error('A storage replacement is already pending');
@@ -108,14 +120,7 @@ function noOtherOpenHandle(path:string){
  }
 }
 function rejectLiveCaptureLock(root:string){
- const path=join(root,'capture.lock');if(!existsSync(path))return;
- regular(path);const pid=Number(readFileSync(path,'utf8'));
- if(!Number.isInteger(pid)||pid<1)throw new Error('Unreadable collector lock; inspect before replacing storage');
- try{process.kill(pid,0);}catch(error){
-  if((error as NodeJS.ErrnoException).code==='ESRCH'){unlinkSync(path);return;}
-  throw error;
- }
- throw new Error('Capture is active; storage replacement was not applied');
+ clearStaleLock(join(root,'capture.lock'),{unreadable:'Unreadable collector lock; inspect before replacing storage',live:'Capture is active; storage replacement was not applied'});
 }
 function clearClosedJournal(path:string){
  for(const suffix of ['-wal','-shm']){

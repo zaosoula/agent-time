@@ -225,3 +225,16 @@ test('cleanup handles merged legacy project hooks and retains unexpected runtime
   await f.manager.install('codex');const runtime=f.manager.cleanupPreview().helpers.find(path=>statSync(path).isDirectory())!;writeFileSync(join(runtime,'keep.txt'),'user file');assert.ok(f.manager.cleanup().errors.length);assert.equal(readFileSync(join(runtime,'keep.txt'),'utf8'),'user file');assert.equal(f.manager.status().runtimeReady,true);
  }finally{f.close();}
 });
+test('installed hooks with the old two-second timeout are reported for update and repaired',async()=>{
+ const f=fixture();try{
+  await f.manager.install('claude');const path=join(f.home,'.claude/settings.json');
+  const config=JSON.parse(readFileSync(path,'utf8'));
+  for(const groups of Object.values(config.hooks) as any[])for(const group of groups)for(const hook of group.hooks)hook.timeout=2;
+  writeFileSync(path,JSON.stringify(config,null,2)+'\n');
+  assert.equal(f.manager.status().targets.find(t=>t.provider==='claude'&&t.path===path)?.state,'needs-update');
+  await f.manager.install('claude');
+  const repaired=JSON.parse(readFileSync(path,'utf8'));
+  assert.ok((Object.values(repaired.hooks) as any[]).flat().flatMap((group:any)=>group.hooks).every((hook:any)=>hook.timeout===10));
+  assert.equal(f.manager.status().targets.find(t=>t.provider==='claude'&&t.path===path)?.state,'installed');
+ }finally{f.close();}
+});

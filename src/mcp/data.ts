@@ -4,7 +4,8 @@ import {existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,unlinkS
 import {execFileSync} from 'node:child_process';
 import {basename,isAbsolute,join} from 'node:path';
 import {homedir} from 'node:os';
-import {makeEvent,type CaptureEvent,type Interval,type Summary} from '../capture/events.ts';
+import {makeEvent,type CaptureEvent,type Interval,type Issue,type Session,type Summary} from '../capture/events.ts';
+import {readWindowEvents} from '../capture/summary-window.ts';
 import {minuteCreditSeconds,summarize} from '../capture/correlate.ts';
 import {applyHumanDecisions,groupHumanReview,humanReviewState,type HumanDecision,type HumanSplit} from '../capture/human-review.ts';
 import {unobservedGaps} from '../capture/gaps.ts';
@@ -12,7 +13,6 @@ import {projectPathFromWorktree} from '../capture/website-resolver.ts';
 import {issuePattern,uuidPattern,validAgentReport} from './report.ts';
 
 export const defaultDataDirectory=()=>process.env.ADE_CAPTURE_OUTPUT||join(homedir(),'Library','Application Support','studio.ezyo.agenttime');
-const maxEvents=250_000;
 const now=()=>Date.now()/1000;
 const dateOf=(seconds:number)=>{const d=new Date(seconds*1000);return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;};
 function dateStart(date:string):number{
@@ -42,40 +42,80 @@ function pendingReports(output:string):CaptureEvent[]{
  }catch{/* Ignore incomplete or invalid spool entries. */}
  return events;
 }
-export interface Snapshot {summary:Summary;events:CaptureEvent[];from:number;to:number;truncatedBefore:boolean;}
+export interface Snapshot {summary:Summary;events:CaptureEvent[];from:number;to:number;truncatedBefore:boolean;firstSeen?:Map<string,number>;}
+// A safety cap on one day's window, far above a day of two-second samples.
+const maxWindowEvents=1_500_000;
+function snapshotSettings(output:string){
+ const settingsPath=join(output,'settings.json');let settings:Record<string,unknown>={};
+ if(existsSync(settingsPath))try{settings=JSON.parse(readFileSync(settingsPath,'utf8'));}catch{/* Use collector defaults for invalid settings. */}
+ const idle=Number(settings.humanIdleMinutes),agentIdle=Number(settings.agentIdleMinutes);
+ return {idleThreshold:Number.isFinite(idle)&&idle>0?idle*60:300,agentIdleThreshold:Number.isFinite(agentIdle)&&agentIdle>0?agentIdle*60:300};
+}
+/** Split a range into pieces of at most one day, so each summary reads a bounded window. */
+function chunks(from:number,to:number):Array<[number,number]>{
+ const result:Array<[number,number]>=[];
+ for(let start=from;start<to;){
+  const next=new Date(start*1000);next.setHours(24,0,0,0);
+  const end=Math.min(to,Math.max(next.getTime()/1000,start+1));
+  result.push([start,end]);start=end;
+ }
+ return result;
+}
+/**
+ * Summarize [from,to) one local day at a time. Each day reads agent evidence
+ * from a day plus the agent idle threshold before and after it (long turns and
+ * sessions keep their start and end), but Mac activity only around the day, so
+ * memory stays near one day of samples and 30-day ranges work.
+ */
 export function snapshot(output:string,from:number,to:number):Snapshot{
  if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>31*86400)throw new Error('Invalid bounded time range');
- const db=database(output),lookback=Math.max(0,from-3600);
+ const db=database(output);
  try{
-  const count=Number(db.prepare('SELECT COUNT(*) AS count FROM events WHERE observed_at>=? AND observed_at<?').get(lookback,to)?.count||0);
-  if(count>maxEvents)throw new Error('Too many events for one query; use a shorter date range');
-  const events:CaptureEvent[]=[];
-  for(const row of db.prepare('SELECT payload FROM events WHERE observed_at>=? AND observed_at<? ORDER BY rowid').iterate(lookback,to)){
-   if(events.length>=maxEvents)throw new Error('Too many events for one query; use a shorter date range');
-   events.push(JSON.parse(String(row.payload)) as CaptureEvent);
-  }
-  events.push(...pendingReports(output).filter(e=>e.observedAt>=lookback&&e.observedAt<to));
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
-  const settingsPath=join(output,'settings.json');let settings:Record<string,unknown>={};
-  if(existsSync(settingsPath))try{settings=JSON.parse(readFileSync(settingsPath,'utf8'));}catch{/* Use collector defaults for invalid settings. */}
-  const idle=Number(settings.humanIdleMinutes),agentIdle=Number(settings.agentIdleMinutes);
-  const summary=applyHumanDecisions(summarize(events,{idleThreshold:Number.isFinite(idle)&&idle>0?idle*60:300,agentIdleThreshold:Number.isFinite(agentIdle)&&agentIdle>0?agentIdle*60:300}),decisions,splits);
-  const clipped=summary.intervals.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(from,i.start),end:Math.min(to,i.end)}));
-  const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
-  for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}
-  for(const session of summary.sessions)if(session.cwd&&session.sessionId)sessionPaths.set(`${session.provider}:${session.sessionId}`,session.cwd);
-  for(const interval of clipped)if(interval.state==='grouped'&&!interval.sourceEventIds.length){
-   interval.sourceEventIds=[...new Set((underlying.get(`${interval.provider}:${interval.sessionId}`)||[]).filter(source=>source.end>interval.start&&source.start<interval.end).flatMap(source=>source.sourceEventIds))].slice(0,32);
+  const options=snapshotSettings(output),pending=pendingReports(output);
+  const intervals:Interval[]=[],coverage:Issue[]=[],unresolved:Issue[]=[],sessions=new Map<string,Session>(),firstSeen=new Map<string,number>();
+  const kept=new Map<string,CaptureEvent>();let previousTrusted=true;let readFrom=Infinity;
+  for(const [start,end] of chunks(from,to)){
+   const window=readWindowEvents(db,start,end,options.agentIdleThreshold);
+   if(window.events.length>maxWindowEvents)throw new Error('Too many events for one day; use a shorter date range');
+   readFrom=Math.min(readFrom,window.bounds.readFrom);
+   const events=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
+   const summary=applyHumanDecisions(summarize(events,options),decisions,splits);
+   const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
+   for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}
+   for(const session of summary.sessions)if(session.cwd&&session.sessionId)sessionPaths.set(`${session.provider}:${session.sessionId}`,session.cwd);
+   const clipped=summary.intervals.filter(i=>i.end>start&&i.start<end).map(i=>({...i,start:Math.max(start,i.start),end:Math.min(end,i.end)}));
+   for(const interval of clipped)if(interval.state==='grouped'&&!interval.sourceEventIds.length){
+    interval.sourceEventIds=[...new Set((underlying.get(`${interval.provider}:${interval.sessionId}`)||[]).filter(source=>source.end>interval.start&&source.start<interval.end).flatMap(source=>source.sourceEventIds))].slice(0,32);
+   }
+   for(const interval of clipped)if(!interval.workspaceId&&interval.sessionId){
+    const cwd=sessionPaths.get(`${interval.provider}:${interval.sessionId}`);
+    if(cwd)interval.workspaceId=`session::${projectPathFromWorktree(cwd)}`;
+   }
+   intervals.push(...clipped);
+   const inChunk=(issue:Issue)=>issue.observedAt===undefined?start===from:issue.observedAt>=start&&issue.observedAt<end;
+   coverage.push(...summary.coverage.filter(inChunk));unresolved.push(...summary.unresolved.filter(inChunk));
+   for(const session of summary.sessions){const previous=sessions.get(session.key);if(!previous||session.lastObservedAt>=previous.lastObservedAt)sessions.set(session.key,session);}
+   // Keep only the evidence the attribution and coverage views read.
+   for(const event of events){
+    if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
+    // Reported context keeps its earlier reach: an hour before the range.
+    if(event.source==='agent_report'){if(event.observedAt>=from-3600&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
+    if(event.source!=='macos'||event.kind!=='activity'||event.observedAt<start||event.observedAt>=end)continue;
+    const untrusted=event.data?.accessibilityTrusted===false;
+    if(untrusted||!previousTrusted||hasIssueKeys(event))kept.set(event.eventId,event);
+    previousTrusted=!untrusted;
+   }
   }
-  for(const interval of clipped)if(!interval.workspaceId&&interval.sessionId){
-   const cwd=sessionPaths.get(`${interval.provider}:${interval.sessionId}`);
-   if(cwd)interval.workspaceId=`session::${projectPathFromWorktree(cwd)}`;
-  }
-  const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(lookback));
-  return {summary:{...summary,intervals:clipped},events,from,to,truncatedBefore};
+  const measured=totals(intervals),children=intervals.filter(i=>i.child&&i.state==='grouped'),byChild=new Map<string,Array<[number,number]>>();
+  for(const i of children){const key=JSON.stringify([i.hostId,i.sessionId,i.agentId]),group=byChild.get(key)||[];group.push([i.start,i.end]);byChild.set(key,group);}
+  const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
+  const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(readFrom));
+  return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,firstSeen};
  }finally{db.close();}
 }
+const hasIssueKeys=(event:CaptureEvent)=>[event.data?.browserUrl,event.data?.browserTitle,event.data?.orcaSelectedTabTitle,event.data?.tabTitle].some(value=>issueKeys(value).length>0);
 const canonicalProject=(value:string)=>{const path=value.includes('::')?value.split('::').at(-1)||value:value;return isAbsolute(path)?projectPathFromWorktree(path):path;};
 const projectOf=(i:Interval)=>{const path=i.workspaceId?.split('::').at(-1);return path?canonicalProject(path):null;};
 const issueKeys=(value:unknown):string[]=>typeof value==='string'?[...new Set([...value.slice(0,512).matchAll(/\b([a-z][a-z0-9]{1,15}-[1-9][0-9]{0,8})\b/gi)].map(match=>match[1]!.toUpperCase()).filter(key=>issuePattern.test(key)))]:[];
@@ -176,8 +216,8 @@ export function timeline(s:Snapshot,project?:string){
  return {segments,moreSegments:segmentCount>500,totals:totals(rows),truncatedBefore:s.truncatedBefore};
 }
 export function sessions(s:Snapshot,filter:{provider?:string;workspace?:string;issueKey?:string}){
- const index=attributionIndex(s.events),firstSeen=new Map<string,number>();
- for(const event of s.events)if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
+ const index=attributionIndex(s.events),firstSeen=s.firstSeen||new Map<string,number>();
+ if(!s.firstSeen)for(const event of s.events)if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
  const rows=s.summary.sessions.filter(session=>session.lastObservedAt>=s.from&&session.lastObservedAt<s.to&&
   (!filter.provider||session.provider===filter.provider)&&(!filter.workspace||session.workspaceId===filter.workspace));
  const linked=rows.map(session=>{

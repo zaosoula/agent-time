@@ -8,20 +8,31 @@ export interface UsageSummary{days:Array<{date:string;provider:string;tokens:num
 const day=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const emptyCounts=():Counts=>({input:0,output:0,cacheRead:0,cacheWrite:0,cacheWrite1h:0,reasoning:0});
 const periodStart=()=>{const month=new Date();month.setDate(1);month.setHours(0,0,0,0);const week=new Date();week.setDate(week.getDate()-(week.getDay()+6)%7);week.setHours(0,0,0,0);return new Date(Math.min(month.getTime(),week.getTime()));};
+// Records per commit while importing one log file.
+const usageBatchSize=2000;
 export class UsageReader{
  private providers:Record<string,boolean>=Object.fromEntries(agents.map(agent=>[agent.id,true]));private pricing:CatalogStore;private db:DatabaseSync;private enabled=false;private job:Promise<void>|undefined;private timer:ReturnType<typeof setTimeout>|undefined;
  private limits:UsageSummary['limits']=[];private lastScan:number|null=null;private filesScanned=0;private error:string|null=null;
- private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;private home:string;
- constructor(database:string,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string,home:string=homedir()){
+ private roots?:Array<{provider:string;accountId:string;path:string}>;private orca:typeof callOrca;private home:string;private ownsDatabase:boolean;
+ private sessionFirst=new Map<string,number>();private childFirst=new Map<string,number>();private capturedRowid=0;private captured:Map<string,number>|undefined;
+ private summaryCache:{key:string;value:UsageSummary}|undefined;private generation=0;
+ /**
+  * Pass the collector's open connection to share it. A second connection's
+  * commits change PRAGMA data_version, which the collector reads as foreign
+  * writes that invalidate its summary caches.
+  */
+ constructor(database:string|DatabaseSync,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string,home:string=homedir()){
   this.roots=roots;this.orca=orca;this.home=home;
-  this.db=new DatabaseSync(database);this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
+  this.ownsDatabase=typeof database==='string';
+  this.db=typeof database==='string'?new DatabaseSync(database):database;
+  this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }
  configureProviders(providers:Record<string,boolean>){this.providers={...providers};}
- rebindPricing(){this.pricing.bindExisting();}
+ rebindPricing(){this.pricing.bindExisting();this.generation++;}
  start(){if(this.enabled)return;this.enabled=true;void this.refresh();}
  async stop(){this.enabled=false;clearTimeout(this.timer);await this.job;}
- async close(){await this.stop();this.db.close();}
+ async close(){await this.stop();if(this.ownsDatabase)this.db.close();}
  private async discoverRoots(){
   if(this.roots)return this.roots;
   const base=join(this.home,'Library/Application Support/orca'),roots=agents.map(agent=>({provider:agent.id,accountId:'default',path:join(this.home,agent.defaultUsagePath)}));
@@ -42,7 +53,7 @@ export class UsageReader{
  async refresh(){
   if(this.job||!this.enabled)return;
   clearTimeout(this.timer);this.timer=undefined;
-  this.job=this.scan().catch(e=>{this.error=String(e);}).finally(()=>{this.job=undefined;if(this.enabled)this.timer=setTimeout(()=>{void this.refresh();},60000);});await this.job;
+  this.job=this.scan().catch(e=>{this.error=String(e);}).finally(()=>{this.job=undefined;this.generation++;if(this.enabled)this.timer=setTimeout(()=>{void this.refresh();},60000);});await this.job;
  }
  private async scan(){
   this.error=null;this.filesScanned=0;
@@ -69,41 +80,77 @@ export class UsageReader{
    if(cursor&&cursor.offset===info.size){this.filesScanned++;continue;}
    let offset=cursor&&cursor.offset<=info.size?cursor.offset:0;const state:ParserState&{skipping?:boolean}=offset&&cursor?JSON.parse(cursor.state):{};
    const stream=createReadStream(canonical,{start:offset,end:info.size-1,highWaterMark:65536});let pending=Buffer.alloc(0),skipping=state.skipping===true;
+   let batch:UsageRecord[]=[],failed=false;
+   // Records and their cursor commit together. A storage failure keeps the old
+   // cursor, so the same lines are read again next scan instead of being lost.
+   const flush=()=>{
+    state.skipping=skipping;
+    try{this.commit(batch,canonical,offset,JSON.stringify(state));batch=[];return true;}
+    catch(error){failed=true;this.error=`Could not save token usage: ${String(error)}`;return false;}
+   };
    try{for await(const chunk of stream){
     if(!this.enabled||!this.providers[root.provider])break;pending=Buffer.concat([pending,chunk as Buffer]);let at:number;
     while((at=pending.indexOf(10))>=0){
      const line=pending.subarray(0,at);offset+=at+1;pending=pending.subarray(at+1);
      if(skipping){skipping=false;continue;}
-     try{const record=parseUsage(root.provider,JSON.parse(line.toString('utf8')),state,root.accountId);const first=record?captured.get(record.provider+':'+record.sessionId):undefined;if(record&&first!==undefined&&record.timestamp>=Math.max(cutoff,first))this.put(record);}catch{}
+     let record:UsageRecord|undefined;
+     try{record=parseUsage(root.provider,JSON.parse(line.toString('utf8')),state,root.accountId);}catch{continue;}
+     const first=record?captured.get(record.provider+':'+record.sessionId):undefined;
+     if(record&&first!==undefined&&record.timestamp>=Math.max(cutoff,first))batch.push(record);
     }
     if(pending.length>16*1024*1024){offset+=pending.length;pending=Buffer.alloc(0);skipping=true;this.error='Some oversized log records were skipped';}
+    if(batch.length>=usageBatchSize&&!flush())break;
    }}finally{stream.destroy();}
+   if(failed)continue;
    // Persist only complete lines; unfinished provider writes are retried next scan.
-   state.skipping=skipping;this.db.prepare('INSERT INTO usage_cursors VALUES(?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset,state=excluded.state').run(canonical,offset,JSON.stringify(state));this.filesScanned++;
+   if(flush())this.filesScanned++;
   }
   this.lastScan=Date.now()/1000;
  }
  private capturedSessions(){
-  const result=new Map<string,number>();
-  for(const r of this.db.prepare("SELECT json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') sessionId,MIN(observed_at) first FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.sessionId') IS NOT NULL GROUP BY 1,2").all() as Array<{provider:string;sessionId:string;first:number}>)result.set(r.provider+':'+r.sessionId,r.first);
-  for(const agent of agents.filter(agent=>agent.childSessionIds))for(const r of this.db.prepare("SELECT json_extract(payload,'$.agentId') sessionId,MIN(observed_at) first FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.kind')='child_start' AND json_extract(payload,'$.agentId') IS NOT NULL GROUP BY 1").all(agent.id) as Array<{sessionId:string;first:number}>)result.set(agent.id+':'+r.sessionId,r.first);
-  return result;
+  // Hook rows are only appended, so each call reads just the rows added since the last one.
+  let changed=false;
+  const rows=this.db.prepare("SELECT rowid,json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') sessionId,json_extract(payload,'$.agentId') agentId,json_extract(payload,'$.kind') kind,observed_at first FROM events WHERE rowid>? AND json_extract(payload,'$.source')='hook' ORDER BY rowid").all(this.capturedRowid) as Array<{rowid:number;provider:unknown;sessionId:unknown;agentId:unknown;kind:unknown;first:number}>;
+  const earliest=(map:Map<string,number>,key:string,first:number)=>{const previous=map.get(key);if(previous===undefined||first<previous){map.set(key,first);changed=true;}};
+  for(const row of rows){
+   this.capturedRowid=Math.max(this.capturedRowid,Number(row.rowid));
+   if(typeof row.provider!=='string')continue;
+   if(typeof row.sessionId==='string')earliest(this.sessionFirst,row.provider+':'+row.sessionId,Number(row.first));
+   if(row.kind==='child_start'&&typeof row.agentId==='string'&&agentById.get(row.provider)?.childSessionIds)earliest(this.childFirst,row.provider+':'+row.agentId,Number(row.first));
+  }
+  if(changed||!this.captured){this.captured=new Map([...this.sessionFirst,...this.childFirst]);this.generation++;}
+  return this.captured;
  }
- private put(record:UsageRecord){
-  const existing=this.db.prepare('SELECT payload FROM usage_events WHERE id=?').get(record.id) as {payload:string}|undefined;
-  if(existing&&agentById.get(record.provider)?.dedupe==='first')return;
-  if(existing){const previous=JSON.parse(existing.payload);for(const key of Object.keys(emptyCounts()) as Array<keyof Counts>)record[key]=Math.max(record[key],previous[key]||0);record.timestamp=Math.min(record.timestamp,previous.timestamp);}
-  this.db.exec('BEGIN');
-  try{this.db.prepare('INSERT INTO usage_events VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,timestamp=excluded.timestamp').run(record.id,record.timestamp,JSON.stringify(record));this.pricing.bind(record.id);this.db.exec('COMMIT');}catch(e){this.db.exec('ROLLBACK');throw e;}
+ private commit(records:UsageRecord[],path:string,offset:number,state:string){
+  const read=this.db.prepare('SELECT payload FROM usage_events WHERE id=?');
+  const write=this.db.prepare('INSERT INTO usage_events VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET payload=excluded.payload,timestamp=excluded.timestamp');
+  const begin=!this.db.isTransaction;if(begin)this.db.exec('BEGIN');
+  try{
+   for(const record of records){
+    const existing=read.get(record.id) as {payload:string}|undefined;
+    if(existing&&agentById.get(record.provider)?.dedupe==='first')continue;
+    if(existing){const previous=JSON.parse(existing.payload);for(const key of Object.keys(emptyCounts()) as Array<keyof Counts>)record[key]=Math.max(record[key],previous[key]||0);record.timestamp=Math.min(record.timestamp,previous.timestamp);}
+    write.run(record.id,record.timestamp,JSON.stringify(record));this.pricing.bind(record.id);
+   }
+   this.db.prepare('INSERT INTO usage_cursors VALUES(?,?,?) ON CONFLICT(path) DO UPDATE SET offset=excluded.offset,state=excluded.state').run(path,offset,state);
+   if(begin)this.db.exec('COMMIT');
+  }catch(error){if(begin&&this.db.isTransaction)this.db.exec('ROLLBACK');throw error;}
+  if(records.length)this.generation++;
  }
  summary():UsageSummary{
-  const days=new Map<string,UsageSummary['days'][number]>(),models=new Map<string,UsageSummary['models'][number]>();const month=new Date();month.setDate(1);month.setHours(0,0,0,0);const captured=this.capturedSessions();
+  const captured=this.capturedSessions();
+  // The tray asks often; reuse the aggregate until usage, sessions, pricing or the day changes.
+  const key=`${this.generation}:${day(new Date())}:${Boolean(this.job)}`;
+  if(this.summaryCache?.key===key)return {...this.summaryCache.value,limits:this.limits,scanning:Boolean(this.job),lastScan:this.lastScan,filesScanned:this.filesScanned,error:this.error};
+  const days=new Map<string,UsageSummary['days'][number]>(),models=new Map<string,UsageSummary['models'][number]>();const month=new Date();month.setDate(1);month.setHours(0,0,0,0);
   for(const row of this.db.prepare('SELECT u.payload,p.catalog_version FROM usage_events u LEFT JOIN usage_pricing p ON p.id=u.id WHERE u.timestamp>=?').all(periodStart().getTime()/1000) as Array<{payload:string;catalog_version:string}>){
    const r:UsageRecord=JSON.parse(row.payload);const first=captured.get(r.provider+':'+r.sessionId);if(first===undefined||r.timestamp<first)continue;
    const date=day(new Date(r.timestamp*1000)),key=r.provider+date,tokens=tokenTotal(r),cost=this.pricing.cost(row.catalog_version,r.model,r);
    const d=days.get(key)||{date,provider:r.provider,tokens:0,usd:0,unpriced:0,counts:emptyCounts()};d.tokens+=tokens;d.usd+=cost||0;d.unpriced+=cost===null?tokens:0;for(const k of Object.keys(d.counts) as Array<keyof Counts>)d.counts[k]+=r[k];days.set(key,d);
    if(r.timestamp>=month.getTime()/1000){const m=models.get(r.provider+r.model)||{model:r.model,provider:r.provider,tokens:0,usd:0,unpriced:0};m.tokens+=tokens;m.usd+=cost||0;m.unpriced+=cost===null?tokens:0;models.set(r.provider+r.model,m);}
   }
-  return {days:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),models:[...models.values()].sort((a,b)=>b.tokens-a.tokens),limits:this.limits,scanning:Boolean(this.job),lastScan:this.lastScan,filesScanned:this.filesScanned,error:this.error,pricingCheckedAt:this.pricing.status().verifiedAt,pricingSources:this.pricing.sources,pricing:this.pricing.status()};
+  const value={days:[...days.values()].sort((a,b)=>a.date.localeCompare(b.date)),models:[...models.values()].sort((a,b)=>b.tokens-a.tokens),limits:this.limits,scanning:Boolean(this.job),lastScan:this.lastScan,filesScanned:this.filesScanned,error:this.error,pricingCheckedAt:this.pricing.status().verifiedAt,pricingSources:this.pricing.sources,pricing:this.pricing.status()};
+  this.summaryCache={key,value};
+  return value;
  }
 }
