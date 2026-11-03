@@ -17,3 +17,15 @@ test('Orca worktrees and sessions resolve to their project path', () => {
   assert.equal(sessionProject({ cwd: '/tmp/other', workspaceId: 'local::/Users/me/app/.orca/workspaces/task' }), '/Users/me/app');
   assert.equal(sessionProject({ cwd: '/Users/me/app', workspaceId: 'unknown-workspace' }), '/Users/me/app');
 });
+
+test('project colours derive from a stable hash of the path, not list position', async () => {
+  const { projectColor, projectColorIndex, projectColorCount } = await import('../src/ui/project-identity.ts');
+  const app = '/Users/me/client/app';
+  assert.equal(projectColorIndex(app), projectColorIndex(app));
+  assert.equal(projectColor(app), projectColor(app));
+  assert.match(projectColor(app), /^var\(--project-[1-8]\)$/);
+  const slots = new Set(['/a', '/b', '/c', '/d', '/e', '/f', '/g', '/h', '/i', '/j'].map((path) => projectColorIndex(path)));
+  assert.ok(slots.size > 3, 'different paths spread across the palette');
+  for (const slot of slots) assert.ok(slot >= 0 && slot < projectColorCount);
+  assert.equal(projectColor('Unassigned'), 'var(--muted)');
+});

@@ -1,53 +1,624 @@
 <script setup lang="ts">
-import {computed,onMounted,onUnmounted,ref,watch} from 'vue';
-import {Folder,Globe2,Plus,Search} from '@lucide/vue';
-import {transport,rulePreviewTransport,type WebsiteProjectStatus,type WebsiteRuleImpact} from './transport.ts';
+import { computed, onMounted, ref, watch } from 'vue';
+import { Folder, Globe2, Plus, Search } from '@lucide/vue';
+import { transport, rulePreviewTransport, type WebsiteRuleImpact } from './transport.ts';
+import { useStore } from './store.ts';
+import { humanizeError } from './errors.ts';
+import { clearToast, toast } from './toast.ts';
 
-const state=ref<WebsiteProjectStatus|null>(null),selected=ref(''),search=ref(''),pattern=ref(''),preview=ref(''),manualPath=ref(''),busy=ref(false),error=ref(''),loading=ref(true);
-const impact=ref<WebsiteRuleImpact|null>(null);
-let poller:ReturnType<typeof setInterval>|undefined,unmounted=false,previewRequest=0;
-const label=(path:string)=>path.split('/').filter(Boolean).at(-1)||path;
-const source=(value?:string)=>({rule:'Your rule',port_process:'Listening process',orca_process:'Orca worktree process',docker:'Docker bind mount',git_remote:'Git remote',docker_compose:'Compose project',repository_config:'Project configuration',proxy_config:'Proxy configuration',recent_orca:'Recent Orca worktree'}[value||'']||value||'Unresolved');
-const projects=computed(()=>[...new Set([...(state.value?.projects||[]),...(state.value?.rules.map(r=>r.projectPath)||[]),...(selected.value?[selected.value]:[])])].sort((a,b)=>label(a).localeCompare(label(b))));
-const visibleProjects=computed(()=>projects.value.filter(path=>`${label(path)} ${path}`.toLowerCase().includes(search.value.toLowerCase())));
-const rules=computed(()=>state.value?.rules.filter(rule=>rule.projectPath===selected.value)||[]);
-const observations=computed(()=>state.value?.matches.filter(match=>Date.now()/1000-match.observedAt<600&&(match.projectPath===selected.value||match.suggestions.some(s=>s.projectPath===selected.value))).slice(0,10)||[]);
-const ruleCount=(path:string)=>state.value?.rules.filter(rule=>rule.projectPath===path).length||0;
-async function refresh(){try{const result=await transport.websiteProjects();if(!unmounted){state.value=result;if(!selected.value)selected.value=result.rules[0]?.projectPath||result.matches.find(match=>match.projectPath)?.projectPath||[...result.projects].sort((a,b)=>label(a).localeCompare(label(b)))[0]||'';error.value='';}}catch(e){if(!unmounted)error.value=String(e);}finally{loading.value=false;}}
-async function save(value=pattern.value){if(!selected.value)return;busy.value=true;try{state.value=await transport.setWebsiteRule(value,selected.value);pattern.value='';preview.value='';impact.value=null;error.value='';}catch(e){error.value=String(e);}finally{busy.value=false;}}
-function clearPreview(){previewRequest++;preview.value='';impact.value=null;}
-watch(selected,clearPreview);
-async function showPreview(value=pattern.value){const request=++previewRequest,project=selected.value;try{const url=new URL(value);if(!['http:','https:'].includes(url.protocol)||url.username||url.password||url.search||url.hash)throw new Error();const candidate=url.origin+(url.pathname.replace(/\/$/,'')||'');const result=await rulePreviewTransport.preview(candidate,project);if(request!==previewRequest||unmounted)return;impact.value=result;preview.value=candidate;error.value='';}catch(cause){if(request!==previewRequest||unmounted)return;impact.value=null;preview.value='';error.value=String(cause);}}
-async function remove(value:string){busy.value=true;try{state.value=await transport.removeWebsiteRule(value);error.value='';}catch(e){error.value=String(e);}finally{busy.value=false;}}
-function openPath(){if(!manualPath.value.startsWith('/')){error.value='Enter an absolute project directory.';return;}selected.value=manualPath.value.trim();manualPath.value='';error.value='';}
-onMounted(()=>{void refresh();poller=setInterval(()=>{if(!busy.value)void refresh();},5000);});
-onUnmounted(()=>{unmounted=true;clearInterval(poller);});
+const store = useStore();
+const state = computed(() => store.websiteProjects.value);
+const selected = ref(''),
+  search = ref(''),
+  pattern = ref(''),
+  preview = ref(''),
+  manualPath = ref(''),
+  busy = ref(false),
+  error = ref(''),
+  loadError = ref('');
+const loading = computed(() => !state.value && !loadError.value);
+const impact = ref<WebsiteRuleImpact | null>(null);
+let previewRequest = 0;
+const label = (path: string) => path.split('/').filter(Boolean).at(-1) || path;
+const source = (value?: string) =>
+  ({
+    rule: 'Your rule',
+    port_process: 'Listening process',
+    orca_process: 'Orca worktree process',
+    docker: 'Docker bind mount',
+    git_remote: 'Git remote',
+    docker_compose: 'Compose project',
+    repository_config: 'Project configuration',
+    proxy_config: 'Proxy configuration',
+    recent_orca: 'Recent Orca worktree',
+  })[value || ''] ||
+  value ||
+  'Unresolved';
+const projects = computed(() =>
+  [
+    ...new Set([
+      ...(state.value?.projects || []),
+      ...(state.value?.rules.map((r) => r.projectPath) || []),
+      ...(selected.value ? [selected.value] : []),
+    ]),
+  ].sort((a, b) => label(a).localeCompare(label(b))),
+);
+const visibleProjects = computed(() =>
+  projects.value.filter((path) =>
+    `${label(path)} ${path}`.toLowerCase().includes(search.value.toLowerCase()),
+  ),
+);
+const rules = computed(() => state.value?.rules.filter((rule) => rule.projectPath === selected.value) || []);
+const observations = computed(
+  () =>
+    state.value?.matches
+      .filter(
+        (match) =>
+          Date.now() / 1000 - match.observedAt < 600 &&
+          (match.projectPath === selected.value ||
+            match.suggestions.some((s) => s.projectPath === selected.value)),
+      )
+      .slice(0, 10) || [],
+);
+const ruleCount = (path: string) =>
+  state.value?.rules.filter((rule) => rule.projectPath === path).length || 0;
+
+// Pick a sensible first project once data arrives.
+watch(
+  state,
+  (result) => {
+    if (!result || selected.value) return;
+    selected.value =
+      result.rules[0]?.projectPath ||
+      result.matches.find((match) => match.projectPath)?.projectPath ||
+      [...result.projects].sort((a, b) => label(a).localeCompare(label(b)))[0] ||
+      '';
+  },
+  { immediate: true },
+);
+onMounted(async () => {
+  if (state.value) return;
+  try {
+    await store.refreshWebsiteProjects();
+    loadError.value = '';
+  } catch (cause) {
+    loadError.value = humanizeError(cause);
+  }
+});
+
+async function save(value = pattern.value) {
+  if (!selected.value) return;
+  busy.value = true;
+  try {
+    store.websiteProjects.value = await transport.setWebsiteRule(value, selected.value);
+    pattern.value = '';
+    preview.value = '';
+    impact.value = null;
+    error.value = '';
+    clearToast('website-rules');
+    toast.success(`Future visits to ${value} will count toward ${label(selected.value)}.`);
+  } catch (cause) {
+    toast.error(cause, 'website-rules');
+  } finally {
+    busy.value = false;
+  }
+}
+function clearPreview() {
+  previewRequest++;
+  preview.value = '';
+  impact.value = null;
+}
+watch(selected, clearPreview);
+async function showPreview(value = pattern.value) {
+  const request = ++previewRequest,
+    project = selected.value;
+  let candidate: string;
+  try {
+    const url = new URL(value);
+    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash)
+      throw new Error();
+    candidate = url.origin + (url.pathname.replace(/\/$/, '') || '');
+  } catch {
+    error.value = 'Enter a web address starting with http:// or https://, without a query or fragment.';
+    return;
+  }
+  try {
+    const result = await rulePreviewTransport.preview(candidate, project);
+    if (request !== previewRequest) return;
+    impact.value = result;
+    preview.value = candidate;
+    error.value = '';
+  } catch (cause) {
+    if (request !== previewRequest) return;
+    impact.value = null;
+    preview.value = '';
+    error.value = humanizeError(cause);
+  }
+}
+async function remove(value: string) {
+  busy.value = true;
+  try {
+    store.websiteProjects.value = await transport.removeWebsiteRule(value);
+    clearToast('website-rules');
+    toast.success(`Rule for ${value} removed.`);
+  } catch (cause) {
+    toast.error(cause, 'website-rules');
+  } finally {
+    busy.value = false;
+  }
+}
+function openPath() {
+  if (!manualPath.value.startsWith('/')) {
+    error.value = 'Enter an absolute project folder, starting with /.';
+    return;
+  }
+  selected.value = manualPath.value.trim();
+  manualPath.value = '';
+  error.value = '';
+}
 </script>
 <template>
- <div class="project-settings">
-  <aside class="project-rail" aria-label="Tracked projects">
-   <label class="project-search"><Search :size="14"/><input v-model="search" aria-label="Filter projects" placeholder="Find a project"/></label>
-   <div class="project-list">
-    <button v-for="path in visibleProjects" :key="path" :class="['project-choice',{active:selected===path}]" :aria-current="selected===path?'true':undefined" :title="path" @click="selected=path"><Folder :size="15"/><span>{{label(path)}}</span><small v-if="ruleCount(path)">{{ruleCount(path)}}</small></button>
-    <p v-if="!visibleProjects.length" class="project-empty">{{loading?'Loading projects…':projects.length?'No matching projects':'No projects discovered yet'}}</p>
-   </div>
-   <form class="project-open" @submit.prevent="openPath"><label for="project-path">Open another folder</label><div><input id="project-path" v-model.trim="manualPath" placeholder="/Users/…/project"/><button type="submit" aria-label="Open project folder" title="Open project folder"><Plus :size="16"/></button></div></form>
-  </aside>
-  <div v-if="selected" class="project-detail">
-   <header class="project-heading"><span class="project-icon"><Folder :size="18"/></span><div><h3>{{label(selected)}}</h3><p :title="selected">{{selected}}</p></div></header>
-   <div class="project-panel"><div class="panel-heading"><div><h4>Website matching</h4><p>Exact rules override automatic matches for this project.</p></div><span>{{rules.length}} {{rules.length===1?'rule':'rules'}}</span></div>
-    <div v-if="rules.length" class="rule-list"><div v-for="rule in rules" :key="rule.pattern" class="rule-row"><Globe2 :size="15"/><span>{{rule.pattern}}</span><button :disabled="busy" :aria-label="`Remove rule for ${rule.pattern}`" @click="remove(rule.pattern)">Remove</button></div></div>
-    <p v-else class="empty-rules">No exact rules yet. Local ports and GitHub pages can still match automatically.</p>
-    <form class="rule-form" @submit.prevent="showPreview()"><label for="website-pattern">Add a website or URL prefix</label><div><input id="website-pattern" v-model.trim="pattern" type="url" placeholder="http://localhost:1420 or https://github.com/owner/repo" required @input="clearPreview"/><button type="submit" :disabled="busy">Preview rule</button></div></form>
-    <div v-if="preview" class="rule-preview"><strong>Future website rule</strong><p>{{preview}} and pages beneath this prefix → {{label(selected)}} ({{selected}})</p><p v-if="impact">{{impact.affectedIntervals}} of {{impact.observedIntervals}} captured website intervals in the last 7 days would have received a different project from this rule. This is a sample of past evidence, not a forecast.</p><ul v-if="impact?.examples.length"><li v-for="example in impact.examples" :key="`${example.url}:${example.currentProject}`">{{example.url}} · {{example.currentProject?label(example.currentProject):'Unassigned'}} → {{label(selected)}}</li></ul><p v-else-if="impact">No captured interval in the last 7 days would have changed.</p><small>Applies to future visits. Existing captured intervals and review decisions stay unchanged.</small><button :disabled="busy||!impact" @click="save(preview)">Save rule</button></div>
-   </div>
-    <div v-if="observations.length" class="project-panel observations"><div class="panel-heading"><div><h4>Recently seen</h4><p>Capture evidence from the last ten minutes.</p></div></div><div v-for="match in observations" :key="match.key" class="observation-row"><div><strong>{{match.key}}</strong><small v-if="match.projectPath===selected">Matched by {{source(match.source)}}</small><small v-else>Suggested by {{source(match.suggestions.find(s=>s.projectPath===selected)?.source)}}</small></div><button v-if="!rules.some(rule=>rule.pattern===match.key)" :disabled="busy" @click="showPreview(match.key)">Preview rule</button></div></div>
-   <p v-if="error" class="project-error" role="alert">{{error}}</p>
+  <div class="project-settings">
+    <aside class="project-rail" aria-label="Tracked projects">
+      <label class="project-search"
+        ><Search :size="14" /><input
+          v-model="search"
+          aria-label="Filter projects"
+          placeholder="Find a project"
+      /></label>
+      <div class="project-list">
+        <button
+          v-for="path in visibleProjects"
+          :key="path"
+          :class="['project-choice', { active: selected === path }]"
+          :aria-current="selected === path ? 'true' : undefined"
+          :title="path"
+          @click="selected = path"
+        >
+          <Folder :size="15" /><span>{{ label(path) }}</span
+          ><small v-if="ruleCount(path)">{{ ruleCount(path) }}</small>
+        </button>
+        <template v-if="loading">
+          <span v-for="index in 4" :key="index" class="skeleton project-skeleton" aria-hidden="true"></span>
+          <span class="visually-hidden" role="status">Loading projects…</span>
+        </template>
+        <p v-else-if="!visibleProjects.length" class="project-empty">
+          {{ projects.length ? 'No matching projects' : 'No projects discovered yet' }}
+        </p>
+      </div>
+      <form class="project-open" @submit.prevent="openPath">
+        <label for="project-path">Open another folder</label>
+        <div>
+          <input id="project-path" v-model.trim="manualPath" placeholder="/Users/…/project" /><button
+            type="submit"
+            aria-label="Open project folder"
+            title="Open project folder"
+          >
+            <Plus :size="16" />
+          </button>
+        </div>
+      </form>
+    </aside>
+    <div v-if="selected" class="project-detail">
+      <header class="project-heading">
+        <span class="project-icon"><Folder :size="18" /></span>
+        <div>
+          <h3>{{ label(selected) }}</h3>
+          <p :title="selected">{{ selected }}</p>
+        </div>
+      </header>
+      <div class="project-panel">
+        <div class="panel-heading">
+          <div>
+            <h4>Website matching</h4>
+            <p>Exact rules override automatic matches for this project.</p>
+          </div>
+          <span>{{ rules.length }} {{ rules.length === 1 ? 'rule' : 'rules' }}</span>
+        </div>
+        <div v-if="rules.length" class="rule-list">
+          <div v-for="rule in rules" :key="rule.pattern" class="rule-row">
+            <Globe2 :size="15" /><span>{{ rule.pattern }}</span
+            ><button
+              :disabled="busy"
+              :aria-label="`Remove rule for ${rule.pattern}`"
+              @click="remove(rule.pattern)"
+            >
+              Remove
+            </button>
+          </div>
+        </div>
+        <p v-else class="empty-rules">
+          No exact rules yet. Local ports and GitHub pages can still match automatically.
+        </p>
+        <form class="rule-form" @submit.prevent="showPreview()">
+          <label for="website-pattern">Add a website or URL prefix</label>
+          <div>
+            <input
+              id="website-pattern"
+              v-model.trim="pattern"
+              type="url"
+              placeholder="http://localhost:1420 or https://github.com/owner/repo"
+              required
+              @input="clearPreview"
+            /><button type="submit" :disabled="busy">Preview rule</button>
+          </div>
+        </form>
+        <div v-if="preview" class="rule-preview">
+          <strong>Future website rule</strong>
+          <p>{{ preview }} and pages beneath this prefix → {{ label(selected) }} ({{ selected }})</p>
+          <p v-if="impact">
+            {{ impact.affectedIntervals }} of {{ impact.observedIntervals }} captured website intervals in the
+            last 7 days would have received a different project from this rule. This is a sample of past
+            evidence, not a forecast.
+          </p>
+          <ul v-if="impact?.examples.length">
+            <li v-for="example in impact.examples" :key="`${example.url}:${example.currentProject}`">
+              {{ example.url }} ·
+              {{ example.currentProject ? label(example.currentProject) : 'Unassigned' }} →
+              {{ label(selected) }}
+            </li>
+          </ul>
+          <p v-else-if="impact">No captured interval in the last 7 days would have changed.</p>
+          <small
+            >Applies to future visits. Existing captured intervals and review decisions stay unchanged.</small
+          ><button :disabled="busy || !impact" @click="save(preview)">Save rule</button>
+        </div>
+      </div>
+      <div v-if="observations.length" class="project-panel observations">
+        <div class="panel-heading">
+          <div>
+            <h4>Recently seen</h4>
+            <p>Capture evidence from the last ten minutes.</p>
+          </div>
+        </div>
+        <div v-for="match in observations" :key="match.key" class="observation-row">
+          <div>
+            <strong>{{ match.key }}</strong
+            ><small v-if="match.projectPath === selected">Matched by {{ source(match.source) }}</small
+            ><small v-else
+              >Suggested by
+              {{ source(match.suggestions.find((s) => s.projectPath === selected)?.source) }}</small
+            >
+          </div>
+          <button
+            v-if="!rules.some((rule) => rule.pattern === match.key)"
+            :disabled="busy"
+            @click="showPreview(match.key)"
+          >
+            Preview rule
+          </button>
+        </div>
+      </div>
+      <p v-if="error" class="project-error" role="alert">{{ error }}</p>
+    </div>
+    <div v-else class="project-detail project-welcome">
+      <Folder :size="24" />
+      <h3>{{ loading ? 'Loading projects…' : 'Select a project' }}</h3>
+      <p>
+        {{
+          loading
+            ? 'Checking tracked workspaces and website rules.'
+            : 'Project website rules and recent matches will appear here.'
+        }}
+      </p>
+      <p v-if="error || loadError" class="project-error" role="alert">{{ error || loadError }}</p>
+    </div>
   </div>
-  <div v-else class="project-detail project-welcome"><Folder :size="24"/><h3>{{loading?'Loading projects…':'Select a project'}}</h3><p>{{loading?'Checking tracked workspaces and website rules.':'Project website rules and recent matches will appear here.'}}</p><p v-if="error" class="project-error" role="alert">{{error}}</p></div>
- </div>
 </template>
 <style scoped>
-.project-settings{display:grid;grid-template-columns:210px minmax(0,1fr);min-height:360px;border:1px solid var(--border);border-radius:10px;background:var(--panel);overflow:hidden}.project-rail{display:flex;flex-direction:column;min-width:0;border-right:1px solid var(--border);background:var(--bg)}.project-search{display:flex;align-items:center;gap:7px;padding:12px;border-bottom:1px solid var(--border);color:var(--muted)}.project-search input,.project-open input,.rule-form input{min-width:0;width:100%;border:0;outline:0;background:transparent;color:var(--text);font:inherit;font-size:11px}.project-search input::placeholder,.project-open input::placeholder,.rule-form input::placeholder{color:var(--muted)}.project-list{max-height:350px;overflow:auto;padding:7px}.project-choice{display:flex;align-items:center;gap:8px;width:100%;padding:9px 10px;border-radius:7px;color:var(--muted);text-align:left;font-size:11px}.project-choice span{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-choice small{font-size:9px}.project-choice.active{background:var(--hover);color:var(--text);font-weight:650}.project-choice.active svg{color:var(--blue)}.project-choice:hover{background:var(--hover)}.project-empty{padding:10px;color:var(--muted);font-size:11px}.project-open{margin-top:auto;padding:12px;border-top:1px solid var(--border)}.project-open label,.rule-form label{display:block;margin-bottom:7px;color:var(--muted);font-size:10px}.project-open>div,.rule-form>div{display:flex;align-items:center;gap:7px;border:1px solid var(--border);border-radius:6px;padding:7px 8px}.project-open button{color:var(--blue)}.project-detail{min-width:0;padding:20px}.project-heading{display:flex;align-items:center;gap:11px;padding-bottom:20px;border-bottom:1px solid var(--border)}.project-icon{display:grid;place-items:center;width:37px;height:37px;border-radius:9px;background:#007aff16;color:var(--blue)}.project-heading>div{min-width:0}.project-heading h3{margin:0;font-size:15px}.project-heading p{margin:4px 0 0;color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.project-panel{padding:19px 0;border-bottom:1px solid var(--border)}.panel-heading{display:flex;justify-content:space-between;align-items:start;gap:10px}.panel-heading h4{margin:0;font-size:12px}.panel-heading p{margin:5px 0;color:var(--muted);font-size:11px}.panel-heading>span{color:var(--muted);font-size:10px;white-space:nowrap}.rule-list{margin-top:13px}.rule-row,.observation-row{display:flex;align-items:center;gap:9px;padding:9px 0;border-bottom:1px solid var(--border);font-size:11px}.rule-row svg{color:var(--muted);flex:none}.rule-row span,.observation-row>div{flex:1;min-width:0;overflow-wrap:anywhere}.rule-row button,.observation-row button{color:var(--blue);font-size:10px;white-space:nowrap}.empty-rules{color:var(--muted);font-size:11px;line-height:1.5;margin:14px 0}.rule-form{margin-top:18px}.rule-form>div{padding:4px 5px 4px 9px}.rule-form button{padding:7px 9px;border-radius:5px;background:var(--blue);color:white;font-size:10px;white-space:nowrap}.rule-form button:disabled,.rule-row button:disabled,.observation-row button:disabled{opacity:.5}.observation-row strong{display:block;font-size:11px;overflow-wrap:anywhere}.observation-row small{display:block;margin-top:4px;color:var(--muted);font-size:10px}.project-error{color:#d07878;font-size:11px}.project-welcome{display:flex;flex-direction:column;align-items:center;justify-content:center;color:var(--muted);text-align:center}.project-welcome h3{margin:12px 0 4px;color:var(--text);font-size:14px}.project-welcome p{font-size:11px}.project-choice:focus-visible,.project-open button:focus-visible,.project-open input:focus-visible,.project-search input:focus-visible,.rule-form input:focus-visible,.rule-form button:focus-visible,.rule-row button:focus-visible,.observation-row button:focus-visible{outline:2px solid var(--blue);outline-offset:2px}@media(max-width:820px){.project-settings{grid-template-columns:1fr}.project-rail{border-right:0;border-bottom:1px solid var(--border)}.project-list{display:flex;overflow:auto;max-height:none}.project-choice{min-width:130px;width:auto}.project-open{margin-top:0}.project-detail{padding:16px}}
-.rule-preview{margin-top:12px;padding:12px;border:1px solid var(--border);border-radius:7px;font-size:11px}.rule-preview p{overflow-wrap:anywhere;color:var(--text)}.rule-preview small{display:block;color:var(--muted)}.rule-preview button{margin-top:10px;padding:7px 10px;border-radius:5px;background:var(--blue);color:#fff}
+.project-skeleton {
+  height: 30px;
+  margin: 4px 6px;
+}
+.project-settings {
+  display: grid;
+  grid-template-columns: 210px minmax(0, 1fr);
+  min-height: 360px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  overflow: hidden;
+}
+.project-rail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg);
+}
+.project-search {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+}
+.project-search input,
+.project-open input,
+.rule-form input {
+  min-width: 0;
+  width: 100%;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 11px;
+}
+.project-search input::placeholder,
+.project-open input::placeholder,
+.rule-form input::placeholder {
+  color: var(--muted);
+}
+.project-list {
+  max-height: 350px;
+  overflow: auto;
+  padding: 7px;
+}
+.project-choice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 9px 10px;
+  border-radius: 7px;
+  color: var(--muted);
+  text-align: left;
+  font-size: 11px;
+}
+.project-choice span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-choice small {
+  font-size: var(--text-xs);
+}
+.project-choice.active {
+  background: var(--hover);
+  color: var(--text);
+  font-weight: 650;
+}
+.project-choice.active svg {
+  color: var(--blue);
+}
+.project-choice:hover {
+  background: var(--hover);
+}
+.project-empty {
+  padding: 10px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.project-open {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid var(--border);
+}
+.project-open label,
+.rule-form label {
+  display: block;
+  margin-bottom: 7px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.project-open > div,
+.rule-form > div {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 7px 8px;
+}
+.project-open button {
+  color: var(--blue);
+}
+.project-detail {
+  min-width: 0;
+  padding: 20px;
+}
+.project-heading {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+}
+.project-icon {
+  display: grid;
+  place-items: center;
+  width: 37px;
+  height: 37px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--blue);
+}
+.project-heading > div {
+  min-width: 0;
+}
+.project-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+.project-heading p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-panel {
+  padding: 19px 0;
+  border-bottom: 1px solid var(--border);
+}
+.panel-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: start;
+  gap: 10px;
+}
+.panel-heading h4 {
+  margin: 0;
+  font-size: 12px;
+}
+.panel-heading p {
+  margin: 5px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.panel-heading > span {
+  color: var(--muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.rule-list {
+  margin-top: 13px;
+}
+.rule-row,
+.observation-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+.rule-row svg {
+  color: var(--muted);
+  flex: none;
+}
+.rule-row span,
+.observation-row > div {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.rule-row button,
+.observation-row button {
+  color: var(--blue);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.empty-rules {
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.5;
+  margin: 14px 0;
+}
+.rule-form {
+  margin-top: 18px;
+}
+.rule-form > div {
+  padding: 4px 5px 4px 9px;
+}
+.rule-form button {
+  padding: 7px 9px;
+  border-radius: 5px;
+  background: var(--blue);
+  color: white;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.rule-form button:disabled,
+.rule-row button:disabled,
+.observation-row button:disabled {
+  opacity: 0.5;
+}
+.observation-row strong {
+  display: block;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+.observation-row small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
+.project-error {
+  color: var(--status-danger);
+  font-size: 11px;
+}
+.project-welcome {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  text-align: center;
+}
+.project-welcome h3 {
+  margin: 12px 0 4px;
+  color: var(--text);
+  font-size: 14px;
+}
+.project-welcome p {
+  font-size: 11px;
+}
+.project-choice:focus-visible,
+.project-open button:focus-visible,
+.project-open input:focus-visible,
+.project-search input:focus-visible,
+.rule-form input:focus-visible,
+.rule-form button:focus-visible,
+.rule-row button:focus-visible,
+.observation-row button:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+@media (max-width: 820px) {
+  .project-skeleton {
+    height: 30px;
+    margin: 4px 6px;
+  }
+  .project-settings {
+    grid-template-columns: 1fr;
+  }
+  .project-rail {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .project-list {
+    display: flex;
+    overflow: auto;
+    max-height: none;
+  }
+  .project-choice {
+    min-width: 130px;
+    width: auto;
+  }
+  .project-open {
+    margin-top: 0;
+  }
+  .project-detail {
+    padding: 16px;
+  }
+}
+.rule-preview {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  font-size: 11px;
+}
+.rule-preview p {
+  overflow-wrap: anywhere;
+  color: var(--text);
+}
+.rule-preview small {
+  display: block;
+  color: var(--muted);
+}
+.rule-preview button {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 5px;
+  background: var(--blue);
+  color: #fff;
+}
 </style>

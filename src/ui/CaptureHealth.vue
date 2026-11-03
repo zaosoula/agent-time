@@ -1,104 +1,1234 @@
 <script setup lang="ts">
-import {computed,onMounted,onUnmounted,ref} from 'vue';
-import {Activity,Bot,Check,CircleHelp,GitBranch,Globe2,Monitor,Radio} from '@lucide/vue';
-import {transport,native,relaunchHookSetup,type CaptureStatus} from './transport.ts';
-import type {CaptureHealth,HealthSource} from '../capture/health.ts';
-import type {CaptureCheck} from '../capture/capture-checks.ts';
-import type {RecoveryNotice} from '../capture/recovery.ts';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { Activity, Bot, Check, CircleHelp, GitBranch, Globe2, Monitor, Radio } from '@lucide/vue';
+import { transport, native, relaunchHookSetup, type CaptureStatus } from './transport.ts';
+import type { CaptureHealth, HealthSource } from '../capture/health.ts';
+import type { CaptureCheck } from '../capture/capture-checks.ts';
+import type { RecoveryNotice } from '../capture/recovery.ts';
+import { useStore } from './store.ts';
+import { windowVisible } from './polling.ts';
+import { age as formatAge, preciseClock } from './format.ts';
+import { humanizeError } from './errors.ts';
 
-const props=defineProps<{status:CaptureStatus|null;issues:string[]}>();
-const emit=defineEmits<{reviewSite:[key:string]}>();
-const snapshot=ref<CaptureHealth|null>(null),error=ref(''),now=ref(Date.now()/1000),diagnosticMessage=ref(''),diagnosticPreview=ref('');
-const checks=ref<CaptureCheck[]|null>(null),checksBusy=ref(false),checksError=ref('');
-const recovery=ref<RecoveryNotice[]>([]);
-const repairStarted=ref<{provider:string;at:number}|null>(null);
-const repairVerified=computed(()=>Boolean(repairStarted.value&&Number(snapshot.value?.latest[repairStarted.value.provider]||0)>repairStarted.value.at));
-function beginRepair(provider:string){repairStarted.value={provider,at:Date.now()/1000};relaunchHookSetup();}
-let poller:ReturnType<typeof setInterval>|undefined,clock:ReturnType<typeof setInterval>|undefined,recoveryPoller:ReturnType<typeof setInterval>|undefined,loading=false,unmounted=false;
-const age=(at:number|null|undefined)=>{
- if(!at)return 'No event yet';const seconds=Math.max(0,Math.floor(now.value-at));
- return seconds<5?'Just now':seconds<60?`${seconds}s ago`:seconds<3600?`${Math.floor(seconds/60)}m ago`:`${Math.floor(seconds/3600)}h ago`;
-};
-const time=(at:number)=>new Date(at*1000).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-const sourceName=(source:string)=>props.status?.sources.find(item=>item.id===source)?.name||({macos:'macOS',orca:'Orca',capture:'Capture'}[source]||source);
-const browserCaptureEnabled=computed(()=>props.status?.sources.some(source=>source.kind==='browser'&&props.status?.surfaces[source.setting])||false);
-const matchSource=(source:string|null)=>({rule:'Saved rule',port_process:'Listening process',orca_process:'Orca worktree process',docker:'Docker bind mount',git_remote:'Git remote',proxy_config:'Proxy configuration',docker_compose:'Compose project',repository_config:'Project configuration',recent_orca:'Recent Orca worktree',proxy_process:'Proxy or tunnel process'}[source||'']||source||'Unknown evidence');
-const projectName=(path:string|null)=>path?.split('/').filter(Boolean).at(-1)||'No project';
-const cards=computed(()=>{
- const status=props.status,health=snapshot.value,live=status?.running===true;
- const hook=(provider:string)=>{
-  const setting=status?.surfaces[status.sources.find(source=>source.id===provider)?.setting||''];
-  const info=health?.hooks[provider],last=health?.latest[provider];
-  const source=health?.sources.find(item=>item.id===provider);
-  const state=source?.state;
-  return {key:provider,name:sourceName(provider),icon:Bot,state:!status?'Checking…':state==='repair-needed'?'Repair needed':state==='waiting'?'Waiting for first event':state==='receiving'?'Recent event received':state==='verified'?'Previously verified':state==='paused'?'Paused':state==='off'?'Off':'Checking…',tone:!live||!setting||state==='verified'?'quiet':state==='receiving'?'good':'warning',primary:info?`${info.installed} of ${info.total} hook configurations installed`:'Checking hooks…',secondary:state==='waiting'?source!.detail:`Last current-runtime event ${age(last)}`,repair:state==='repair-needed'};
- };
- const macLast=health?.latest.macos,macSource=health?.sources.find(source=>source.id==='macos');
- const macExcluded=macSource?.state==='excluded';
- const websiteMatch=status?.macos?.websiteAttribution as {projectPath?:string;source?:string}|null|undefined;
- const mac={key:'macos',name:'macOS',icon:Monitor,state:!status?'Checking…':macSource?.state==='excluded'?'Excluded activity':macSource?.state==='failed'?'Failed':macSource?.state==='permission-limited'?'Permission limited':macSource?.state==='stale'?'Stale':macSource?.state==='receiving'?'Receiving':macSource?.state==='off'?'Off':macSource?.state==='paused'?'Paused':'Waiting for sample',tone:!live||macSource?.state==='off'||macExcluded?'quiet':macSource?.state==='receiving'?'good':'warning',primary:macExcluded?'No foreground details stored':`Foreground: ${String(status?.macos?.foregroundName||'Unknown')}`,secondary:macSource?.state==='failed'?macSource.detail:macExcluded?'This app or site is excluded':status?.macos?.browserDomain?`Website: ${status.macos.browserDomain} · ${websiteMatch?.projectPath?websiteMatch.projectPath.split('/').at(-1):'Unmatched'}`:status?.macos?.accessibilityTrusted===false?`Last event ${age(macLast)} · Accessibility unavailable`:`Last event ${age(macLast)}`};
- const orcaLast=health?.latest.orca,orcaSource=health?.sources.find(source=>source.id==='orca');
- const orca={key:'orca',name:'Orca',icon:GitBranch,state:!status?'Checking…':orcaSource?.state==='unavailable'?'Not installed':orcaSource?.state==='failed'?'Failed':orcaSource?.state==='stale'?'Stale':orcaSource?.state==='receiving'?'Polling':orcaSource?.state==='off'?'Off':orcaSource?.state==='paused'?'Paused':'Waiting for poll',tone:['unavailable','paused','off'].includes(orcaSource?.state||'')?'quiet':orcaSource?.state==='receiving'?'good':'warning',primary:status&&!status.orcaAvailable?'Orca CLI unavailable':`Last poll ${age(status?.lastPoll)}`,secondary:status&&!status.orcaAvailable?'Optional; agent hooks still work':`Last stored event ${age(orcaLast)}`};
- const metadata=status?.sources.filter(source=>source.kind==='poller').map(source=>source.id==='orca'?orca:{key:source.id,name:source.name,icon:GitBranch,state:!live?'Paused':!status.surfaces[source.setting]?'Off':'Polling',tone:!live||!status.surfaces[source.setting]?'quiet':'good',primary:`Last poll ${age(status.lastPoll)}`,secondary:`Last stored event ${age(health?.latest[source.id])}`})||[];
- const browserCards=status?.sources.filter(source=>source.kind==='browser').map(source=>{
-  const sample=health?.sources.find(item=>item.id===source.id),state=sample?.state;
-  return {key:source.id,name:source.name,icon:Globe2,state:!status?'Checking…':state==='permission-limited'?'Page unavailable':state==='unavailable'?'Unavailable':state==='excluded'?'Excluded activity':state==='stale'?'Stale':state==='failed'?'Failed':state==='receiving'?'Page observed':state==='off'?'Off':state==='paused'?'Paused':'Waiting for browser',tone:['off','paused','waiting','excluded','unavailable'].includes(state||'')?'quiet':state==='receiving'?'good':'warning',primary:sample?.detail||'Checking browser capture',secondary:state==='receiving'?`Last observation ${age(sample?.lastEvent)}`:source.detail};
- })||[];
- return [mac,...(status?.sources.filter(source=>source.kind==='agent').map(source=>hook(source.id))||[]),...browserCards,...metadata];
+const props = defineProps<{ status: CaptureStatus | null; issues: string[] }>();
+const emit = defineEmits<{ reviewSite: [key: string] }>();
+// Health is polled by the shared store (every 5s while this page is open).
+const store = useStore();
+const snapshot = computed<CaptureHealth | null>(() => store.captureHealth.value);
+const now = computed(() => store.now.value);
+const error = ref(''),
+  diagnosticMessage = ref(''),
+  diagnosticPreview = ref('');
+const checks = ref<CaptureCheck[] | null>(null),
+  checksBusy = ref(false),
+  checksError = ref('');
+const recovery = ref<RecoveryNotice[]>([]);
+const repairStarted = ref<{ provider: string; at: number } | null>(null);
+const repairVerified = computed(() =>
+  Boolean(
+    repairStarted.value &&
+    Number(snapshot.value?.latest[repairStarted.value.provider] || 0) > repairStarted.value.at,
+  ),
+);
+function beginRepair(provider: string) {
+  repairStarted.value = { provider, at: Date.now() / 1000 };
+  relaunchHookSetup();
+}
+let recoveryPoller: ReturnType<typeof setInterval> | undefined,
+  unmounted = false;
+const age = (at: number | null | undefined) => formatAge(at, now.value);
+const time = preciseClock;
+const sourceName = (source: string) =>
+  props.status?.sources.find((item) => item.id === source)?.name ||
+  { macos: 'macOS', orca: 'Orca', capture: 'Capture' }[source] ||
+  source;
+const browserCaptureEnabled = computed(
+  () =>
+    props.status?.sources.some(
+      (source) => source.kind === 'browser' && props.status?.surfaces[source.setting],
+    ) || false,
+);
+const matchSource = (source: string | null) =>
+  ({
+    rule: 'Saved rule',
+    port_process: 'Listening process',
+    orca_process: 'Orca worktree process',
+    docker: 'Docker bind mount',
+    git_remote: 'Git remote',
+    proxy_config: 'Proxy configuration',
+    docker_compose: 'Compose project',
+    repository_config: 'Project configuration',
+    recent_orca: 'Recent Orca worktree',
+    proxy_process: 'Proxy or tunnel process',
+  })[source || ''] ||
+  source ||
+  'Unknown evidence';
+const projectName = (path: string | null) => path?.split('/').filter(Boolean).at(-1) || 'No project';
+const cards = computed(() => {
+  const status = props.status,
+    health = snapshot.value,
+    live = status?.running === true;
+  const hook = (provider: string) => {
+    const setting = status?.surfaces[status.sources.find((source) => source.id === provider)?.setting || ''];
+    const info = health?.hooks[provider],
+      last = health?.latest[provider];
+    const source = health?.sources.find((item) => item.id === provider);
+    const state = source?.state;
+    return {
+      key: provider,
+      name: sourceName(provider),
+      icon: Bot,
+      state: !status
+        ? 'Checking…'
+        : state === 'repair-needed'
+          ? 'Repair needed'
+          : state === 'waiting'
+            ? 'Waiting for first event'
+            : state === 'receiving'
+              ? 'Recent event received'
+              : state === 'verified'
+                ? 'Previously verified'
+                : state === 'paused'
+                  ? 'Paused'
+                  : state === 'off'
+                    ? 'Off'
+                    : 'Checking…',
+      tone: !live || !setting || state === 'verified' ? 'quiet' : state === 'receiving' ? 'good' : 'warning',
+      primary: info ? `${info.installed} of ${info.total} hook configurations installed` : 'Checking hooks…',
+      secondary: state === 'waiting' ? source!.detail : `Last current-runtime event ${age(last)}`,
+      repair: state === 'repair-needed',
+    };
+  };
+  const macLast = health?.latest.macos,
+    macSource = health?.sources.find((source) => source.id === 'macos');
+  const macExcluded = macSource?.state === 'excluded';
+  const websiteMatch = status?.macos?.websiteAttribution as
+    { projectPath?: string; source?: string } | null | undefined;
+  const mac = {
+    key: 'macos',
+    name: 'macOS',
+    icon: Monitor,
+    state: !status
+      ? 'Checking…'
+      : macSource?.state === 'excluded'
+        ? 'Excluded activity'
+        : macSource?.state === 'failed'
+          ? 'Failed'
+          : macSource?.state === 'permission-limited'
+            ? 'Permission limited'
+            : macSource?.state === 'stale'
+              ? 'Stale'
+              : macSource?.state === 'receiving'
+                ? 'Receiving'
+                : macSource?.state === 'off'
+                  ? 'Off'
+                  : macSource?.state === 'paused'
+                    ? 'Paused'
+                    : 'Waiting for sample',
+    tone:
+      !live || macSource?.state === 'off' || macExcluded
+        ? 'quiet'
+        : macSource?.state === 'receiving'
+          ? 'good'
+          : 'warning',
+    primary: macExcluded
+      ? 'No foreground details stored'
+      : `Foreground: ${String(status?.macos?.foregroundName || 'Unknown')}`,
+    secondary:
+      macSource?.state === 'failed'
+        ? macSource.detail
+        : macExcluded
+          ? 'This app or site is excluded'
+          : status?.macos?.browserDomain
+            ? `Website: ${status.macos.browserDomain} · ${websiteMatch?.projectPath ? websiteMatch.projectPath.split('/').at(-1) : 'Unmatched'}`
+            : status?.macos?.accessibilityTrusted === false
+              ? `Last event ${age(macLast)} · Accessibility unavailable`
+              : `Last event ${age(macLast)}`,
+  };
+  const orcaLast = health?.latest.orca,
+    orcaSource = health?.sources.find((source) => source.id === 'orca');
+  const orca = {
+    key: 'orca',
+    name: 'Orca',
+    icon: GitBranch,
+    state: !status
+      ? 'Checking…'
+      : orcaSource?.state === 'unavailable'
+        ? 'Not installed'
+        : orcaSource?.state === 'failed'
+          ? 'Failed'
+          : orcaSource?.state === 'stale'
+            ? 'Stale'
+            : orcaSource?.state === 'receiving'
+              ? 'Polling'
+              : orcaSource?.state === 'off'
+                ? 'Off'
+                : orcaSource?.state === 'paused'
+                  ? 'Paused'
+                  : 'Waiting for poll',
+    tone: ['unavailable', 'paused', 'off'].includes(orcaSource?.state || '')
+      ? 'quiet'
+      : orcaSource?.state === 'receiving'
+        ? 'good'
+        : 'warning',
+    primary: status && !status.orcaAvailable ? 'Orca CLI unavailable' : `Last poll ${age(status?.lastPoll)}`,
+    secondary:
+      status && !status.orcaAvailable
+        ? 'Optional; agent hooks still work'
+        : `Last stored event ${age(orcaLast)}`,
+  };
+  const metadata =
+    status?.sources
+      .filter((source) => source.kind === 'poller')
+      .map((source) =>
+        source.id === 'orca'
+          ? orca
+          : {
+              key: source.id,
+              name: source.name,
+              icon: GitBranch,
+              state: !live ? 'Paused' : !status.surfaces[source.setting] ? 'Off' : 'Polling',
+              tone: !live || !status.surfaces[source.setting] ? 'quiet' : 'good',
+              primary: `Last poll ${age(status.lastPoll)}`,
+              secondary: `Last stored event ${age(health?.latest[source.id])}`,
+            },
+      ) || [];
+  const browserCards =
+    status?.sources
+      .filter((source) => source.kind === 'browser')
+      .map((source) => {
+        const sample = health?.sources.find((item) => item.id === source.id),
+          state = sample?.state;
+        return {
+          key: source.id,
+          name: source.name,
+          icon: Globe2,
+          state: !status
+            ? 'Checking…'
+            : state === 'permission-limited'
+              ? 'Page unavailable'
+              : state === 'unavailable'
+                ? 'Unavailable'
+                : state === 'excluded'
+                  ? 'Excluded activity'
+                  : state === 'stale'
+                    ? 'Stale'
+                    : state === 'failed'
+                      ? 'Failed'
+                      : state === 'receiving'
+                        ? 'Page observed'
+                        : state === 'off'
+                          ? 'Off'
+                          : state === 'paused'
+                            ? 'Paused'
+                            : 'Waiting for browser',
+          tone: ['off', 'paused', 'waiting', 'excluded', 'unavailable'].includes(state || '')
+            ? 'quiet'
+            : state === 'receiving'
+              ? 'good'
+              : 'warning',
+          primary: sample?.detail || 'Checking browser capture',
+          secondary: state === 'receiving' ? `Last observation ${age(sample?.lastEvent)}` : source.detail,
+        };
+      }) || [];
+  return [
+    mac,
+    ...(status?.sources.filter((source) => source.kind === 'agent').map((source) => hook(source.id)) || []),
+    ...browserCards,
+    ...metadata,
+  ];
 });
-async function refresh(){if(loading)return;loading=true;try{const next=await transport.captureHealth();if(!unmounted){snapshot.value=next;error.value='';now.value=Date.now()/1000;}}catch(e){if(!unmounted)error.value=String(e);}finally{loading=false;}}
-async function runChecks(){checksBusy.value=true;checksError.value='';try{checks.value=await transport.captureChecks();}catch(cause){checksError.value=String(cause);}finally{checksBusy.value=false;}}
-async function refreshRecovery(){try{const report=await transport.diagnostics();if(!unmounted)recovery.value=report.recovery;}catch{/* Source cards continue to show collector availability. */}}
-async function previewDiagnostics(){
- try{const summary=await transport.diagnostics();const version=native?(await import('@tauri-apps/api/app')).getVersion():Promise.resolve('development');diagnosticPreview.value=JSON.stringify({appVersion:await version,...summary},null,2);diagnosticMessage.value='Review the summary before sharing it.';}catch(e){diagnosticMessage.value=`Could not prepare summary: ${String(e)}`;}
+async function refresh() {
+  try {
+    await store.refreshHealth();
+    error.value = '';
+  } catch (cause) {
+    if (!unmounted) error.value = humanizeError(cause);
+  }
 }
-async function copyDiagnostics(){
- if(!diagnosticPreview.value)return;
- try{await navigator.clipboard.writeText(diagnosticPreview.value);diagnosticMessage.value='Diagnostic summary copied.';}catch(e){diagnosticMessage.value=`Could not copy summary: ${String(e)}`;}
+async function runChecks() {
+  checksBusy.value = true;
+  checksError.value = '';
+  try {
+    checks.value = await transport.captureChecks();
+  } catch (cause) {
+    checksError.value = humanizeError(cause);
+  } finally {
+    checksBusy.value = false;
+  }
 }
-async function saveDiagnostics(){
- if(!diagnosticPreview.value||!native)return;
- try{const {invoke}=await import('@tauri-apps/api/core');const saved=await invoke<boolean>('save_support_bundle');diagnosticMessage.value=saved?'Redacted support bundle saved.':'Save cancelled.';}catch(e){diagnosticMessage.value=`Could not save support bundle: ${String(e)}`;}
+async function refreshRecovery() {
+  try {
+    const report = await transport.diagnostics();
+    if (!unmounted) recovery.value = report.recovery;
+  } catch {
+    /* Source cards continue to show collector availability. */
+  }
 }
-onMounted(()=>{void refresh();void refreshRecovery();poller=setInterval(()=>{void refresh();},3000);recoveryPoller=setInterval(()=>{void refreshRecovery();},30000);clock=setInterval(()=>{now.value=Date.now()/1000;},1000);});
-onUnmounted(()=>{unmounted=true;clearInterval(poller);clearInterval(recoveryPoller);clearInterval(clock);});
+async function previewDiagnostics() {
+  try {
+    const summary = await transport.diagnostics();
+    const version = native
+      ? (await import('@tauri-apps/api/app')).getVersion()
+      : Promise.resolve('development');
+    diagnosticPreview.value = JSON.stringify({ appVersion: await version, ...summary }, null, 2);
+    diagnosticMessage.value = 'Review the summary before sharing it.';
+  } catch (e) {
+    diagnosticMessage.value = `Could not prepare the summary. ${humanizeError(e)}`;
+  }
+}
+async function copyDiagnostics() {
+  if (!diagnosticPreview.value) return;
+  try {
+    await navigator.clipboard.writeText(diagnosticPreview.value);
+    diagnosticMessage.value = 'Diagnostic summary copied.';
+  } catch (e) {
+    diagnosticMessage.value = `Could not copy the summary. ${humanizeError(e)}`;
+  }
+}
+async function saveDiagnostics() {
+  if (!diagnosticPreview.value || !native) return;
+  try {
+    const { invoke } = await import('@tauri-apps/api/core');
+    const saved = await invoke<boolean>('save_support_bundle');
+    diagnosticMessage.value = saved ? 'Redacted support bundle saved.' : 'Save cancelled.';
+  } catch (e) {
+    diagnosticMessage.value = `Could not save the support bundle. ${humanizeError(e)}`;
+  }
+}
+onMounted(() => {
+  void refreshRecovery();
+  recoveryPoller = setInterval(() => {
+    if (windowVisible.value) void refreshRecovery();
+  }, 30000);
+});
+watch(windowVisible, (shown) => {
+  if (shown) void refreshRecovery();
+});
+onUnmounted(() => {
+  unmounted = true;
+  clearInterval(recoveryPoller);
+});
 </script>
 <template>
-<section class="capture-health">
- <div class="health-top">
- <div class="health-heading"><div><div class="eyebrow"><Radio :size="13"/> LIVE MONITOR</div><h1>Capture health</h1><p>See what Agent Time is recording as it happens.</p><button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button><small v-if="diagnosticMessage" role="status">{{diagnosticMessage}}</small><div v-if="diagnosticPreview" class="diagnostic-preview"><pre>{{diagnosticPreview}}</pre><button @click="copyDiagnostics">Copy reviewed summary</button><button v-if="native" @click="saveDiagnostics">Save redacted support bundle…</button></div></div><div :class="['live-badge',{paused:status&&!status.running}]"><span class="pulse"></span>{{!status?'Checking capture…':status.running?'Capture running':'Capture paused'}}<small>Updated {{age(snapshot?.checkedAt)}}</small></div></div>
-  <div v-if="recovery.length" class="recovery-list" role="status" aria-label="Capture recovery guidance"><article v-for="notice in recovery" :key="notice.id"><strong>{{notice.title}}</strong><p>{{notice.detail}}</p><span>{{notice.action}}</span><button v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</button></article></div>
-  <p v-if="repairStarted" class="repair-verification" role="status">{{repairVerified?`${sourceName(repairStarted.provider)} delivered a new event after repair.`:`After repairing ${sourceName(repairStarted.provider)}, start a new agent session. Waiting for a delivered event after ${time(repairStarted.at)}.`}}</p>
-  <div class="source-cards"><article v-for="card in cards" :key="card.key" :class="['source-card',card.tone]"><div class="card-head"><component :is="card.icon" :size="18"/><span>{{card.name}}</span><i></i></div><strong>{{card.state}}</strong><p>{{card.primary}}</p><small>{{card.secondary}}</small><button v-if="'repair' in card && card.repair" class="source-repair" @click="beginRepair(card.key)">Repair and verify delivery</button></article></div>
-  <p v-if="snapshot?.spool" class="spool-health" role="status">Agent event queue: {{snapshot.spool.pending}} waiting<span v-if="snapshot.spool.oldestAgeSeconds!==null"> · oldest {{Math.floor(snapshot.spool.oldestAgeSeconds/60)}}m</span><span v-if="snapshot.spool.temporary"> · {{snapshot.spool.temporary}} being written</span><span v-if="snapshot.spool.invalid"> · {{snapshot.spool.invalid}} unreadable</span><span v-if="snapshot.spool.truncated"> · scan limited</span>. Events are retried while capture runs.</p>
-  <div class="check-controls"><button :disabled="checksBusy" @click="runChecks">{{checksBusy?'Checking sources…':'Run capture checks'}}</button><span>Checks use current configuration and actual delivered events.</span></div>
-  <p v-if="checksError" class="health-error" role="alert">{{checksError}}</p>
-  <div v-if="checks" class="capture-checks"><details v-for="check in checks" :key="check.id" :open="check.result==='fail'"><summary><strong>{{check.name}}</strong><span :class="check.result">{{check.result==='pass'?'Verified':check.result==='fail'?'Needs attention':check.result==='skip'?'Optional or off':'Waiting for activity'}}</span></summary><ol><li v-for="step in check.steps" :key="step.id"><strong>{{step.label}}</strong><span :class="step.result">{{step.result}}</span><small>{{step.detail}}</small></li></ol><button v-if="check.action==='repair-hooks'" @click="relaunchHookSetup">Repair hooks</button></details></div>
- </div>
-  <div class="accessibility-panel"><div class="accessibility-heading"><div><h2>Orca Accessibility evidence</h2><p>Last Orca foreground sample · {{age(snapshot?.accessibility?.observedAt)}}</p></div><span :class="['accessibility-state',{granted:status?.macos?.accessibilityTrusted===true}]">{{!status?'Checking permission…':status.macos?.accessibilityTrusted===true?'Permission granted':'Permission unavailable'}}</span></div>
-   <div class="accessibility-columns"><div><h3>Read from Accessibility</h3><dl><dt>Window</dt><dd>{{snapshot?.accessibility?.windowTitle||'Not observed'}}</dd><dt>Selected tab title</dt><dd>{{snapshot?.accessibility?.selectedTabTitle||'Not observed'}}</dd><dt>Selected worktree ID</dt><dd class="identifier">{{snapshot?.accessibility?.selectedWorktreeId||'Not observed'}}</dd></dl></div><div><h3>Matched with Orca metadata</h3><dl><dt>Workspace ID</dt><dd class="identifier">{{snapshot?.accessibility?.resolved?.workspaceId||'No unique match'}}</dd><dt>Tab ID</dt><dd class="identifier">{{snapshot?.accessibility?.resolved?.tabId||'No unique match'}}</dd><dt>Leaf ID</dt><dd class="identifier">{{snapshot?.accessibility?.resolved?.leafId||'No unique match'}}</dd><dt>Terminal handle</dt><dd class="identifier">{{snapshot?.accessibility?.resolved?.terminalHandle||'No unique match'}}</dd></dl></div></div>
-  </div>
-  <p v-if="error" class="health-error" role="alert"><CircleHelp :size="15"/>{{error}}</p>
- <section class="website-panel" aria-labelledby="website-health-title"><div class="website-heading"><div><h2 id="website-health-title"><Globe2 :size="16"/> Website reconciliation</h2><p>Recent browser sites and the evidence used to assign project time.</p></div><span>{{snapshot?.websites.length||0}} sites</span></div>
-  <div v-if="snapshot?.websites.length" class="website-health-list"><article v-for="site in snapshot.websites" :key="site.key" class="website-health-row"><div class="website-health-main"><strong :title="site.key">{{site.key}}</strong><span :class="['website-state',site.state]">{{site.state==='matched'?'Matched':site.state==='suggested'?'Review suggestion':site.state==='checking'?'Checking':'Unmatched'}}</span><small>{{age(site.observedAt)}}</small></div><div class="website-health-result"><span class="website-project">{{projectName(site.projectPath)}}</span><span v-if="site.source" class="website-evidence">{{matchSource(site.source)}}<span v-if="site.detail"> · {{site.detail}}</span></span><span v-else-if="site.state==='checking'" class="website-evidence">Looking for a project match</span><span v-else-if="site.state==='unmatched'" class="website-evidence">No reliable project evidence</span></div><p v-if="site.state==='matched'" class="website-applied">{{site.appliedAt?`Tagged a browser observation ${age(site.appliedAt)}`:'Match found; waiting for another browser observation'}}</p><div v-if="site.suggestions.length" class="website-suggestions"><span>Possible projects</span><span v-for="suggestion in site.suggestions" :key="suggestion.projectPath+suggestion.source" :title="suggestion.detail">{{projectName(suggestion.projectPath)}} · {{matchSource(suggestion.source)}}</span></div><button v-if="site.state==='suggested'||site.state==='unmatched'" class="website-review-link" @click="emit('reviewSite',site.key)">Review recorded activity</button></article></div>
-  <p v-else class="website-health-empty">{{!status?.surfaces.macosActivity?'macOS activity capture is off.':!browserCaptureEnabled?'Website capture is off for all browsers.':status?.macos?.accessibilityTrusted===false?'Accessibility permission is needed to read browser tabs.':'No website observed in this capture run. Bring an enabled browser to the front.'}}</p>
- </section>
- <div class="feed-heading"><div><h2>Recently captured</h2><p>Newest first · event metadata only</p></div><span>{{snapshot?.events.length||0}} recent events</span></div>
- <div class="event-feed" aria-live="polite" aria-relevant="additions text"><div v-for="event in snapshot?.events||[]" :key="event.id" :class="['feed-row',event.source]"><div class="event-time">{{time(event.observedAt)}}<small>{{age(event.observedAt)}}</small></div><span class="source-label">{{sourceName(event.source)}}</span><div class="event-text"><strong>{{event.title}}</strong><span>{{[event.project,event.detail].filter(Boolean).join(' · ')||'Local capture'}}</span></div></div><div v-if="!snapshot?.events.length" class="feed-empty"><Activity :size="24"/><strong>Waiting for events</strong><p>New observations will appear here while capture is running.</p></div></div>
- <details class="coverage-details"><summary><span><CircleHelp :size="15"/>Coverage and unresolved evidence</span><b>{{issues.length}}</b></summary><ul><li v-for="issue in issues.slice(0,50)" :key="issue">{{issue}}</li><li v-if="!issues.length"><Check :size="14"/>No recorded capture errors.</li></ul></details>
- <div class="health-storage">{{status?.eventCount||0}} stored events · {{status?.output||'Checking storage…'}}</div>
-</section>
+  <section class="capture-health">
+    <div class="health-top">
+      <div class="health-heading">
+        <div>
+          <div class="eyebrow"><Radio :size="13" /> LIVE MONITOR</div>
+          <h1>Capture health</h1>
+          <p>See what Agent Time is recording as it happens.</p>
+          <button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button
+          ><small v-if="diagnosticMessage" role="status">{{ diagnosticMessage }}</small>
+          <div v-if="diagnosticPreview" class="diagnostic-preview">
+            <pre>{{ diagnosticPreview }}</pre>
+            <button @click="copyDiagnostics">Copy reviewed summary</button
+            ><button v-if="native" @click="saveDiagnostics">Save redacted support bundle…</button>
+          </div>
+        </div>
+        <div :class="['live-badge', { paused: status && !status.running }]">
+          <span class="pulse"></span
+          >{{ !status ? 'Checking capture…' : status.running ? 'Capture running' : 'Capture paused'
+          }}<small>Updated {{ age(snapshot?.checkedAt) }}</small>
+        </div>
+      </div>
+      <div v-if="recovery.length" class="recovery-list" role="status" aria-label="Capture recovery guidance">
+        <article v-for="notice in recovery" :key="notice.id">
+          <strong>{{ notice.title }}</strong>
+          <p>{{ notice.detail }}</p>
+          <span>{{ notice.action }}</span
+          ><button v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</button>
+        </article>
+      </div>
+      <p v-if="repairStarted" class="repair-verification" role="status">
+        {{
+          repairVerified
+            ? `${sourceName(repairStarted.provider)} delivered a new event after repair.`
+            : `After repairing ${sourceName(repairStarted.provider)}, start a new agent session. Waiting for a delivered event after ${time(repairStarted.at)}.`
+        }}
+      </p>
+      <div class="source-cards">
+        <article v-for="card in cards" :key="card.key" :class="['source-card', card.tone]">
+          <div class="card-head">
+            <component :is="card.icon" :size="18" /><span>{{ card.name }}</span
+            ><i></i>
+          </div>
+          <strong>{{ card.state }}</strong>
+          <p>{{ card.primary }}</p>
+          <small>{{ card.secondary }}</small
+          ><button
+            v-if="'repair' in card && card.repair"
+            class="source-repair"
+            @click="beginRepair(card.key)"
+          >
+            Repair and verify delivery
+          </button>
+        </article>
+      </div>
+      <p v-if="snapshot?.spool" class="spool-health" role="status">
+        Agent event queue: {{ snapshot.spool.pending }} waiting<span
+          v-if="snapshot.spool.oldestAgeSeconds !== null"
+        >
+          · oldest {{ Math.floor(snapshot.spool.oldestAgeSeconds / 60) }}m</span
+        ><span v-if="snapshot.spool.temporary"> · {{ snapshot.spool.temporary }} being written</span
+        ><span v-if="snapshot.spool.invalid"> · {{ snapshot.spool.invalid }} unreadable</span
+        ><span v-if="snapshot.spool.truncated"> · scan limited</span>. Events are retried while capture runs.
+      </p>
+      <div class="check-controls">
+        <button :disabled="checksBusy" @click="runChecks">
+          {{ checksBusy ? 'Checking sources…' : 'Run capture checks' }}</button
+        ><span>Checks use current configuration and actual delivered events.</span>
+      </div>
+      <p v-if="checksError" class="health-error" role="alert">{{ checksError }}</p>
+      <div v-if="checks" class="capture-checks">
+        <details v-for="check in checks" :key="check.id" :open="check.result === 'fail'">
+          <summary>
+            <strong>{{ check.name }}</strong
+            ><span :class="check.result">{{
+              check.result === 'pass'
+                ? 'Verified'
+                : check.result === 'fail'
+                  ? 'Needs attention'
+                  : check.result === 'skip'
+                    ? 'Optional or off'
+                    : 'Waiting for activity'
+            }}</span>
+          </summary>
+          <ol>
+            <li v-for="step in check.steps" :key="step.id">
+              <strong>{{ step.label }}</strong
+              ><span :class="step.result">{{ step.result }}</span
+              ><small>{{ step.detail }}</small>
+            </li>
+          </ol>
+          <button v-if="check.action === 'repair-hooks'" @click="relaunchHookSetup">Repair hooks</button>
+        </details>
+      </div>
+    </div>
+    <div class="accessibility-panel">
+      <div class="accessibility-heading">
+        <div>
+          <h2>Orca Accessibility evidence</h2>
+          <p>Last Orca foreground sample · {{ age(snapshot?.accessibility?.observedAt) }}</p>
+        </div>
+        <span :class="['accessibility-state', { granted: status?.macos?.accessibilityTrusted === true }]">{{
+          !status
+            ? 'Checking permission…'
+            : status.macos?.accessibilityTrusted === true
+              ? 'Permission granted'
+              : 'Permission unavailable'
+        }}</span>
+      </div>
+      <div class="accessibility-columns">
+        <div>
+          <h3>Read from Accessibility</h3>
+          <dl>
+            <dt>Window</dt>
+            <dd>{{ snapshot?.accessibility?.windowTitle || 'Not observed' }}</dd>
+            <dt>Selected tab title</dt>
+            <dd>{{ snapshot?.accessibility?.selectedTabTitle || 'Not observed' }}</dd>
+            <dt>Selected worktree ID</dt>
+            <dd class="identifier">{{ snapshot?.accessibility?.selectedWorktreeId || 'Not observed' }}</dd>
+          </dl>
+        </div>
+        <div>
+          <h3>Matched with Orca metadata</h3>
+          <dl>
+            <dt>Workspace ID</dt>
+            <dd class="identifier">
+              {{ snapshot?.accessibility?.resolved?.workspaceId || 'No unique match' }}
+            </dd>
+            <dt>Tab ID</dt>
+            <dd class="identifier">{{ snapshot?.accessibility?.resolved?.tabId || 'No unique match' }}</dd>
+            <dt>Leaf ID</dt>
+            <dd class="identifier">{{ snapshot?.accessibility?.resolved?.leafId || 'No unique match' }}</dd>
+            <dt>Terminal handle</dt>
+            <dd class="identifier">
+              {{ snapshot?.accessibility?.resolved?.terminalHandle || 'No unique match' }}
+            </dd>
+          </dl>
+        </div>
+      </div>
+    </div>
+    <p v-if="error" class="health-error" role="alert"><CircleHelp :size="15" />{{ error }}</p>
+    <section class="website-panel" aria-labelledby="website-health-title">
+      <div class="website-heading">
+        <div>
+          <h2 id="website-health-title"><Globe2 :size="16" /> Website reconciliation</h2>
+          <p>Recent browser sites and the evidence used to assign project time.</p>
+        </div>
+        <span>{{ snapshot?.websites.length || 0 }} sites</span>
+      </div>
+      <div v-if="snapshot?.websites.length" class="website-health-list">
+        <article v-for="site in snapshot.websites" :key="site.key" class="website-health-row">
+          <div class="website-health-main">
+            <strong :title="site.key">{{ site.key }}</strong
+            ><span :class="['website-state', site.state]">{{
+              site.state === 'matched'
+                ? 'Matched'
+                : site.state === 'suggested'
+                  ? 'Review suggestion'
+                  : site.state === 'checking'
+                    ? 'Checking'
+                    : 'Unmatched'
+            }}</span
+            ><small>{{ age(site.observedAt) }}</small>
+          </div>
+          <div class="website-health-result">
+            <span class="website-project">{{ projectName(site.projectPath) }}</span
+            ><span v-if="site.source" class="website-evidence"
+              >{{ matchSource(site.source) }}<span v-if="site.detail"> · {{ site.detail }}</span></span
+            ><span v-else-if="site.state === 'checking'" class="website-evidence"
+              >Looking for a project match</span
+            ><span v-else-if="site.state === 'unmatched'" class="website-evidence"
+              >No reliable project evidence</span
+            >
+          </div>
+          <p v-if="site.state === 'matched'" class="website-applied">
+            {{
+              site.appliedAt
+                ? `Tagged a browser observation ${age(site.appliedAt)}`
+                : 'Match found; waiting for another browser observation'
+            }}
+          </p>
+          <div v-if="site.suggestions.length" class="website-suggestions">
+            <span>Possible projects</span
+            ><span
+              v-for="suggestion in site.suggestions"
+              :key="suggestion.projectPath + suggestion.source"
+              :title="suggestion.detail"
+              >{{ projectName(suggestion.projectPath) }} · {{ matchSource(suggestion.source) }}</span
+            >
+          </div>
+          <button
+            v-if="site.state === 'suggested' || site.state === 'unmatched'"
+            class="website-review-link"
+            @click="emit('reviewSite', site.key)"
+          >
+            Review recorded activity
+          </button>
+        </article>
+      </div>
+      <p v-else class="website-health-empty">
+        {{
+          !status?.surfaces.macosActivity
+            ? 'macOS activity capture is off.'
+            : !browserCaptureEnabled
+              ? 'Website capture is off for all browsers.'
+              : status?.macos?.accessibilityTrusted === false
+                ? 'Accessibility permission is needed to read browser tabs.'
+                : 'No website observed in this capture run. Bring an enabled browser to the front.'
+        }}
+      </p>
+    </section>
+    <div class="feed-heading">
+      <div>
+        <h2>Recently captured</h2>
+        <p>Newest first · event metadata only</p>
+      </div>
+      <span>{{ snapshot?.events.length || 0 }} recent events</span>
+    </div>
+    <div class="event-feed" aria-label="Recent events">
+      <div v-for="event in snapshot?.events || []" :key="event.id" :class="['feed-row', event.source]">
+        <div class="event-time">
+          {{ time(event.observedAt) }}<small>{{ age(event.observedAt) }}</small>
+        </div>
+        <span class="source-label">{{ sourceName(event.source) }}</span>
+        <div class="event-text">
+          <strong>{{ event.title }}</strong
+          ><span>{{ [event.project, event.detail].filter(Boolean).join(' · ') || 'Local capture' }}</span>
+        </div>
+      </div>
+      <div v-if="!snapshot?.events.length" class="feed-empty">
+        <Activity :size="24" /><strong>Waiting for events</strong>
+        <p>New observations will appear here while capture is running.</p>
+      </div>
+    </div>
+    <details class="coverage-details">
+      <summary>
+        <span><CircleHelp :size="15" />Coverage and unresolved evidence</span><b>{{ issues.length }}</b>
+      </summary>
+      <ul>
+        <li v-for="issue in issues.slice(0, 50)" :key="issue">{{ issue }}</li>
+        <li v-if="!issues.length"><Check :size="14" />No recorded capture errors.</li>
+      </ul>
+    </details>
+    <div class="health-storage">
+      {{ status?.eventCount || 0 }} stored events · {{ status?.output || 'Checking storage…' }}
+    </div>
+  </section>
 </template>
 <style scoped>
-.recovery-list{display:grid;gap:8px;margin:0 0 18px}.recovery-list article{border:1px solid #d4954260;border-radius:8px;padding:12px 14px;background:#d4954214;font-size:11px}.recovery-list strong{font-size:12px}.recovery-list p{margin:5px 0}.recovery-list span{color:var(--muted)}.recovery-list button{margin-left:10px;color:var(--blue);text-decoration:underline}
-.source-repair{margin-top:10px;padding:6px 8px;border-radius:6px;background:var(--hover);font-size:11px}.diagnostic-button{margin-top:10px;padding:7px 10px;border-radius:6px;background:var(--hover);font-size:12px}
-.repair-verification{margin:0 0 14px;padding:10px 12px;border:1px solid var(--border);border-radius:7px;background:var(--panel);font-size:11px}
-.check-controls{display:flex;align-items:center;gap:12px;margin-top:14px;font-size:11px;color:var(--muted)}.check-controls button,.capture-checks button{padding:7px 10px;border-radius:6px;background:var(--hover);color:var(--text)}.check-controls button:disabled{opacity:.5}.capture-checks{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:12px}.capture-checks details{border:1px solid var(--border);border-radius:8px;background:var(--panel);padding:10px 12px;font-size:11px}.capture-checks summary{cursor:pointer;display:flex;justify-content:space-between;gap:8px}.capture-checks ol{margin:10px 0;padding-left:20px}.capture-checks li{margin:6px 0}.capture-checks li span{margin-left:8px}.capture-checks small{display:block;color:var(--muted);margin-top:3px}.capture-checks .pass{color:#31a783}.capture-checks .fail{color:#d07878}.capture-checks .waiting{color:#d49542}.capture-checks .skip{color:var(--muted)}@media(max-width:680px){.capture-checks{grid-template-columns:1fr}}
-.diagnostic-preview{margin-top:10px;max-width:560px}.diagnostic-preview pre{max-height:220px;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;border:1px solid var(--border);border-radius:6px;background:var(--panel);padding:10px;font-size:10px}.diagnostic-preview button{padding:7px 10px;border-radius:6px;background:var(--blue);color:white;font-size:11px}
-.spool-health{font-size:11px;color:var(--muted);margin:12px 0 0}
+.recovery-list {
+  display: grid;
+  gap: 8px;
+  margin: 0 0 18px;
+}
+.recovery-list article {
+  border: 1px solid color-mix(in srgb, var(--status-warning) 38%, transparent);
+  border-radius: 8px;
+  padding: 12px 14px;
+  background: color-mix(in srgb, var(--status-warning) 8%, transparent);
+  font-size: 11px;
+}
+.recovery-list strong {
+  font-size: 12px;
+}
+.recovery-list p {
+  margin: 5px 0;
+}
+.recovery-list span {
+  color: var(--muted);
+}
+.recovery-list button {
+  margin-left: 10px;
+  color: var(--blue);
+  text-decoration: underline;
+}
+.source-repair {
+  margin-top: 10px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--hover);
+  font-size: 11px;
+}
+.diagnostic-button {
+  margin-top: 10px;
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--hover);
+  font-size: 12px;
+}
+.repair-verification {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--panel);
+  font-size: 11px;
+}
+.check-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.check-controls button,
+.capture-checks button {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--hover);
+  color: var(--text);
+}
+.check-controls button:disabled {
+  opacity: 0.5;
+}
+.capture-checks {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 12px;
+}
+.capture-checks details {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel);
+  padding: 10px 12px;
+  font-size: 11px;
+}
+.capture-checks summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.capture-checks ol {
+  margin: 10px 0;
+  padding-left: 20px;
+}
+.capture-checks li {
+  margin: 6px 0;
+}
+.capture-checks li span {
+  margin-left: 8px;
+}
+.capture-checks small {
+  display: block;
+  color: var(--muted);
+  margin-top: 3px;
+}
+.capture-checks .pass {
+  color: var(--status-good);
+}
+.capture-checks .fail {
+  color: var(--status-danger);
+}
+.capture-checks .waiting {
+  color: var(--status-warning);
+}
+.capture-checks .skip {
+  color: var(--muted);
+}
+@media (max-width: 680px) {
+  .capture-checks {
+    grid-template-columns: 1fr;
+  }
+}
+.diagnostic-preview {
+  margin-top: 10px;
+  max-width: 560px;
+}
+.diagnostic-preview pre {
+  max-height: 220px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel);
+  padding: 10px;
+  font-size: var(--text-xs);
+}
+.diagnostic-preview button {
+  padding: 7px 10px;
+  border-radius: 6px;
+  background: var(--blue);
+  color: white;
+  font-size: 11px;
+}
+.spool-health {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 12px 0 0;
+}
 
-.capture-health{padding:30px 30px 38px;overflow:auto;flex:1;min-height:0;background:var(--bg)}.health-top{position:sticky;top:-30px;z-index:2;background:var(--bg);padding-top:0;padding-bottom:18px}.health-heading{display:flex;align-items:center;justify-content:space-between;gap:20px;margin-bottom:26px}.eyebrow{display:flex;align-items:center;gap:7px;font-size:10px;font-weight:700;letter-spacing:1.2px;color:var(--blue);margin-bottom:8px}.health-heading h1{font-size:29px;margin:0 0 5px}.health-heading p,.feed-heading p{font-size:12px;color:var(--muted);margin:0}.live-badge{display:grid;grid-template-columns:8px auto;column-gap:9px;align-items:center;font-size:12px;font-weight:600;white-space:nowrap}.live-badge small{grid-column:2;color:var(--muted);font-size:10px;font-weight:400;margin-top:3px}.pulse{width:8px;height:8px;border-radius:50%;background:#31a783;box-shadow:0 0 0 4px #31a78320}.paused .pulse{background:#9ca0a9;box-shadow:none}.source-cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.source-card{border:1px solid var(--border);border-radius:10px;background:var(--panel);padding:17px 18px;min-width:0;border-top:3px solid #8f94a3}.source-card.good{border-top-color:#31a783}.source-card.warning{border-top-color:#d49542}.card-head{display:flex;align-items:center;gap:8px;color:var(--muted);font-size:12px;font-weight:600}.card-head i{width:7px;height:7px;border-radius:50%;background:#9ca0a9;margin-left:auto}.good .card-head i{background:#31a783}.warning .card-head i{background:#d49542}.source-card strong{font-size:19px;font-weight:600;letter-spacing:-.4px;display:block;margin:17px 0 12px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card p{font-size:11px;color:var(--text);margin:0 0 4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.source-card small{font-size:10px;color:var(--muted);display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.health-error{display:flex;align-items:center;gap:8px;color:#d07878;font-size:11px}.feed-heading{display:flex;align-items:end;justify-content:space-between;margin:6px 0 12px}.feed-heading h2{font-size:16px;margin:0 0 4px}.feed-heading>span{font-size:10px;color:var(--muted)}.event-feed{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden}.feed-row{display:grid;grid-template-columns:75px 58px minmax(0,1fr);align-items:center;gap:13px;padding:12px 16px;border-bottom:1px solid var(--border);border-left:3px solid #979ba6;min-height:62px}.feed-row:last-child{border-bottom:0}.feed-row.claude,.feed-row.codex{border-left-color:#7769d9}.feed-row.macos{border-left-color:#d49542}.feed-row.orca{border-left-color:#5b9cc4}.feed-row.capture{border-left-color:#31a783}.event-time{font-size:11px;font-variant-numeric:tabular-nums;font-weight:600}.event-time small{display:block;color:var(--muted);font-size:10px;font-weight:400;margin-top:3px}.source-label{font-size:10px;color:var(--muted);font-weight:600}.event-text{min-width:0}.event-text strong{font-size:12px;display:block;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.event-text span{display:block;color:var(--muted);font-size:10px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.feed-empty{display:flex;flex-direction:column;align-items:center;gap:8px;padding:45px;color:var(--muted);font-size:12px}.feed-empty strong{color:var(--text)}.feed-empty p{margin:0}.coverage-details{border:1px solid var(--border);border-radius:9px;background:var(--panel);margin-top:18px;font-size:11px}.coverage-details summary{cursor:pointer;display:flex;justify-content:space-between;align-items:center;padding:15px 17px;list-style:none}.coverage-details summary::-webkit-details-marker{display:none}.coverage-details summary span{display:flex;align-items:center;gap:8px}.coverage-details summary b{color:var(--muted);font-weight:500}.coverage-details ul{margin:0;padding:0 18px 14px 34px;max-height:240px;overflow:auto;color:var(--muted);line-height:1.6}.coverage-details li{padding:5px 0}.health-storage{font-size:10px;color:var(--muted);margin-top:17px;overflow-wrap:anywhere}@media(max-width:1100px){.source-cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:680px){.capture-health{padding:20px}.health-heading{align-items:flex-start}.source-cards{grid-template-columns:1fr}.feed-row{grid-template-columns:62px 45px minmax(0,1fr);gap:8px}}
-.accessibility-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin-top:14px;padding:17px 18px}.accessibility-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:15px;margin-bottom:14px}.accessibility-heading h2{font-size:13px;margin:0 0 4px}.accessibility-heading p{font-size:10px;color:var(--muted);margin:0}.accessibility-state{font-size:10px;color:#d49542;white-space:nowrap}.accessibility-state.granted{color:#31a783}.accessibility-columns{display:grid;grid-template-columns:1fr 1fr;gap:22px}.accessibility-columns>div+div{border-left:1px solid var(--border);padding-left:22px}.accessibility-columns h3{font-size:10px;color:var(--muted);font-weight:650;text-transform:uppercase;letter-spacing:.7px;margin:0 0 10px}.accessibility-columns dl{display:grid;grid-template-columns:120px minmax(0,1fr);gap:7px 9px;margin:0;font-size:10px;line-height:1.4}.accessibility-columns dt{color:var(--muted)}.accessibility-columns dd{margin:0;min-width:0;overflow-wrap:anywhere}.accessibility-columns dd.identifier{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:9px}@media(max-width:950px){.accessibility-columns{grid-template-columns:1fr}.accessibility-columns>div+div{border-left:0;border-top:1px solid var(--border);padding:14px 0 0}}
-.website-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;margin:16px 0 22px;overflow:hidden}.website-heading{display:flex;align-items:flex-start;justify-content:space-between;gap:12px;padding:17px 18px}.website-heading h2{display:flex;align-items:center;gap:8px;font-size:13px;margin:0 0 5px}.website-heading h2 svg{color:var(--blue)}.website-heading p,.website-health-empty{font-size:11px;color:var(--muted);margin:0;line-height:1.5}.website-heading>span{font-size:10px;color:var(--muted);white-space:nowrap}.website-health-list{border-top:1px solid var(--border);max-height:340px;overflow:auto}.website-health-row{padding:13px 18px;border-bottom:1px solid var(--border)}.website-health-row:last-child{border-bottom:0}.website-health-main,.website-health-result{display:flex;align-items:center;gap:10px;min-width:0}.website-health-main strong{flex:1;min-width:0;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.website-health-main small{font-size:10px;color:var(--muted);white-space:nowrap}.website-state{border-radius:10px;padding:3px 7px;font-size:9px;white-space:nowrap;background:#9ca0a920;color:var(--muted)}.website-state.matched{background:#31a78322;color:#54c49b}.website-state.suggested{background:#d4954225;color:#dbaa67}.website-state.checking{background:#5b9cc425;color:#80b8d8}.website-health-result{margin-top:7px;font-size:10px}.website-project{font-weight:650;color:var(--text);white-space:nowrap}.website-evidence{min-width:0;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.website-applied{margin:6px 0 0;font-size:10px;color:var(--muted)}.website-suggestions{display:flex;flex-wrap:wrap;gap:5px;margin-top:8px;font-size:10px}.website-suggestions>span:first-child{color:var(--muted);padding:4px 0}.website-suggestions>span:not(:first-child){border:1px solid var(--border);border-radius:5px;padding:3px 6px}.website-health-empty{padding:0 18px 20px}@media(max-width:680px){.website-health-main{flex-wrap:wrap}.website-health-main strong{flex-basis:100%}}
-.website-review-link{font-size:10px;color:var(--blue);border:0;background:transparent;padding:6px 0 0;margin-top:3px;cursor:pointer}
+.capture-health {
+  padding: 30px 30px 38px;
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  background: var(--bg);
+}
+.health-top {
+  position: sticky;
+  top: -30px;
+  z-index: 2;
+  background: var(--bg);
+  padding-top: 0;
+  padding-bottom: 18px;
+}
+.health-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 26px;
+}
+.eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: var(--text-xs);
+  font-weight: 700;
+  letter-spacing: 1.2px;
+  color: var(--blue);
+  margin-bottom: 8px;
+}
+.health-heading h1 {
+  font-size: 29px;
+  margin: 0 0 5px;
+}
+.health-heading p,
+.feed-heading p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 0;
+}
+.live-badge {
+  display: grid;
+  grid-template-columns: 8px auto;
+  column-gap: 9px;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.live-badge small {
+  grid-column: 2;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  margin-top: 3px;
+}
+.pulse {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--status-good);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--status-good) 13%, transparent);
+}
+.paused .pulse {
+  background: var(--muted);
+  box-shadow: none;
+}
+.source-cards {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+}
+.source-card {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  padding: 17px 18px;
+  min-width: 0;
+  border-top: 3px solid #8f94a3;
+}
+.source-card.good {
+  border-top-color: var(--status-good);
+}
+.source-card.warning {
+  border-top-color: var(--status-warning);
+}
+.card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.card-head i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--muted);
+  margin-left: auto;
+}
+.good .card-head i {
+  background: var(--status-good);
+}
+.warning .card-head i {
+  background: var(--status-warning);
+}
+.source-card strong {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.4px;
+  display: block;
+  margin: 17px 0 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.source-card p {
+  font-size: 11px;
+  color: var(--text);
+  margin: 0 0 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.source-card small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.health-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--status-danger);
+  font-size: 11px;
+}
+.feed-heading {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  margin: 6px 0 12px;
+}
+.feed-heading h2 {
+  font-size: 16px;
+  margin: 0 0 4px;
+}
+.feed-heading > span {
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.event-feed {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.feed-row {
+  display: grid;
+  grid-template-columns: 75px 58px minmax(0, 1fr);
+  align-items: center;
+  gap: 13px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+  border-left: 3px solid #979ba6;
+  min-height: 62px;
+}
+.feed-row:last-child {
+  border-bottom: 0;
+}
+.feed-row.claude,
+.feed-row.codex {
+  border-left-color: #7769d9;
+}
+.feed-row.macos {
+  border-left-color: var(--status-warning);
+}
+.feed-row.orca {
+  border-left-color: #5b9cc4;
+}
+.feed-row.capture {
+  border-left-color: var(--status-good);
+}
+.event-time {
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+.event-time small {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  font-weight: 400;
+  margin-top: 3px;
+}
+.source-label {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: 600;
+}
+.event-text {
+  min-width: 0;
+}
+.event-text strong {
+  font-size: 12px;
+  display: block;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.event-text span {
+  display: block;
+  color: var(--muted);
+  font-size: var(--text-xs);
+  margin-top: 4px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.feed-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  padding: 45px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.feed-empty strong {
+  color: var(--text);
+}
+.feed-empty p {
+  margin: 0;
+}
+.coverage-details {
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: var(--panel);
+  margin-top: 18px;
+  font-size: 11px;
+}
+.coverage-details summary {
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 17px;
+  list-style: none;
+}
+.coverage-details summary::-webkit-details-marker {
+  display: none;
+}
+.coverage-details summary span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.coverage-details summary b {
+  color: var(--muted);
+  font-weight: 500;
+}
+.coverage-details ul {
+  margin: 0;
+  padding: 0 18px 14px 34px;
+  max-height: 240px;
+  overflow: auto;
+  color: var(--muted);
+  line-height: 1.6;
+}
+.coverage-details li {
+  padding: 5px 0;
+}
+.health-storage {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin-top: 17px;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1100px) {
+  .source-cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 680px) {
+  .capture-health {
+    padding: 20px;
+  }
+  .health-heading {
+    align-items: flex-start;
+  }
+  .source-cards {
+    grid-template-columns: 1fr;
+  }
+  .feed-row {
+    grid-template-columns: 62px 45px minmax(0, 1fr);
+    gap: 8px;
+  }
+}
+.accessibility-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin-top: 14px;
+  padding: 17px 18px;
+}
+.accessibility-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 15px;
+  margin-bottom: 14px;
+}
+.accessibility-heading h2 {
+  font-size: 13px;
+  margin: 0 0 4px;
+}
+.accessibility-heading p {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  margin: 0;
+}
+.accessibility-state {
+  font-size: var(--text-xs);
+  color: var(--status-warning);
+  white-space: nowrap;
+}
+.accessibility-state.granted {
+  color: var(--status-good);
+}
+.accessibility-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 22px;
+}
+.accessibility-columns > div + div {
+  border-left: 1px solid var(--border);
+  padding-left: 22px;
+}
+.accessibility-columns h3 {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  margin: 0 0 10px;
+}
+.accessibility-columns dl {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 7px 9px;
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.4;
+}
+.accessibility-columns dt {
+  color: var(--muted);
+}
+.accessibility-columns dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.accessibility-columns dd.identifier {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: var(--text-xs);
+}
+@media (max-width: 950px) {
+  .accessibility-columns {
+    grid-template-columns: 1fr;
+  }
+  .accessibility-columns > div + div {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    padding: 14px 0 0;
+  }
+}
+.website-panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  margin: 16px 0 22px;
+  overflow: hidden;
+}
+.website-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 17px 18px;
+}
+.website-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  margin: 0 0 5px;
+}
+.website-heading h2 svg {
+  color: var(--blue);
+}
+.website-heading p,
+.website-health-empty {
+  font-size: 11px;
+  color: var(--muted);
+  margin: 0;
+  line-height: 1.5;
+}
+.website-heading > span {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.website-health-list {
+  border-top: 1px solid var(--border);
+  max-height: 340px;
+  overflow: auto;
+}
+.website-health-row {
+  padding: 13px 18px;
+  border-bottom: 1px solid var(--border);
+}
+.website-health-row:last-child {
+  border-bottom: 0;
+}
+.website-health-main,
+.website-health-result {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+.website-health-main strong {
+  flex: 1;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.website-health-main small {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  white-space: nowrap;
+}
+.website-state {
+  border-radius: 10px;
+  padding: 3px 7px;
+  font-size: var(--text-xs);
+  white-space: nowrap;
+  background: color-mix(in srgb, var(--muted) 13%, transparent);
+  color: var(--muted);
+}
+.website-state.matched {
+  background: color-mix(in srgb, var(--status-good) 13%, transparent);
+  color: #54c49b;
+}
+.website-state.suggested {
+  background: color-mix(in srgb, var(--status-warning) 15%, transparent);
+  color: #dbaa67;
+}
+.website-state.checking {
+  background: #5b9cc425;
+  color: #80b8d8;
+}
+.website-health-result {
+  margin-top: 7px;
+  font-size: var(--text-xs);
+}
+.website-project {
+  font-weight: 650;
+  color: var(--text);
+  white-space: nowrap;
+}
+.website-evidence {
+  min-width: 0;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.website-applied {
+  margin: 6px 0 0;
+  font-size: var(--text-xs);
+  color: var(--muted);
+}
+.website-suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+  font-size: var(--text-xs);
+}
+.website-suggestions > span:first-child {
+  color: var(--muted);
+  padding: 4px 0;
+}
+.website-suggestions > span:not(:first-child) {
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 3px 6px;
+}
+.website-health-empty {
+  padding: 0 18px 20px;
+}
+@media (max-width: 680px) {
+  .website-health-main {
+    flex-wrap: wrap;
+  }
+  .website-health-main strong {
+    flex-basis: 100%;
+  }
+}
+.website-review-link {
+  font-size: var(--text-xs);
+  color: var(--blue);
+  border: 0;
+  background: transparent;
+  padding: 6px 0 0;
+  margin-top: 3px;
+  cursor: pointer;
+}
 </style>

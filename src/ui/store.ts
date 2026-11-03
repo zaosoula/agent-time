@@ -1,0 +1,752 @@
+// Shared dashboard state. One store owns every poll and every value that several views need, so the
+// same data is fetched and derived once, polling pauses while the window is hidden, and each poll only
+// runs while a page that shows its data is open.
+import { computed, effectScope, markRaw, ref, shallowRef, watch } from 'vue';
+import type { Interval, Session, Summary } from '../capture/events.ts';
+import type { CaptureHealth } from '../capture/health.ts';
+import type { HookInstallationStatus } from '../capture/hook-installation.ts';
+import type { ReportedWorkItem } from '../capture/reported-work.ts';
+import type { ManualNote } from '../capture/store.ts';
+import type { UsageSummary } from '../usage/reader.ts';
+import { minuteCreditSeconds, unionSeconds } from '../capture/correlate.ts';
+import { dailyCaptureIssues } from '../capture/daily.ts';
+import { dayConfidence } from '../capture/day-confidence.ts';
+import { unobservedGaps } from '../capture/gaps.ts';
+import { outdatedHookTargets } from '../capture/hook-warning.ts';
+import { groupHumanReview, humanReviewState, type HumanReviewGroup } from '../capture/human-review.ts';
+import { humanIntervalsBySession } from '../capture/orca-focus.ts';
+import {
+  dayReviewTransport,
+  manualNoteTransport,
+  native,
+  reportedWorkTransport,
+  transport,
+  type CaptureStatus,
+  type DayReviewStatus,
+  type WebsiteProjectStatus,
+} from './transport.ts';
+import { humanizeError, isRetryableError } from './errors.ts';
+import { dateString, isValidDateString } from './format.ts';
+import { createPoller, watchWindowVisibility, windowFocused, windowVisible } from './polling.ts';
+import { sessionProject, unassignedProject, workspaceProject } from './project-identity.ts';
+import { indexSessionIntervals, intervalSessionKey, sessionIntervalKey } from './session-intervals.ts';
+import {
+  agentLoadSegments,
+  creditedIntervals,
+  groupTimelineProjects,
+  type TimelineProjectGroup,
+} from './timeline-groups.ts';
+
+export type Page =
+  | 'today'
+  | 'review'
+  | 'sessions'
+  | 'weekly'
+  | 'outcomes'
+  | 'health'
+  | 'usage'
+  | 'settings';
+
+/** A session row with its credited seconds for the selected day. */
+export type DaySession = Session & { seconds: number; observedSeconds: number };
+
+/** A timeline row with everything it draws precomputed once per summary change. */
+export interface TimelineSessionRow {
+  session: DaySession;
+  parentKey: string | null;
+  childCount: number;
+  bars: Interval[];
+  creditBars: Interval[];
+  childBars: Interval[];
+  childCreditBars: Interval[];
+}
+export type TimelineGroup = TimelineProjectGroup & { rows: TimelineSessionRow[] };
+
+const emptySummary: Summary = markRaw({
+  intervals: [],
+  unresolved: [],
+  coverage: [],
+  sessions: [],
+  humanSeconds: 0,
+  agentSeconds: 0,
+  elapsedSeconds: 0,
+  childAgentSeconds: 0,
+});
+
+/**
+ * Cheap fingerprint of a summary. Walking the arrays once is far cheaper than letting ~40 computeds
+ * rebuild every five seconds when nothing changed.
+ */
+export function summarySignature(summary: Summary): string {
+  let hash = 0x811c9dc5;
+  const mix = (value: unknown) => {
+    const text = String(value ?? '');
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
+      hash = Math.imul(hash, 0x01000193);
+    }
+  };
+  for (const interval of summary.intervals) {
+    mix(interval.start);
+    mix(interval.end);
+    mix(interval.state);
+    mix(interval.workspaceId);
+    mix(interval.userAttribution);
+    mix(interval.reviewSegment);
+    mix(interval.attributionSource);
+  }
+  for (const session of summary.sessions) {
+    mix(session.key);
+    mix(session.state);
+    mix(session.lastObservedAt);
+    mix(session.title);
+  }
+  return [
+    summary.intervals.length,
+    summary.sessions.length,
+    summary.unresolved.length,
+    summary.coverage.length,
+    summary.humanSeconds,
+    summary.agentSeconds,
+    summary.elapsedSeconds,
+    (summary.issueReasons || []).join('|'),
+    hash >>> 0,
+  ].join(':');
+}
+
+const evidenceKey = (item: { hostId?: string; sessionId?: string; agentId?: string; child?: boolean }) =>
+  // `child` is normalised: sessions carry `false` while root intervals may omit it.
+  JSON.stringify([item.hostId ?? null, item.sessionId ?? null, item.agentId ?? null, Boolean(item.child)]);
+
+function createStore() {
+  watchWindowVisibility();
+
+  // ---- Navigation and selection -------------------------------------------------------------
+  const page = ref<Page>('today');
+  const project = ref('all');
+  const search = ref('');
+  const selectedDate = ref(dateString(new Date()));
+  const selectedSessionKey = ref('');
+  /** Ticks every second while visible; only the now-cursor and live labels read it. */
+  const now = ref(Date.now() / 1000);
+  /** Minute-rounded clock for anything that should not re-render every second. */
+  const minute = computed(() => Math.floor(now.value / 60) * 60);
+
+  /** Website prefix the review queue is filtered to, set from Capture health. */
+  const reviewSiteFilter = ref('');
+
+  function navigate(destination: Page, nextProject = 'all') {
+    page.value = destination;
+    project.value = nextProject;
+    selectedSessionKey.value = '';
+  }
+
+  function setDate(value: string) {
+    if (!isValidDateString(value) || value === selectedDate.value) return false;
+    selectedDate.value = value;
+    return true;
+  }
+
+  // ---- Fetched state -----------------------------------------------------------------------
+  const summary = shallowRef<Summary>(emptySummary);
+  const summaryLoaded = ref(false);
+  const status = shallowRef<CaptureStatus | null>(null);
+  const captureHealth = shallowRef<CaptureHealth | null>(null);
+  const hookStatus = shallowRef<HookInstallationStatus | null>(null);
+  const websiteProjects = shallowRef<WebsiteProjectStatus | null>(null);
+  const usage = shallowRef<UsageSummary | null>(null);
+  const usageError = ref('');
+  const reportedWork = shallowRef<ReportedWorkItem[]>([]);
+  const dayReview = ref<DayReviewStatus | null>(null);
+  const notes = ref<ManualNote[]>([]);
+  /** Error from the background summary/status poll. Cleared by the next successful poll. */
+  const pollError = ref('');
+  const reviewRevision = ref(0);
+
+  let summaryKey = '',
+    summaryRevision = 0,
+    summaryFetchedAt = 0;
+
+  function storeSummary(next: Summary, date: string) {
+    const key = `${date}|${summarySignature(next)}`;
+    summaryFetchedAt = Date.now();
+    summaryLoaded.value = true;
+    if (key === summaryKey) return;
+    summaryKey = key;
+    summary.value = markRaw(next);
+  }
+
+  const summaryPages: Page[] = ['today', 'sessions', 'review', 'outcomes'];
+  const showsSummary = computed(() => summaryPages.includes(page.value));
+
+  async function loadSummary() {
+    const date = selectedDate.value,
+      revision = summaryRevision;
+    // The desktop window can stay visible behind other apps; then a lighter background summary is enough.
+    const background = native && !windowFocused.value;
+    // While visible but unfocused, a full summary every minute is enough.
+    const due = !background || summaryKey.split('|')[0] !== date || Date.now() - summaryFetchedAt >= 60_000;
+    try {
+      const [next, reports] = await Promise.all([
+        due ? transport.summary(date, background) : Promise.resolve(null),
+        reportedWorkTransport.list(date).catch(() => null),
+      ]);
+      if (revision !== summaryRevision || date !== selectedDate.value) return;
+      if (next) storeSummary(next, date);
+      if (reports) reportedWork.value = markRaw(reports);
+      pollError.value = '';
+    } catch (cause) {
+      if (revision === summaryRevision && !isRetryableError(cause)) pollError.value = humanizeError(cause);
+    }
+  }
+
+  async function loadStatus() {
+    try {
+      status.value = await transport.status();
+      pollError.value = '';
+    } catch (cause) {
+      // Restarts and storage operations clear on their own; the next poll retries silently.
+      if (!isRetryableError(cause)) pollError.value = humanizeError(cause);
+    }
+  }
+
+  async function loadHealth() {
+    try {
+      captureHealth.value = markRaw(await transport.captureHealth());
+    } catch {
+      /* Capture health shows its own error on its page. */
+    }
+  }
+
+  async function loadHooks() {
+    try {
+      hookStatus.value = await transport.hooksStatus();
+    } catch {
+      /* Hook setup reports its own errors when opened. */
+    }
+  }
+
+  /** Website rules and known projects. Throws so callers can report their own errors. */
+  async function loadWebsiteProjects() {
+    websiteProjects.value = markRaw(await transport.websiteProjects());
+    return websiteProjects.value;
+  }
+
+  async function loadUsage() {
+    try {
+      usage.value = markRaw(await transport.usage());
+      usageError.value = '';
+    } catch (cause) {
+      if (!isRetryableError(cause)) usageError.value = humanizeError(cause);
+    }
+  }
+
+  async function loadDayReview() {
+    const date = selectedDate.value;
+    try {
+      const value = await dayReviewTransport.status(date);
+      if (date === selectedDate.value) dayReview.value = value;
+    } catch {
+      /* The review page shows review errors when the user acts. */
+    }
+  }
+
+  async function loadNotes() {
+    const date = selectedDate.value;
+    try {
+      const result = await manualNoteTransport.list(date);
+      if (date === selectedDate.value) notes.value = result;
+    } catch {
+      /* Notes stay empty; adding a note reports its own error. */
+    }
+  }
+
+  // ---- Polling -----------------------------------------------------------------------------
+  const visible = () => windowVisible.value;
+  const pollers = {
+    summary: createPoller(loadSummary, () =>
+      visible() && showsSummary.value ? (!native || windowFocused.value ? 5_000 : 60_000) : null,
+    ),
+    status: createPoller(loadStatus, () => (visible() ? 5_000 : null)),
+    // The sidebar status line needs health everywhere; the Health page needs it fresh.
+    health: createPoller(loadHealth, () => (visible() ? (page.value === 'health' ? 5_000 : 30_000) : null)),
+    hooks: createPoller(loadHooks, () => (visible() ? 30_000 : null)),
+    usage: createPoller(loadUsage, () => (visible() && page.value === 'usage' ? 60_000 : null)),
+    websites: createPoller(loadWebsiteProjects, () =>
+      visible() && page.value === 'settings' ? 30_000 : null,
+    ),
+    dayReview: createPoller(loadDayReview, () => (visible() ? 60_000 : null)),
+  };
+  const syncPollers = () => {
+    for (const poller of Object.values(pollers)) poller.sync();
+  };
+  watch([windowVisible, windowFocused, page], syncPollers);
+  // Pollers that just became enabled run immediately on sync. Health is always polled (slowly), so
+  // opening its page asks for a fresh snapshot instead of waiting up to 30 seconds.
+  watch(page, (next) => {
+    if (windowVisible.value && next === 'health') void pollers.health.refresh();
+  });
+  // Coming back into view: refresh straight away rather than waiting for the next tick.
+  watch(windowVisible, (shown) => {
+    if (shown) {
+      now.value = Date.now() / 1000;
+      if (showsSummary.value) void pollers.summary.refresh();
+      void pollers.status.refresh();
+      void pollers.health.refresh();
+    }
+  });
+
+  let clockTimer: ReturnType<typeof setInterval> | undefined;
+  let previousDay = dateString(new Date());
+  function tickClock() {
+    now.value = Date.now() / 1000;
+    const currentDay = dateString(new Date());
+    if (currentDay !== previousDay) {
+      if (selectedDate.value === previousDay) selectedDate.value = currentDay;
+      previousDay = currentDay;
+    }
+  }
+  watch(
+    windowVisible,
+    (shown) => {
+      clearInterval(clockTimer);
+      if (shown) clockTimer = setInterval(tickClock, 1000);
+    },
+    { immediate: true },
+  );
+
+  watch(selectedDate, () => {
+    summaryRevision++;
+    selectedSessionKey.value = '';
+    dayReview.value = null;
+    notes.value = [];
+    reportedWork.value = [];
+    void loadDayReview();
+    void loadNotes();
+    void pollers.summary.refresh();
+  });
+
+  let started = false;
+  function start() {
+    if (started) return;
+    started = true;
+    syncPollers();
+    void loadNotes();
+  }
+
+  /** Apply the summary a review action returned, or refetch when it is for another day. */
+  function applyReviewedSummary(next: Summary, date: string) {
+    reviewRevision.value++;
+    const reportedDate = (next as Summary & { date?: unknown }).date;
+    if (date !== selectedDate.value || (typeof reportedDate === 'string' && reportedDate !== date)) {
+      summaryRevision++;
+      void pollers.summary.refresh();
+    } else {
+      summaryRevision++;
+      storeSummary(next, date);
+    }
+    void loadDayReview();
+  }
+
+  async function markDayReviewed() {
+    const date = selectedDate.value;
+    const value = await dayReviewTransport.mark(date);
+    if (date === selectedDate.value) dayReview.value = value;
+    reviewRevision.value++;
+    return value;
+  }
+
+  // ---- Day boundaries ----------------------------------------------------------------------
+  const isToday = computed(() => selectedDate.value === dateString(new Date(minute.value * 1000)));
+  const dayStart = computed(() => new Date(`${selectedDate.value}T00:00:00`).getTime() / 1000);
+  const dayEnd = computed(() => {
+    const date = new Date(`${selectedDate.value}T00:00:00`);
+    date.setDate(date.getDate() + 1);
+    return date.getTime() / 1000;
+  });
+
+  // ---- Day data ----------------------------------------------------------------------------
+  const dayIntervals = computed(() => {
+    const start = dayStart.value,
+      end = dayEnd.value;
+    return summary.value.intervals
+      .filter((interval) => interval.end > start && interval.start < end)
+      .map((interval) => ({
+        ...interval,
+        start: Math.max(interval.start, start),
+        end: Math.min(interval.end, end),
+      }));
+  });
+  const daySessionIntervals = computed(() => indexSessionIntervals(dayIntervals.value));
+  const firstSessionByEvidence = computed(() => {
+    const sessions = new Map<string, Session>();
+    for (const session of summary.value.sessions) {
+      const key = evidenceKey(session);
+      if (!sessions.has(key)) sessions.set(key, session);
+    }
+    return sessions;
+  });
+
+  /** Projects with credited work on the selected day. */
+  const projects = computed(() => {
+    const worked = new Set<string>();
+    for (const interval of dayIntervals.value) {
+      if (interval.state !== 'grouped' && interval.state !== 'human') continue;
+      const session =
+        interval.state === 'grouped' ? firstSessionByEvidence.value.get(evidenceKey(interval)) : undefined;
+      const name = session
+        ? sessionProject(session)
+        : interval.workspaceId
+          ? workspaceProject(interval.workspaceId)
+          : unassignedProject;
+      if (name !== unassignedProject) worked.add(name);
+    }
+    return [...worked].sort();
+  });
+
+  const allSessions = computed<DaySession[]>(() =>
+    summary.value.sessions
+      .map((session) => {
+        const key = sessionIntervalKey(session),
+          grouped = daySessionIntervals.value.grouped.get(key) || [],
+          running = daySessionIntervals.value.running.get(key) || [];
+        return {
+          ...session,
+          seconds: minuteCreditSeconds(grouped.map((interval) => [interval.start, interval.end])),
+          observedSeconds: unionSeconds(running.map((interval) => [interval.start, interval.end])),
+        };
+      })
+      .filter((session) => project.value === 'all' || sessionProject(session) === project.value)
+      .sort((a, b) => b.seconds - a.seconds || b.lastObservedAt - a.lastObservedAt),
+  );
+  const sessions = computed(() => {
+    const query = search.value.trim().toLowerCase();
+    if (!query) return allSessions.value;
+    return allSessions.value.filter((session) =>
+      [
+        session.title,
+        sessionProject(session).split('/').at(-1),
+        sessionProject(session),
+        session.runId,
+        session.provider,
+      ]
+        .join(' ')
+        .toLowerCase()
+        .includes(query),
+    );
+  });
+  const visibleSessions = computed(() => sessions.value.filter((session) => session.seconds > 0));
+  const creditedSessions = computed(() => allSessions.value.filter((session) => session.seconds > 0));
+  const timelineEligible = computed(() => {
+    const activeChildren = new Set(
+      sessions.value
+        .filter((session) => session.child && session.seconds > 0)
+        .map((session) => JSON.stringify([session.hostId ?? null, session.sessionId ?? null])),
+    );
+    return sessions.value.filter(
+      (session) =>
+        session.seconds > 0 ||
+        (!session.child && activeChildren.has(JSON.stringify([session.hostId ?? null, session.sessionId ?? null]))),
+    );
+  });
+  const humanBySession = computed(() => humanIntervalsBySession(summary.value.sessions, dayIntervals.value));
+  const visibleSessionKeys = computed(() => new Set(creditedSessions.value.map(sessionIntervalKey)));
+  const filteredIntervals = computed(() =>
+    project.value === 'all'
+      ? dayIntervals.value
+      : dayIntervals.value.filter((interval) => {
+          if (interval.state === 'human')
+            return Boolean(interval.workspaceId && workspaceProject(interval.workspaceId) === project.value);
+          return visibleSessionKeys.value.has(intervalSessionKey(interval));
+        }),
+  );
+  const visibleReportedWork = computed(() =>
+    reportedWork.value.filter(
+      (item) =>
+        project.value === 'all' ||
+        item.project === project.value ||
+        Boolean(item.workspaceId && workspaceProject(item.workspaceId) === project.value) ||
+        Boolean(
+          item.sessionId &&
+          summary.value.sessions.some(
+            (session) =>
+              session.sessionId === item.sessionId &&
+              session.provider === item.provider &&
+              sessionProject(session) === project.value,
+          ),
+        ),
+    ),
+  );
+
+  const agentTime = computed(() =>
+    creditedSessions.value.filter((session) => !session.child).reduce((sum, session) => sum + session.seconds, 0),
+  );
+  const agentOverlap = computed(() => {
+    const grouped = filteredIntervals.value.filter((interval) => interval.state === 'grouped' && !interval.child);
+    const roots = grouped.length
+      ? grouped
+      : filteredIntervals.value.filter(
+          (interval) => (interval.state === 'running' || interval.state === 'turn') && !interval.child,
+        );
+    const steps = agentLoadSegments(roots, []).filter(
+      (step) => step.end > dayStart.value && step.start < dayEnd.value,
+    );
+    return {
+      steps,
+      seconds: steps
+        .filter((step) => step.roots > 1)
+        .reduce(
+          (total, step) => total + Math.min(step.end, dayEnd.value) - Math.max(step.start, dayStart.value),
+          0,
+        ),
+      peak: Math.max(0, ...steps.map((step) => step.roots)),
+    };
+  });
+  const humanTime = computed(() =>
+    minuteCreditSeconds(
+      filteredIntervals.value
+        .filter((interval) => interval.state === 'human')
+        .map((interval) => [interval.start, interval.end]),
+    ),
+  );
+  const elapsedTime = computed(() =>
+    minuteCreditSeconds(
+      filteredIntervals.value
+        .filter((interval) => interval.state === 'grouped' || interval.state === 'human')
+        .map((interval) => [interval.start, interval.end]),
+    ),
+  );
+  const runningCount = computed(() =>
+    project.value === 'all' && typeof status.value?.workingAgents === 'number'
+      ? status.value.workingAgents
+      : creditedSessions.value.filter(
+          (session) => ['working', 'running'].includes(session.state) && now.value - session.lastObservedAt < 20,
+        ).length,
+  );
+  const runs = computed(
+    () => new Set(creditedSessions.value.map((session) => session.runId).filter(Boolean)).size,
+  );
+
+  const timelineProjects = computed<TimelineGroup[]>(() => {
+    const groups = groupTimelineProjects(
+      timelineEligible.value,
+      filteredIntervals.value.filter((interval) => interval.state === 'human'),
+      humanBySession.value,
+      (session) => daySessionIntervals.value.grouped.get(sessionIntervalKey(session)) || [],
+      sessionProject,
+      workspaceProject,
+      !search.value.trim(),
+    );
+    return groups.map((group) => {
+      const ordered = (group.sessions as DaySession[]).sort((a, b) => {
+        if (a.runId !== b.runId) return (a.runId || '').localeCompare(b.runId || '');
+        if (a.sessionId === b.sessionId && a.child !== b.child) return a.child ? 1 : -1;
+        return (a.sessionId || a.key).localeCompare(b.sessionId || b.key) || (a.child ? 1 : 0) - (b.child ? 1 : 0);
+      });
+      // Index parents and children once instead of scanning the group for every row.
+      const familyKey = (session: Session) => JSON.stringify([session.hostId ?? null, session.sessionId ?? null]);
+      const parents = new Map<string, DaySession>(),
+        children = new Map<string, DaySession[]>();
+      for (const session of ordered) {
+        const key = familyKey(session);
+        if (session.child) children.set(key, [...(children.get(key) || []), session]);
+        else if (!parents.has(key)) parents.set(key, session);
+      }
+      const barsOf = (session: Session) =>
+        daySessionIntervals.value.grouped.get(sessionIntervalKey(session)) || [];
+      const rows = ordered.map((session): TimelineSessionRow => {
+        const family = familyKey(session),
+          kids = session.child ? [] : children.get(family) || [],
+          bars = barsOf(session);
+        return {
+          session,
+          parentKey: session.child ? parents.get(family)?.key || null : null,
+          childCount: kids.length,
+          bars,
+          creditBars: creditedIntervals(bars),
+          childBars: kids.flatMap(barsOf),
+          childCreditBars: kids.flatMap((child) => creditedIntervals(barsOf(child))),
+        };
+      });
+      return { ...group, sessions: ordered, rows };
+    });
+  });
+
+  const issues = computed(
+    () =>
+      summary.value.issueReasons ?? [
+        ...new Set([...summary.value.coverage, ...summary.value.unresolved].map((issue) => issue.reason)),
+      ],
+  );
+  const dayCaptureIssues = computed(() => dailyCaptureIssues(summary.value, dayStart.value, dayEnd.value));
+  const dayCaptureReasons = computed(() => [...new Set(dayCaptureIssues.value.map((issue) => issue.reason))]);
+  const confidence = computed(() =>
+    dayConfidence(
+      summary.value,
+      captureHealth.value?.sources || [],
+      status.value?.sources.filter((source) => source.kind === 'agent').map((source) => source.id) || [],
+      dayStart.value,
+      dayEnd.value,
+      isToday.value,
+    ),
+  );
+  const observedAgentSources = computed(
+    () =>
+      confidence.value.sources.filter(
+        (source) =>
+          source.observed &&
+          status.value?.sources.some((item) => item.kind === 'agent' && item.id === source.id),
+      ).length,
+  );
+
+  // ---- Review ------------------------------------------------------------------------------
+  /** Review groups for the whole selected day, shared by the review queue, badge and export. */
+  const reviewGroups = computed<HumanReviewGroup[]>(() => groupHumanReview(dayIntervals.value));
+  const exportReviewGroups = computed(() =>
+    project.value === 'all' ? reviewGroups.value : groupHumanReview(filteredIntervals.value),
+  );
+  const reviewPending = computed(() =>
+    reviewGroups.value.filter((group) => ['unmatched', 'conflict'].includes(humanReviewState(group))),
+  );
+  const reviewCaptured = computed(() =>
+    reviewGroups.value.filter((group) => humanReviewState(group) === 'captured'),
+  );
+  const dayReviewed = computed(() => Boolean(dayReview.value?.completedAt && !dayReview.value.stale));
+  /** Count shown on the Review navigation item. */
+  const reviewBadge = computed(() =>
+    summaryLoaded.value && summaryPages.includes(page.value)
+      ? reviewPending.value.length
+      : (dayReview.value?.pendingGroups ?? reviewPending.value.length),
+  );
+  const dayGaps = computed(() => unobservedGaps(dayIntervals.value));
+
+  // ---- Capture status ----------------------------------------------------------------------
+  const sourceProblems = computed(
+    () =>
+      captureHealth.value?.sources.filter((source) => source.state === 'stale' || source.state === 'failed') ||
+      [],
+  );
+  const outdatedHooks = computed(() => outdatedHookTargets(status.value, hookStatus.value));
+  const outdatedAgents = computed(() =>
+    [
+      ...new Set(
+        outdatedHooks.value.map(
+          (target) =>
+            hookStatus.value?.agents.find((agent) => agent.id === target.provider)?.name || target.provider,
+        ),
+      ),
+    ].join(', '),
+  );
+  const captureAttention = computed(
+    () =>
+      ['repair-needed', 'failed', 'stale', 'permission-limited'].flatMap(
+        (state) => captureHealth.value?.sources.filter((source) => source.state === state) || [],
+      )[0],
+  );
+  const captureLabel = computed(() => {
+    const attention = captureAttention.value;
+    if (!status.value) return 'Checking capture…';
+    if (!status.value.running) return 'Capture paused';
+    if (attention?.state === 'repair-needed') return `${attention.name}: repair hooks`;
+    if (attention?.state === 'permission-limited') return `${attention.name}: limited detail`;
+    if (attention) return `${attention.name}: ${attention.state}`;
+    return captureHealth.value?.sources.some((source) => source.state === 'receiving')
+      ? 'Receiving activity'
+      : 'Waiting for activity';
+  });
+
+  const selectedSession = computed(
+    () => allSessions.value.find((session) => session.key === selectedSessionKey.value) || null,
+  );
+  // A session that disappears from the day (filter, date or data change) closes the inspector.
+  watch(selectedSession, (session) => {
+    if (!session && selectedSessionKey.value && summaryLoaded.value) selectedSessionKey.value = '';
+  });
+
+  return {
+    // navigation
+    page,
+    project,
+    search,
+    selectedDate,
+    selectedSessionKey,
+    selectedSession,
+    setDate,
+    navigate,
+    reviewSiteFilter,
+    now,
+    minute,
+    isToday,
+    dayStart,
+    dayEnd,
+    // fetched
+    summary,
+    summaryLoaded,
+    status,
+    captureHealth,
+    hookStatus,
+    websiteProjects,
+    usage,
+    usageError,
+    reportedWork,
+    dayReview,
+    dayReviewed,
+    notes,
+    pollError,
+    reviewRevision,
+    // actions
+    start,
+    refreshSummary: () => pollers.summary.refresh(),
+    refreshStatus: () => pollers.status.refresh(),
+    refreshHealth: () => pollers.health.refresh(),
+    refreshHooks: () => pollers.hooks.refresh(),
+    refreshUsage: () => pollers.usage.refresh(),
+    refreshWebsiteProjects: loadWebsiteProjects,
+    refreshDayReview: loadDayReview,
+    refreshNotes: loadNotes,
+    applyReviewedSummary,
+    markDayReviewed,
+    // derived day data
+    dayIntervals,
+    projects,
+    allSessions,
+    sessions,
+    visibleSessions,
+    creditedSessions,
+    timelineEligible,
+    filteredIntervals,
+    visibleReportedWork,
+    agentTime,
+    agentOverlap,
+    humanTime,
+    elapsedTime,
+    runningCount,
+    runs,
+    timelineProjects,
+    issues,
+    dayCaptureIssues,
+    dayCaptureReasons,
+    confidence,
+    observedAgentSources,
+    reviewGroups,
+    exportReviewGroups,
+    reviewPending,
+    reviewCaptured,
+    reviewBadge,
+    dayGaps,
+    sourceProblems,
+    outdatedHooks,
+    outdatedAgents,
+    captureAttention,
+    captureLabel,
+  };
+}
+
+export type Store = ReturnType<typeof createStore>;
+let instance: Store | undefined;
+
+/** The dashboard's single shared store. */
+export function useStore(): Store {
+  if (!instance) instance = effectScope(true).run(createStore)!;
+  return instance;
+}

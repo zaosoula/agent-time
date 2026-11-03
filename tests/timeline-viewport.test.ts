@@ -27,3 +27,16 @@ test('tick spacing becomes finer as the timeline zooms',()=>{
  assert.deepEqual(minute.filter(tick=>tick.major).map(tick=>tick.time),[0,10,20,30,40,50,60]);
  assert.equal(timelineTicks({start:0,end:day}).filter(tick=>tick.major).length,13);
 });
+
+test('grid background repeats one tile per tick and aligns the first tick', async () => {
+  const { gridBackground } = await import('../src/ui/timeline-viewport.ts');
+  // One hour visible starting 10 minutes past a 5-minute boundary: minor 60s, major 300s.
+  const grid = gridBackground({ start: 3000 + 30, end: 3000 + 30 + 3600 });
+  const [majorSize, minorSize] = grid.size.split(', ');
+  assert.equal(Number.parseFloat(majorSize!), (300 / 3600) * 100);
+  assert.equal(Number.parseFloat(minorSize!), (60 / 3600) * 100);
+  const [majorPosition] = grid.position.split(', ');
+  const size = 300 / 3600,
+    offset = (3300 - 3030) / 3600;
+  assert.ok(Math.abs(Number.parseFloat(majorPosition!) - (offset / (1 - size)) * 100) < 1e-9);
+});

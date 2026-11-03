@@ -1,42 +1,118 @@
 <script setup lang="ts">
-import {ref,shallowRef,onMounted,onUnmounted} from 'vue';
-import {listen,type UnlistenFn} from '@tauri-apps/api/event';
-import {check,type Update,type DownloadEvent} from '@tauri-apps/plugin-updater';
-import {relaunch} from '@tauri-apps/plugin-process';
-import {invoke} from '@tauri-apps/api/core';
-import {installBetaUpdate} from './beta-updates.ts';
-const update=shallowRef<Update|null>(null),error=ref(''),busy=ref(false),progress=ref('');
-let unlisten:UnlistenFn|undefined;
-let unmounted=false;
-let lastCheck=0;
-async function checkNow(){
- if(busy.value)return;
- lastCheck=Date.now();
- busy.value=true;error.value='';
- try{const next=await check();await update.value?.close();update.value=next;}
- catch(e){error.value=`Could not check for updates: ${String(e)}`;}
- finally{busy.value=false;}
+import { onMounted, onUnmounted, ref } from 'vue';
+import {
+  checkBetaUpdate,
+  installBetaUpdate,
+  progressLabel,
+  tauriUpdaterBridge,
+  type BetaUpdateInfo,
+  type BetaUpdateProgress,
+} from './beta-updates.ts';
+import { humanizeError } from './errors.ts';
+import { native } from './transport.ts';
+
+const update = ref<BetaUpdateInfo | null>(null),
+  error = ref(''),
+  checking = ref(false),
+  installing = ref(false),
+  progress = ref<BetaUpdateProgress | null>(null);
+let unlistenAvailable: (() => void) | undefined,
+  unmounted = false,
+  lastCheck = 0;
+
+async function checkNow() {
+  if (!native || checking.value || installing.value) return;
+  lastCheck = Date.now();
+  checking.value = true;
+  error.value = '';
+  try {
+    update.value = await checkBetaUpdate(await tauriUpdaterBridge());
+  } catch (cause) {
+    error.value = humanizeError(cause);
+  } finally {
+    checking.value = false;
+  }
 }
-async function install(){
- const candidate=update.value;if(!candidate||busy.value)return;
- busy.value=true;error.value='';progress.value='Downloading update…';
- try{await installBetaUpdate(candidate,()=>invoke('prepare_update'),relaunch,(event)=>{
-  const item=event as DownloadEvent;
-  if(item.event==='Finished')progress.value='Installing and restarting…';
- },()=>invoke('resume_after_failed_update'));}
- catch(e){error.value=`Update failed: ${String(e)}`;progress.value='';busy.value=false;}
+
+async function install() {
+  if (!update.value || installing.value) return;
+  installing.value = true;
+  error.value = '';
+  progress.value = null;
+  try {
+    // On success the host restarts Agent Time, so nothing after this normally runs.
+    await installBetaUpdate(await tauriUpdaterBridge(), (next) => {
+      progress.value = next;
+    });
+  } catch (cause) {
+    error.value = `Update failed: ${humanizeError(cause)} Capture continues normally.`;
+    installing.value = false;
+    progress.value = null;
+  }
 }
-function checkOnReturn(){if(document.visibilityState==='visible'&&Date.now()-lastCheck>3_600_000)void checkNow();}
-onMounted(()=>{void checkNow();void listen<string>('update-available',()=>{void checkNow();}).then(dispose=>{if(unmounted)dispose();else unlisten=dispose;});window.addEventListener('focus',checkOnReturn);document.addEventListener('visibilitychange',checkOnReturn);});
-onUnmounted(()=>{unmounted=true;unlisten?.();window.removeEventListener('focus',checkOnReturn);document.removeEventListener('visibilitychange',checkOnReturn);if(!busy.value)void update.value?.close();});
+
+function checkOnReturn() {
+  if (document.visibilityState === 'visible' && Date.now() - lastCheck > 3_600_000) void checkNow();
+}
+
+onMounted(async () => {
+  void checkNow();
+  window.addEventListener('focus', checkOnReturn);
+  document.addEventListener('visibilitychange', checkOnReturn);
+  if (!native) return;
+  const { listen } = await import('@tauri-apps/api/event');
+  const dispose = await listen('update-available', () => void checkNow());
+  if (unmounted) dispose();
+  else unlistenAvailable = dispose;
+});
+onUnmounted(() => {
+  unmounted = true;
+  unlistenAvailable?.();
+  window.removeEventListener('focus', checkOnReturn);
+  document.removeEventListener('visibilitychange', checkOnReturn);
+});
 </script>
+
 <template>
-<div v-if="update||error" class="beta-update" role="status">
- <template v-if="update"><strong>Agent Time {{update.version}} is available</strong><span>{{update.body||'A beta update is ready.'}}</span><button :disabled="busy" @click="install">{{busy?progress:'Install and restart'}}</button></template>
- <template v-else><span>Update check unavailable. Capture continues normally.</span><button :disabled="busy" @click="checkNow">Retry</button><details class="beta-update-error"><summary>Technical details</summary>{{error}}</details></template>
- <span v-if="error&&update" class="beta-update-error" role="alert">{{error}}</span>
-</div>
+  <div v-if="update || error" class="beta-update" role="status">
+    <template v-if="update">
+      <strong>Agent Time {{ update.version }} is available</strong>
+      <span>{{ update.body || `You have ${update.currentVersion}. A beta update is ready.` }}</span>
+      <button class="btn btn-primary" :disabled="installing" @click="install">
+        {{ installing ? progressLabel(progress) : 'Install and restart' }}
+      </button>
+      <span v-if="error" class="beta-update-error" role="alert">{{ error }}</span>
+    </template>
+    <template v-else>
+      <span>Update check unavailable. Capture continues normally.</span>
+      <button class="btn" :disabled="checking" @click="checkNow">Retry</button>
+      <details class="beta-update-error">
+        <summary>Details</summary>
+        {{ error }}
+      </details>
+    </template>
+  </div>
 </template>
+
 <style scoped>
-.beta-update{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:12px 20px;background:var(--panel);border-bottom:1px solid var(--border);font-size:12px}.beta-update span{flex:1;min-width:180px;color:var(--muted)}.beta-update button{padding:7px 10px;border-radius:6px;background:var(--blue);color:white}.beta-update button:disabled{opacity:.6}.beta-update-error{color:var(--muted)!important;flex-basis:100%}
+.beta-update {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  padding: var(--space-3) var(--space-5);
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  font-size: var(--text-sm);
+}
+.beta-update span {
+  flex: 1;
+  min-width: 180px;
+  color: var(--muted);
+}
+.beta-update-error {
+  flex-basis: 100%;
+  color: var(--muted);
+  font-size: var(--text-xs);
+}
 </style>

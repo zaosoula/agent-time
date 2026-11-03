@@ -1,33 +1,66 @@
-import {test} from 'node:test';
+import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import {installBetaUpdate} from '../src/ui/beta-updates.ts';
-test('an update stops capture only after a complete download, then restarts after install',async()=>{
- const calls:string[]=[];
- await installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');});
- assert.deepEqual(calls,['download','prepare','install','relaunch']);
+import {
+  checkBetaUpdate,
+  installBetaUpdate,
+  progressEvent,
+  progressLabel,
+  type BetaUpdateProgress,
+  type UpdaterBridge,
+} from '../src/ui/beta-updates.ts';
+
+function fakeBridge(results: Record<string, () => Promise<unknown>>, emitted: BetaUpdateProgress[] = []) {
+  const calls: string[] = [];
+  const bridge: UpdaterBridge = {
+    invoke: async <T>(command: string) => {
+      calls.push(command);
+      return (await results[command]!()) as T;
+    },
+    listen: async <T>(event: string, handler: (payload: T) => void) => {
+      calls.push(`listen:${event}`);
+      for (const item of emitted) handler(item as T);
+      return () => calls.push(`unlisten:${event}`);
+    },
+  };
+  return { bridge, calls };
+}
+
+test('checking asks the host for an available beta update', async () => {
+  const update = { version: '0.2.0-beta.19', currentVersion: '0.2.0-beta.18', body: 'Fixes', date: 1_700_000_000 };
+  const { bridge, calls } = fakeBridge({ beta_update_check: async () => update });
+  assert.deepEqual(await checkBetaUpdate(bridge), update);
+  assert.deepEqual(calls, ['beta_update_check']);
 });
-test('a failed download keeps the collector running',async()=>{
- const calls:string[]=[];
- await assert.rejects(installBetaUpdate({download:async()=>{throw Error('offline');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');}),/offline/);
- assert.deepEqual(calls,[]);
+
+test('no update resolves to null', async () => {
+  const { bridge } = fakeBridge({ beta_update_check: async () => null });
+  assert.equal(await checkBetaUpdate(bridge), null);
 });
-test('a failed install relaunches the app so capture resumes',async()=>{
- const calls:string[]=[];
- await assert.rejects(installBetaUpdate({download:async()=>{},install:async()=>{throw Error('bad signature');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');}),/bad signature/);
- assert.deepEqual(calls,['prepare','relaunch']);
+
+test('install listens for progress, invokes the host install and stops listening', async () => {
+  const seen: BetaUpdateProgress[] = [];
+  const { bridge, calls } = fakeBridge({ beta_update_install: async () => undefined }, [
+    { event: 'Progress', downloaded: 50, total: 100 },
+    { event: 'Finished' },
+  ]);
+  await installBetaUpdate(bridge, (progress) => seen.push(progress));
+  assert.deepEqual(calls, [`listen:${progressEvent}`, 'beta_update_install', `unlisten:${progressEvent}`]);
+  assert.equal(seen.length, 2);
 });
-test('an interrupted download never stops capture',async()=>{
- const calls:string[]=[];
- await assert.rejects(installBetaUpdate({download:async()=>{throw new DOMException('Interrupted','AbortError');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');}),/Interrupted/);
- assert.deepEqual(calls,[]);
+
+test('a failed install rejects with the host error and still stops listening', async () => {
+  const { bridge, calls } = fakeBridge({
+    beta_update_install: async () => {
+      throw new Error('bad signature');
+    },
+  });
+  await assert.rejects(installBetaUpdate(bridge), /bad signature/);
+  assert.equal(calls.at(-1), `unlisten:${progressEvent}`);
 });
-test('a failed preparation relaunches the app because capture may already be stopped',async()=>{
- const calls:string[]=[];
- await assert.rejects(installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');throw Error('collector flush failed');},async()=>{calls.push('relaunch');}),/collector flush failed/);
- assert.deepEqual(calls,['download','prepare','relaunch']);
-});
-test('a failed relaunch resumes the collector in the still-open app',async()=>{
- const calls:string[]=[];
- await assert.rejects(installBetaUpdate({download:async()=>{calls.push('download');},install:async()=>{calls.push('install');}},async()=>{calls.push('prepare');},async()=>{calls.push('relaunch');throw Error('relaunch denied');},undefined,async()=>{calls.push('recover');}),/relaunch denied/);
- assert.deepEqual(calls,['download','prepare','install','relaunch','recover']);
+
+test('progress labels report percentage when the size is known', () => {
+  assert.equal(progressLabel(null), 'Preparing update…');
+  assert.equal(progressLabel({ event: 'Progress', downloaded: 25, total: 100 }), 'Downloading… 25%');
+  assert.equal(progressLabel({ event: 'Progress', downloaded: 25, total: null }), 'Downloading…');
+  assert.equal(progressLabel({ event: 'Finished' }), 'Installing and restarting…');
 });
