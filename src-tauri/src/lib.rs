@@ -1,4 +1,4 @@
-use std::{collections::HashMap, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, ChildStdin, ChildStdout, Command, Stdio}, sync::{Arc, Mutex, atomic::{AtomicBool, AtomicU64, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
+use std::{collections::HashMap, io::{BufRead, BufReader, Write}, path::PathBuf, process::{Child, ChildStdin, ChildStdout, Command, Stdio}, sync::{Arc, Condvar, Mutex, atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering}}, time::{Duration, Instant, SystemTime, UNIX_EPOCH}};
 use tauri::{Manager, State};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_dialog::DialogExt;
@@ -35,20 +35,49 @@ impl LaunchSpec {
   Ok((child,input,output))
  }
 }
-struct RestartState {attempts:u8,window:Instant,closed:bool}
+struct RestartState {attempts:u8,window:Instant,closed:bool,restarting:bool}
 fn pause_deadline(path:&std::path::Path)->Option<SystemTime>{
  let seconds=std::fs::read_to_string(path).ok()?.trim().parse::<u64>().ok()?;
  let deadline=UNIX_EPOCH.checked_add(Duration::from_secs(seconds))?;
  (deadline>SystemTime::now()).then_some(deadline)
 }
-struct Bridge { child: Mutex<Child>, input: Mutex<ChildStdin>, pending: Pending, counter: AtomicU64, launch:LaunchSpec, reader:Mutex<Option<std::thread::JoinHandle<()>>>, restart:Mutex<RestartState>, desired_running:AtomicBool }
+/// Default reply deadline for interactive requests.
+const REQUEST_TIMEOUT:Duration=Duration::from_secs(45);
+/// Reply deadline for operations that copy, vacuum or rewrite the database,
+/// or wait on the network. These legitimately run for minutes on large stores.
+const LONG_REQUEST_TIMEOUT:Duration=Duration::from_secs(15*60);
+/// How long a caller waits for an in-progress collector restart before
+/// getting a "restarting" error instead of queueing behind it.
+const RESTART_WAIT:Duration=Duration::from_secs(5);
+/// Reply deadline for the best-effort `stop` sent while the app exits.
+const SHUTDOWN_STOP_TIMEOUT:Duration=Duration::from_secs(3);
+fn is_long_request(method:&str)->bool{
+ matches!(method,
+  "storage_compact_prepare"|"storage_restore_prepare"|"storage_reclaim"|"export_archive"
+  |"archive_import"|"archive_preview"|"tracking_cleanup"|"linear_sync"|"linear_connect")
+}
+fn request_timeout(method:&str)->Duration{
+ if is_long_request(method){LONG_REQUEST_TIMEOUT}else{REQUEST_TIMEOUT}
+}
+/// Kill the collector together with its process group (Orca, keychain and
+/// probe helpers it spawned) and reap it.
+fn kill_owned(child:&mut Child){
+ #[cfg(unix)] unsafe { libc::kill(-(child.id() as i32), libc::SIGKILL); }
+ let _=child.kill();
+ let _=child.wait();
+}
+struct Bridge {
+ child: Mutex<Child>, input: Mutex<ChildStdin>, pending: Pending, counter: AtomicU64, launch:LaunchSpec,
+ reader:Mutex<Option<std::thread::JoinHandle<()>>>, restart:Mutex<RestartState>, restart_done:Condvar,
+ desired_running:AtomicBool, long_inflight:AtomicUsize,
+}
 impl Bridge {
  fn start(app: &tauri::App) -> Result<Self, String> {
   let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
   let packaged=std::env::current_exe().map_err(|e|e.to_string())?.parent().unwrap().to_path_buf();
   let dev=cfg!(debug_assertions);
   let resources=app.path().resource_dir().map_err(|e|e.to_string())?;
-  let node=if dev { root.join("src-tauri/binaries/node-aarch64-apple-darwin") } else { packaged.join("node") };
+  let node=if dev { dev_node(&root) } else { packaged.join("node") };
   let helper=if dev { root.join(".capture/bin/activity-probe") } else { packaged.join("agent-activity") };
   let keychain=if dev { root.join(".capture/bin/linear-keychain") } else { packaged.join("linear-keychain") };
   let cli=if dev { root.join("src/capture/cli.ts") } else { resources.join("capture/cli.ts") };
@@ -61,7 +90,13 @@ impl Bridge {
   let (child,input,output)=launch.spawn()?;
   let pending:Pending=Arc::new(Mutex::new(HashMap::new()));
   let reader=Self::read_replies(output,pending.clone());
-  Ok(Self{child:Mutex::new(child),input:Mutex::new(input),pending,counter:AtomicU64::new(0),launch,reader:Mutex::new(Some(reader)),restart:Mutex::new(RestartState{attempts:0,window:Instant::now(),closed:false}),desired_running:AtomicBool::new(desired_running)})
+  Ok(Self{
+   child:Mutex::new(child),input:Mutex::new(input),pending,counter:AtomicU64::new(0),launch,
+   reader:Mutex::new(Some(reader)),
+   restart:Mutex::new(RestartState{attempts:0,window:Instant::now(),closed:false,restarting:false}),
+   restart_done:Condvar::new(),
+   desired_running:AtomicBool::new(desired_running),long_inflight:AtomicUsize::new(0),
+  })
  }
  fn read_replies(output:ChildStdout,readers:Pending)->std::thread::JoinHandle<()> {
   std::thread::spawn(move || {
@@ -75,36 +110,93 @@ impl Bridge {
    for (_,tx) in readers.lock().unwrap().drain(){let _=tx.send(Err("Collector exited; trying to restart".into()));}
   })
  }
+ fn child_alive(&self)->Result<bool,String>{
+  Ok(self.child.lock().map_err(|e|e.to_string())?.try_wait().map_err(|e|e.to_string())?.is_none())
+ }
+ /// Make sure a collector is running. The restart lock is only held for the
+ /// bookkeeping; the slow part (backoff, spawn, `start`) runs with the
+ /// `restarting` flag set so other callers wait at most RESTART_WAIT.
  fn ensure_live(&self)->Result<(),String>{
   let mut restart=self.restart.lock().map_err(|e|e.to_string())?;
+  if restart.restarting{
+   restart=self.restart_done.wait_timeout_while(restart,RESTART_WAIT,|state|state.restarting).map_err(|e|e.to_string())?.0;
+   if restart.restarting{return Err("Collector restarting; try again shortly".into());}
+  }
   if restart.closed{return Err("Collector stopped for update or exit".into());}
-  if self.child.lock().map_err(|e|e.to_string())?.try_wait().map_err(|e|e.to_string())?.is_none(){return Ok(());}
+  if self.child_alive()?{return Ok(());}
   if restart.window.elapsed()>Duration::from_secs(300){restart.window=Instant::now();restart.attempts=0;}
   if restart.attempts>=3{return Err("Collector repeatedly exited; reopen Agent Time to retry".into());}
   restart.attempts+=1;
-  if restart.attempts>1{std::thread::sleep(Duration::from_secs(1 << (restart.attempts-2)));}
+  let attempt=restart.attempts;
+  restart.restarting=true;
+  drop(restart);
+  let result=self.respawn(attempt);
+  if let Ok(mut restart)=self.restart.lock(){restart.restarting=false;}
+  self.restart_done.notify_all();
+  result
+ }
+ fn is_closed(&self)->bool{
+  self.restart.lock().map(|restart|restart.closed).unwrap_or(true)
+ }
+ fn respawn(&self,attempt:u8)->Result<(),String>{
+  if attempt>1{std::thread::sleep(Duration::from_secs(1 << (attempt-2)));}
+  if self.is_closed(){return Err("Collector stopped for update or exit".into());}
+  // The previous collector is dead (or was killed with its group), so its
+  // stdout reaches EOF and the reader thread ends promptly.
   if let Some(reader)=self.reader.lock().map_err(|e|e.to_string())?.take(){let _=reader.join();}
   let (child,input,output)=self.launch.spawn()?;
   *self.child.lock().map_err(|e|e.to_string())?=child;
   *self.input.lock().map_err(|e|e.to_string())?=input;
   *self.reader.lock().map_err(|e|e.to_string())?=Some(Self::read_replies(output,self.pending.clone()));
-  if self.desired_running.load(Ordering::Acquire){self.send("start",json!({})).map_err(|error|format!("Collector restarted but capture could not start: {error}"))?;}
+  // Shutdown may have run while we were spawning; never leave a collector
+  // behind once the bridge is closed.
+  if self.is_closed(){
+   if let Ok(mut child)=self.child.lock(){stop_owned(&mut child);}
+   return Err("Collector stopped for update or exit".into());
+  }
+  if self.desired_running.load(Ordering::Acquire){
+   self.send("start",json!({}),REQUEST_TIMEOUT).map_err(|error|format!("Collector restarted but capture could not start: {error}"))?;
+  }
   Ok(())
  }
- fn send(&self, method:&str, params:Value)->Result<Value,String>{
+ fn send(&self, method:&str, params:Value, timeout:Duration)->Result<Value,String>{
+  let long=is_long_request(method);
+  if long{self.long_inflight.fetch_add(1,Ordering::AcqRel);}
+  let result=self.send_inner(method,params,timeout,long);
+  if long{self.long_inflight.fetch_sub(1,Ordering::AcqRel);}
+  result
+ }
+ fn send_inner(&self, method:&str, params:Value, timeout:Duration, long:bool)->Result<Value,String>{
   let id=self.counter.fetch_add(1,Ordering::Relaxed).to_string();let (tx,rx)=std::sync::mpsc::channel();
   self.pending.lock().map_err(|e|e.to_string())?.insert(id.clone(),tx);
   let message=json!({"id":id,"method":method,"params":params}).to_string()+"\n";
   if let Err(e)=self.input.lock().map_err(|e|e.to_string())?.write_all(message.as_bytes()){self.pending.lock().unwrap().remove(&id);return Err(e.to_string());}
-  let timeout=if method=="storage_compact_prepare"{Duration::from_secs(300)}else{Duration::from_secs(45)};
-  let result=rx.recv_timeout(timeout);
+  let deadline=Instant::now()+timeout;
+  let result=loop {
+   let now=Instant::now();
+   if now>=deadline{break Err(std::sync::mpsc::RecvTimeoutError::Timeout);}
+   match rx.recv_timeout((deadline-now).min(Duration::from_secs(1))) {
+    Err(std::sync::mpsc::RecvTimeoutError::Timeout)=>{
+     // The reader may have drained pending replies before this request was
+     // registered; don't wait out the full deadline on a dead collector.
+     if !self.child_alive().unwrap_or(true){break Err(std::sync::mpsc::RecvTimeoutError::Disconnected);}
+    },
+    other=>break other,
+   }
+  };
   self.pending.lock().unwrap().remove(&id);
   match result {
    Ok(reply)=>reply,
    Err(std::sync::mpsc::RecvTimeoutError::Timeout)=>{
+    // A long operation (vacuum, archive copy, import) may legitimately keep
+    // the collector busy; never kill it under a long request because of an
+    // unrelated slow reply.
+    if !long && self.long_inflight.load(Ordering::Acquire)>0 {
+     return Err("Collector is busy with a storage operation; try again shortly".into());
+    }
     // A live but wedged sidecar cannot be restarted by ensure_live. Force its
     // next request through the same bounded recovery path as a crashed child.
-    if let Ok(mut child)=self.child.lock(){let _=child.kill();}
+    if let Ok(mut child)=self.child.lock(){kill_owned(&mut child);}
     Err("Collector request timed out; restarting capture on the next check".into())
    },
    Err(std::sync::mpsc::RecvTimeoutError::Disconnected)=>Err("Collector exited before replying".into()),
@@ -113,14 +205,20 @@ impl Bridge {
  fn request(&self, method:&str, params:Value)->Result<Value,String> {
   validate_method(method,&params)?;
   self.ensure_live()?;
-  let result=self.send(method,params)?;
+  let result=self.send(method,params,request_timeout(method))?;
   if method=="stop"{self.desired_running.store(false,Ordering::Release);}
   if method=="start"{self.desired_running.store(true,Ordering::Release);}
   Ok(result)
  }
+ /// Stop the collector without ever respawning it: close the bridge first,
+ /// send a short best-effort `stop` if it is alive, then SIGTERM its process
+ /// group and SIGKILL after a grace period.
  fn shutdown(&self) {
-  let _=self.request("stop",json!({}));
   if let Ok(mut restart)=self.restart.lock(){restart.closed=true;}
+  self.restart_done.notify_all();
+  if self.child_alive().unwrap_or(false){
+   let _=self.send("stop",json!({}),SHUTDOWN_STOP_TIMEOUT);
+  }
   if let Ok(mut child)=self.child.lock(){
    stop_owned(&mut child);
   }
@@ -138,14 +236,34 @@ impl Bridge {
   self.ensure_live()
  }
 }
+fn dev_node(root:&std::path::Path)->PathBuf{
+ root.join(format!("src-tauri/binaries/node-{}-apple-darwin",std::env::consts::ARCH))
+}
+fn is_date(value:&Value)->bool{
+ value.as_str().map(|date|date.len()==10&&date.bytes().enumerate().all(|(index,byte)|if index==4||index==7{byte==b'-'}else{byte.is_ascii_digit()})).unwrap_or(false)
+}
+/// Optional `date` (YYYY-MM-DD) on review mutations that return a refreshed summary.
+fn optional_date(params:&serde_json::Map<String,Value>)->bool{
+ params.get("date").map(is_date).unwrap_or(true)
+}
+fn linear_workspace(value:&str)->bool{
+ !value.is_empty()&&value.len()<=128&&value.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'_'||b==b'.')
+}
+fn website_pattern(value:&Value)->bool{
+ value.as_str().map(|text|text.len()<=512).unwrap_or(false)
+}
+fn project_path(value:&Value)->bool{
+ value.as_str().map(|text|text.len()<=4096&&!text.contains('\0')).unwrap_or(false)
+}
 fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let p=params.as_object().ok_or("Expected object parameters")?;
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
  let source_setting=|key:&str|key.len()<=64&&key!="browserTracking"&&key.bytes().all(|b|b.is_ascii_alphanumeric())&&(key.starts_with("browser")&&key.as_bytes().get(7).map(|b|b.is_ascii_uppercase()).unwrap_or(false)||key.ends_with("Hooks")||key.ends_with("TokenUsage")||key.ends_with("Polling"));
  match method {
-  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"linear_sync"|"linear_disconnect"|"review_history" if p.is_empty()=>Ok(()),
-  "review_undo" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).unwrap_or(false)=>Ok(()),
-  "human_group_split" if p.len()>=2 && p.len()<=4 && p.get("splitAt").and_then(Value::as_f64).map(f64::is_finite).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false) && ["beforeProject","afterProject"].iter().all(|key|p.get(*key).map(|value|value.as_str().is_some()).unwrap_or(true)) && p.keys().all(|key|["pairs","splitAt","beforeProject","afterProject"].contains(&key.as_str()))=>Ok(()),
+  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"review_history" if p.is_empty()=>Ok(()),
+  "linear_sync"|"linear_disconnect" if p.is_empty() || p.len()==1 && p.get("workspaceId").and_then(Value::as_str).map(linear_workspace).unwrap_or(false)=>Ok(()),
+  "review_undo" if p.len()==1+usize::from(p.contains_key("date")) && optional_date(p) && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).unwrap_or(false)=>Ok(()),
+  "human_group_split" if p.len()>=2 && p.len()<=5 && optional_date(p) && p.get("splitAt").and_then(Value::as_f64).map(f64::is_finite).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false) && ["beforeProject","afterProject"].iter().all(|key|p.get(*key).map(|value|value.as_str().is_some()).unwrap_or(true)) && p.keys().all(|key|["pairs","splitAt","beforeProject","afterProject","date"].contains(&key.as_str()))=>Ok(()),
   "day_review_status"|"day_review_mark"|"reported_work"|"work_outcomes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|date.len()==10&&date.bytes().enumerate().all(|(index,byte)|if index==4||index==7{byte==b'-'}else{byte.is_ascii_digit()})).unwrap_or(false)=>Ok(()),
   "archive_preview"|"archive_import" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "archive_delete" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
@@ -157,10 +275,9 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "manual_note_add" if p.len()==4 && p.get("start").and_then(Value::as_f64).zip(p.get("end").and_then(Value::as_f64)).map(|(start,end)|start.is_finite()&&end.is_finite()&&end>start&&end-start<=86400.0).unwrap_or(false) && p.get("project").and_then(Value::as_str).map(|value|value.len()<=256).unwrap_or(false) && p.get("note").and_then(Value::as_str).map(|value|!value.trim().is_empty()&&value.len()<=500).unwrap_or(false)=>Ok(()),
   "manual_note_remove" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.bytes().all(|byte|byte.is_ascii_hexdigit()||byte==b'-')).unwrap_or(false)=>Ok(()),
   "linear_connect" if p.len()==1 && p.get("clientId").and_then(Value::as_str).map(|v|v.len()>=8&&v.len()<=128&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')).unwrap_or(false)=>Ok(()),
-  "website_rule_set" if p.len()==2 && p.get("pattern").and_then(Value::as_str).is_some() && p.get("projectPath").and_then(Value::as_str).is_some()=>Ok(()),
-  "website_rule_preview" if p.len()==2 && p.get("pattern").and_then(Value::as_str).is_some() && p.get("projectPath").and_then(Value::as_str).is_some()=>Ok(()),
-  "website_rule_remove" if p.len()==1 && p.get("pattern").and_then(Value::as_str).is_some()=>Ok(()),
-  "human_decision_set" if (p.len()==2||p.len()==3) && p.get("mode").and_then(Value::as_str).map(|mode|match mode {"assigned"=>p.len()==3&&p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>p.len()==2,_=>false}).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false)=>Ok(()),
+  "website_rule_set"|"website_rule_preview" if p.len()==2 && p.get("pattern").map(website_pattern).unwrap_or(false) && p.get("projectPath").map(project_path).unwrap_or(false)=>Ok(()),
+  "website_rule_remove" if p.len()==1 && p.get("pattern").map(website_pattern).unwrap_or(false)=>Ok(()),
+  "human_decision_set" if optional_date(p) && p.get("mode").and_then(Value::as_str).map(|mode|{let base=p.len()-usize::from(p.contains_key("date"));match mode {"assigned"=>base==3&&p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>base==2,_=>false}}).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false)=>Ok(()),
   "tracking_cleanup" if p.len()==1 && p.get("confirmed")==Some(&Value::Bool(true))=>Ok(()),
   "hooks_install" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(source_id).unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
   "mcp_install"|"mcp_remove" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(|id|id=="claude"||id=="codex").unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
@@ -250,22 +367,31 @@ async fn save_support_bundle(app:tauri::AppHandle,bridge:State<'_,Arc<Bridge>>)-
   Ok(true)
  }).await.map_err(|e|e.to_string())?
 }
-#[tauri::command]
-fn open_accessibility_settings()->Result<(),String>{
- std::process::Command::new("/usr/bin/open").arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility").status().map_err(|e|e.to_string()).and_then(|s|if s.success(){Ok(())}else{Err("Could not open System Settings".into())})
+fn open_url(target:&'static str,failure:&'static str)->Result<(),String>{
+ std::process::Command::new("/usr/bin/open").arg(target).status().map_err(|e|e.to_string())
+  .and_then(|s|if s.success(){Ok(())}else{Err(failure.into())})
 }
 #[tauri::command]
-fn open_linear_oauth_settings()->Result<(),String>{
- std::process::Command::new("/usr/bin/open").arg("https://linear.app/settings/api/applications/new").status().map_err(|e|e.to_string()).and_then(|s|if s.success(){Ok(())}else{Err("Could not open Linear settings".into())})
+async fn open_accessibility_settings()->Result<(),String>{
+ tauri::async_runtime::spawn_blocking(||open_url("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility","Could not open System Settings"))
+  .await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
-fn startup_item(operation:String)->Result<Value,String>{
+async fn open_linear_oauth_settings()->Result<(),String>{
+ tauri::async_runtime::spawn_blocking(||open_url("https://linear.app/settings/api/applications/new","Could not open Linear settings"))
+  .await.map_err(|e|e.to_string())?
+}
+fn run_startup_item(operation:String)->Result<Value,String>{
  if !["status","enable","disable","settings"].contains(&operation.as_str()){return Err("Unsupported startup operation".into());}
  if cfg!(debug_assertions){return Err("Login item controls require the packaged app".into());}
  let helper=std::env::current_exe().map_err(|e|e.to_string())?.parent().ok_or("Missing app executable directory")?.join("startup-item");
  let output=Command::new(helper).arg(operation).output().map_err(|e|e.to_string())?;
  if !output.status.success(){return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());}
  serde_json::from_slice(&output.stdout).map_err(|e|e.to_string())
+}
+#[tauri::command]
+async fn startup_item(operation:String)->Result<Value,String>{
+ tauri::async_runtime::spawn_blocking(move||run_startup_item(operation)).await.map_err(|e|e.to_string())?
 }
 #[tauri::command]
 async fn prepare_update(bridge:State<'_,Arc<Bridge>>)->Result<(),String>{
@@ -291,6 +417,7 @@ pub fn run(){
   }
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
   let init=bridge.clone();std::thread::spawn(move||{if init.desired_running.load(Ordering::Acquire){let _=init.request("start",json!({}));}});app.manage(bridge.clone());tray::install(app,bridge)?;
+  app.manage(updates::PendingUpdate::default());
   if option_env!("AGENT_TIME_BETA")==Some("1") { updates::start(app.handle().clone()); }
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;
   let quit=tauri::menu::PredefinedMenuItem::quit(app,Some("Quit Agent Time"))?;
@@ -305,8 +432,13 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update,resume_after_failed_update]).build(tauri::generate_context!()).expect("Agent Time could not start")
- .run(|app,event|{match event{tauri::RunEvent::Exit=>{if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);tray.publish_stopped();}if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}},tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
+ .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update,resume_after_failed_update,updates::beta_update_check,updates::beta_update_install]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .run(|app,event|{match event{tauri::RunEvent::Exit=>{
+  // Close the bridge first so nothing respawns the collector while exiting.
+  if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);}
+  if let Some(bridge)=app.try_state::<Arc<Bridge>>(){bridge.shutdown();}
+  if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.publish_stopped();}
+ },tauri::RunEvent::Reopen{..}=>{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}},_=>{}}});
 }
 #[cfg(test)]mod tests{use super::*;#[test]fn restricted_protocol(){assert!(validate_method("diagnostics",&json!({})).is_ok());assert!(validate_method("diagnostics",&json!({"includeRawEvents":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite","confirmed":true})).is_ok());assert!(validate_method("archive_delete",&json!({"id":"../events.sqlite","confirmed":true})).is_err());assert!(validate_method("archive_delete",&json!({"id":"agent-time-2026-10-20T12-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite"})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true})).is_ok());assert!(validate_method("tracking_cleanup",&json!({"confirmed":false})).is_err());assert!(validate_method("tracking_cleanup",&json!({"confirmed":true,"path":"/tmp"})).is_err());assert!(validate_method("tracking_cleanup_preview",&json!({})).is_ok());assert!(validate_method("exec",&json!({"command":"anything"})).is_err());assert!(validate_method("start",&json!({})).is_ok());assert!(validate_method("start",&json!({"durationSeconds":-1})).is_err());assert!(validate_method("start",&json!({"durationSeconds":5,"path":"/tmp"})).is_err());assert!(validate_method("summary",&json!({})).is_ok());assert!(validate_method("summary",&json!({"date":"2026-10-14"})).is_ok());assert!(validate_method("summary",&json!({"date":"yesterday"})).is_err());assert!(validate_method("capture_health",&json!({})).is_ok());assert!(validate_method("capture_health",&json!({"limit":10000})).is_err());assert!(validate_method("website_projects",&json!({})).is_ok());assert!(validate_method("website_projects",&json!({"path":"/tmp"})).is_err());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp"})).is_ok());assert!(validate_method("website_rule_set",&json!({"pattern":"http://localhost:1420","projectPath":"/tmp","extra":true})).is_err());assert!(validate_method("website_rule_remove",&json!({"pattern":"http://localhost:1420"})).is_ok());assert!(validate_method("settings",&json!({"macosActivity":false,"claudeHooks":true,"codexHooks":false,"orcaPolling":true})).is_ok());assert!(validate_method("settings",&json!({"humanIdleMinutes":5})).is_ok());assert!(validate_method("settings",&json!({"orcaPolling":"yes"})).is_err());assert!(validate_method("settings",&json!({"path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"claude"})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["0123456789abcdef"]})).is_ok());assert!(validate_method("hooks_install",&json!({"provider":"codex","targetIds":["../other"]})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"codex","path":"/tmp"})).is_err());assert!(validate_method("hooks_install",&json!({"provider":"../other"})).is_err());assert!(validate_method("hooks_verify",&json!({})).is_ok());}}
 #[cfg(test)]mod mcp_protocol_tests{use super::*;#[test]fn mcp_methods_are_bounded(){
@@ -384,7 +516,7 @@ const fs=require('fs'),readline=require('readline'),root=process.argv[process.ar
 readline.createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);fs.appendFileSync(root+'/requests',request.method+'\n');process.stdout.write(JSON.stringify({id:request.id,result:{running:request.method==='start'}})+'\n');});
 "#).unwrap();
   let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-  let launch=LaunchSpec{node:root.join("src-tauri/binaries/node-aarch64-apple-darwin"),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
   let bridge=Bridge::from_launch(launch).unwrap();
   assert!(bridge.recover_from_update().is_err());
   bridge.request("start",json!({})).unwrap();
@@ -411,7 +543,7 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
 });
 "#).unwrap();
   let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-  let launch=LaunchSpec{node:root.join("src-tauri/binaries/node-aarch64-apple-darwin"),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
   let bridge=Bridge::from_launch(launch).unwrap();
   assert_eq!(bridge.request("status",json!({})).unwrap()["method"],"status");
   std::thread::sleep(Duration::from_millis(100));
@@ -424,13 +556,32 @@ readline.createInterface({input:process.stdin}).on('line',line=>{
   assert_eq!(requests.lines().filter(|method|*method=="start").count(),1,"paused capture must stay paused after recovery");
   bridge.shutdown();let _=std::fs::remove_dir_all(directory);
  }
+ #[test] fn shutdown_never_respawns_a_dead_collector() {
+  let directory=std::env::temp_dir().join(format!("agent-time-shutdown-dead-{}",std::process::id()));
+  let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
+  let script=directory.join("collector.cjs");
+  std::fs::write(&script,"require('fs').appendFileSync(process.argv[process.argv.indexOf('--output')+1]+'/spawns','x\\n');process.stdin.resume();").unwrap();
+  let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let bridge=Bridge::from_launch(launch).unwrap();
+  let spawned=Instant::now();
+  while !directory.join("spawns").exists()&&spawned.elapsed()<Duration::from_secs(5){std::thread::sleep(Duration::from_millis(20));}
+  {let mut child=bridge.child.lock().unwrap();kill_owned(&mut child);}
+  let started=Instant::now();
+  bridge.shutdown();
+  assert!(started.elapsed()<Duration::from_secs(2),"exit must not wait on a dead collector");
+  assert!(bridge.request("status",json!({})).is_err());
+  std::thread::sleep(Duration::from_millis(200));
+  assert_eq!(std::fs::read_to_string(directory.join("spawns")).unwrap().lines().count(),1);
+  let _=std::fs::remove_dir_all(directory);
+ }
  #[test] fn repeated_collector_crashes_stop_after_three_restarts() {
   let directory=std::env::temp_dir().join(format!("agent-time-restart-limit-{}",std::process::id()));
   let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
   let script=directory.join("collector.cjs");
   std::fs::write(&script,"process.stdin.resume();process.stdin.once('data',()=>process.exit(1));").unwrap();
   let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
-  let launch=LaunchSpec{node:root.join("src-tauri/binaries/node-aarch64-apple-darwin"),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
   let bridge=Bridge::from_launch(launch).unwrap();
   for _ in 0..4 {assert!(bridge.request("status",json!({})).is_err());}
   assert!(bridge.request("status",json!({})).unwrap_err().contains("repeatedly exited"));
@@ -469,5 +620,49 @@ mod archive_stage_tests {
   huge.set_len(8*1024*1024*1024+1).unwrap();
   assert!(stage_archive_copy(&source,&root).unwrap_err().contains("8 GB"));
   std::fs::remove_dir_all(root).unwrap();
+ }
+}
+
+#[cfg(test)]
+mod audit_protocol_tests {
+ use super::*;
+ #[test]
+ fn linear_workspace_is_optional_and_bounded() {
+  for method in ["linear_sync","linear_disconnect"] {
+   assert!(validate_method(method,&json!({})).is_ok());
+   assert!(validate_method(method,&json!({"workspaceId":"8f2c1a9e-1234-4abc-9def-0123456789ab"})).is_ok());
+   assert!(validate_method(method,&json!({"workspaceId":""})).is_err());
+   assert!(validate_method(method,&json!({"workspaceId":"a".repeat(129)})).is_err());
+   assert!(validate_method(method,&json!({"workspaceId":"../x y"})).is_err());
+   assert!(validate_method(method,&json!({"workspaceId":"abc","extra":1})).is_err());
+  }
+ }
+ #[test]
+ fn website_rules_are_length_capped() {
+  assert!(validate_method("website_rule_set",&json!({"pattern":"a".repeat(513),"projectPath":"/tmp"})).is_err());
+  assert!(validate_method("website_rule_preview",&json!({"pattern":"example.com","projectPath":"/".repeat(4097)})).is_err());
+  assert!(validate_method("website_rule_preview",&json!({"pattern":"example.com","projectPath":"/tmp"})).is_ok());
+  assert!(validate_method("website_rule_remove",&json!({"pattern":"a".repeat(513)})).is_err());
+ }
+ #[test]
+ fn review_mutations_accept_an_optional_date() {
+  let pairs=json!([["a","b"]]);
+  assert!(validate_method("human_decision_set",&json!({"pairs":pairs,"mode":"assigned","projectPath":"/p","date":"2026-11-02"})).is_ok());
+  assert!(validate_method("human_decision_set",&json!({"pairs":pairs,"mode":"clear","date":"2026-11-02"})).is_ok());
+  assert!(validate_method("human_decision_set",&json!({"pairs":pairs,"mode":"clear","date":"today"})).is_err());
+  assert!(validate_method("human_decision_set",&json!({"pairs":pairs,"mode":"clear","projectPath":"/p","date":"2026-11-02"})).is_err());
+  let id="12345678-1234-1234-1234-123456789abc";
+  assert!(validate_method("review_undo",&json!({"id":id})).is_ok());
+  assert!(validate_method("review_undo",&json!({"id":id,"date":"2026-11-02"})).is_ok());
+  assert!(validate_method("review_undo",&json!({"id":id,"date":"2026/11/02"})).is_err());
+  assert!(validate_method("review_undo",&json!({"id":id,"other":"2026-11-02"})).is_err());
+  assert!(validate_method("human_group_split",&json!({"pairs":pairs,"splitAt":1.0,"beforeProject":"/a","afterProject":"/b","date":"2026-11-02"})).is_ok());
+  assert!(validate_method("human_group_split",&json!({"pairs":pairs,"splitAt":1.0,"date":"x"})).is_err());
+ }
+ #[test]
+ fn long_operations_get_long_deadlines() {
+  assert_eq!(request_timeout("storage_compact_prepare"),LONG_REQUEST_TIMEOUT);
+  assert_eq!(request_timeout("archive_import"),LONG_REQUEST_TIMEOUT);
+  assert_eq!(request_timeout("status"),REQUEST_TIMEOUT);
  }
 }

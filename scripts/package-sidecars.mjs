@@ -1,5 +1,16 @@
-import { mkdirSync, copyFileSync, cpSync, writeFileSync, chmodSync } from 'node:fs';
+import { mkdirSync, copyFileSync, cpSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
+import { checkBundledNode } from './node-runtime.mjs';
+// The running Node binary is copied into the app. Refuse one that does not
+// match the supported engine or links non-system libraries (e.g. Homebrew's
+// shared libnode/ICU), which would fail on machines without them.
+const engines=JSON.parse(readFileSync('package.json','utf8')).engines?.node;
+const nodeProblems=checkBundledNode({version:process.versions.node,engines,arch:process.arch,libraries:execFileSync('otool',['-L',process.execPath],{encoding:'utf8'})});
+if(nodeProblems.length){
+ const message=`Cannot bundle ${process.execPath} (Node ${process.version}):\n - ${nodeProblems.join('\n - ')}`;
+ if(process.env.AGENT_TIME_ALLOW_NODE==='1')console.warn(`warning: ${message}`);
+ else throw new Error(`${message}\nInstall the official Node build for this version, or set AGENT_TIME_ALLOW_NODE=1 to override.`);
+}
 const target=execFileSync('rustc',['-vV'],{encoding:'utf8'}).match(/^host: (.+)$/m)[1];
 // Bundled Node requires macOS 13.5. Keep Swift helpers at the same deployment
 // floor instead of inheriting the release machine's current macOS version.

@@ -30,7 +30,17 @@ case "write":
     if status == errSecItemNotFound {
         var item = query
         item[kSecValueData as String] = data
+        // Keep the token usable by the background collector after the first
+        // unlock, but never migrate to other devices. The item stays in the
+        // login (file) keychain: the data-protection keychain needs a
+        // keychain-access-groups entitlement this unsigned helper lacks, and
+        // moving there would orphan tokens already stored.
+        item[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         status = SecItemAdd(item as CFDictionary, nil)
+        if status == errSecParam {
+            item.removeValue(forKey: kSecAttrAccessible as String)
+            status = SecItemAdd(item as CFDictionary, nil)
+        }
     }
 case "delete":
     status = SecItemDelete(query as CFDictionary)

@@ -3,7 +3,28 @@ import CoreGraphics
 import ApplicationServices
 import Foundation
 
+// Bound every cross-process accessibility call. The default messaging timeout
+// is 6s, so a busy target app could stall the 2s sampling loop for minutes.
+private let axMessagingTimeout: Float = 0.25
+// Wall-clock budget for one tree scan; once exceeded, attribute reads fail
+// fast and the scan returns what it found (usually nothing, i.e. unknown).
+private let axScanBudget: TimeInterval = 1.5
+private var axDeadline = Date.distantFuture
+
+private func applicationElement(_ pid: pid_t) -> AXUIElement {
+    let element = AXUIElementCreateApplication(pid)
+    AXUIElementSetMessagingTimeout(element, axMessagingTimeout)
+    return element
+}
+
+private func withScanBudget<T>(_ body: () -> T) -> T {
+    axDeadline = Date().addingTimeInterval(axScanBudget)
+    defer { axDeadline = .distantFuture }
+    return body()
+}
+
 private func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
+    if axDeadline != .distantFuture, Date() > axDeadline { return nil }
     var value: CFTypeRef?
     return AXUIElementCopyAttributeValue(element, name as CFString, &value) == .success ? value : nil
 }
@@ -28,7 +49,7 @@ private func tabLabel(_ element: AXUIElement, depth: Int = 0) -> String? {
 }
 
 private func focusedOrcaTab(_ app: NSRunningApplication) -> String? {
-    let root = AXUIElementCreateApplication(app.processIdentifier)
+    let root = applicationElement(app.processIdentifier)
     guard let rawWindow = attribute(root, kAXFocusedWindowAttribute),
           CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else { return nil }
     let window = unsafeBitCast(rawWindow, to: AXUIElement.self)
@@ -85,7 +106,7 @@ private func focusedOrcaTab(_ app: NSRunningApplication) -> String? {
 }
 
 private func selectedOrcaWorktree(_ app: NSRunningApplication) -> String? {
-    let root = AXUIElementCreateApplication(app.processIdentifier)
+    let root = applicationElement(app.processIdentifier)
     guard let rawWindow = attribute(root, kAXFocusedWindowAttribute),
           CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else { return nil }
     let window = unsafeBitCast(rawWindow, to: AXUIElement.self)
@@ -143,7 +164,7 @@ private func browserEnabled(_ bundle: String) -> Bool {
 
 private func browserPage(_ app: NSRunningApplication) -> [String: String]? {
     guard let bundle = app.bundleIdentifier, browserEnabled(bundle) else { return nil }
-    let root = AXUIElementCreateApplication(app.processIdentifier)
+    let root = applicationElement(app.processIdentifier)
     guard let rawWindow = attribute(root, kAXFocusedWindowAttribute),
           CFGetTypeID(rawWindow) == AXUIElementGetTypeID() else { return nil }
     let window = unsafeBitCast(rawWindow, to: AXUIElement.self)
@@ -184,6 +205,43 @@ private func browserPage(_ app: NSRunningApplication) -> [String: String]? {
     return pages.count == 1 ? pages.first : nil
 }
 
+// Orca's tab strip and worktree list sit deep in an Electron accessibility
+// tree (thousands of nodes). Scan it only when the focused window, its title
+// or the focused element changes, or at most every orcaRescanInterval; the
+// 2s sample reuses the cached result in between.
+private let orcaRescanInterval: TimeInterval = 10
+private struct OrcaScan {
+    let pid: pid_t
+    let windowTitle: String?
+    let focused: AXUIElement?
+    let scannedAt: Date
+    let tab: String?
+    let worktree: String?
+}
+private var orcaCache: OrcaScan?
+
+private func focusedElement(_ root: AXUIElement, _ name: String) -> AXUIElement? {
+    guard let raw = attribute(root, name), CFGetTypeID(raw) == AXUIElementGetTypeID() else { return nil }
+    return unsafeBitCast(raw, to: AXUIElement.self)
+}
+
+private func orcaContext(_ app: NSRunningApplication) -> (window: String?, tab: String?, worktree: String?) {
+    let root = applicationElement(app.processIdentifier)
+    let window = focusedElement(root, kAXFocusedWindowAttribute)
+    let title = window.flatMap { attribute($0, kAXTitleAttribute) as? String }.map { String($0.prefix(180)) }
+    let focused = focusedElement(root, kAXFocusedUIElementAttribute)
+    let now = Date()
+    if let cached = orcaCache, cached.pid == app.processIdentifier, cached.windowTitle == title,
+       now.timeIntervalSince(cached.scannedAt) < orcaRescanInterval,
+       (cached.focused == nil && focused == nil) || (cached.focused != nil && focused != nil && CFEqual(cached.focused, focused)) {
+        return (title, cached.tab, cached.worktree)
+    }
+    let tab = withScanBudget { focusedOrcaTab(app) }
+    let worktree = withScanBudget { selectedOrcaWorktree(app) }
+    orcaCache = OrcaScan(pid: app.processIdentifier, windowTitle: title, focused: focused, scannedAt: now, tab: tab, worktree: worktree)
+    return (title, tab, worktree)
+}
+
 func emit(_ kind: String = "activity") {
     let app = NSWorkspace.shared.frontmostApplication
     let trusted = AXIsProcessTrusted()
@@ -195,21 +253,16 @@ func emit(_ kind: String = "activity") {
       "accessibilityTrusted": trusted]
     // Only window context for Orca, never field contents or a full accessibility tree.
     if trusted, let app = app, (app.bundleIdentifier ?? "").lowercased().contains("orca") {
-        if let tab = focusedOrcaTab(app) { record["orcaSelectedTabTitle"] = tab }
-        if let worktree = selectedOrcaWorktree(app) { record["orcaSelectedWorktreeId"] = worktree }
-        let ax = AXUIElementCreateApplication(app.processIdentifier)
-        var value: CFTypeRef?
-        if AXUIElementCopyAttributeValue(ax, kAXFocusedWindowAttribute as CFString, &value) == .success,
-           let value = value, CFGetTypeID(value) == AXUIElementGetTypeID() {
-            let window = unsafeBitCast(value, to: AXUIElement.self)
-            var title: CFTypeRef?
-            if AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &title) == .success,
-               let title = title as? String { record["orcaWindowTitle"] = String(title.prefix(180)) }
-        }
+        let context = orcaContext(app)
+        if let tab = context.tab { record["orcaSelectedTabTitle"] = tab }
+        if let worktree = context.worktree { record["orcaSelectedWorktreeId"] = worktree }
+        if let title = context.window { record["orcaWindowTitle"] = title }
+    } else {
+        orcaCache = nil
     }
     if trusted, let app, let bundle = app.bundleIdentifier,
        browserEnabled(bundle),
-       let page = browserPage(app) {
+       let page = withScanBudget({ browserPage(app) }) {
         record["browserDomain"] = page["domain"]
         record["browserUrl"] = page["url"]
         record["browserTitle"] = page["title"]
@@ -222,6 +275,7 @@ if CommandLine.arguments.contains("--trust-only") {
     print("{\"accessibilityTrusted\":\(AXIsProcessTrusted() ? "true" : "false")}")
     exit(0)
 }
+AXUIElementSetMessagingTimeout(AXUIElementCreateSystemWide(), axMessagingTimeout)
 emit()
 if !CommandLine.arguments.contains("--once") {
     let center = NSWorkspace.shared.notificationCenter

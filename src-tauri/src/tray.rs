@@ -1,7 +1,7 @@
 use super::{Bridge,pause_deadline};
 use serde_json::{json,Value};
-use std::{sync::{Arc,Mutex,atomic::{AtomicBool,Ordering}},time::{Duration,SystemTime,UNIX_EPOCH},path::PathBuf};
-use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem},tray::TrayIconBuilder};
+use std::{sync::{Arc,Condvar,Mutex,atomic::{AtomicBool,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH},path::PathBuf};
+use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem},tray::{TrayIconBuilder,TrayIconEvent}};
 use tauri_plugin_notification::NotificationExt;
 use crate::widget::WidgetPublisher;
 
@@ -9,7 +9,17 @@ pub struct TrayState {
  status:MenuItem<tauri::Wry>,today:MenuItem<tauri::Wry>,detail:MenuItem<tauri::Wry>,tokens:MenuItem<tauri::Wry>,toggle:MenuItem<tauri::Wry>,timed_pause:MenuItem<tauri::Wry>,
  busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,widget:WidgetPublisher,last_summary:Mutex<Option<Value>>,
  pause_until:Mutex<Option<SystemTime>>,pause_file:PathBuf,
+ /// Last observed capture state; paused capture is polled less often.
+ running:AtomicBool,
+ /// Set when the tray menu is about to open so the poller refreshes now.
+ wake:(Mutex<bool>,Condvar),
 }
+/// Tray status poll interval while capture runs.
+const POLL_RUNNING:Duration=Duration::from_secs(20);
+/// Tray status poll interval while capture is paused or unavailable.
+const POLL_PAUSED:Duration=Duration::from_secs(60);
+/// Minimum spacing between refreshes triggered by opening the menu.
+const WAKE_DEBOUNCE:Duration=Duration::from_secs(2);
 fn hook_warning_body(value:&Value,last:&mut Option<String>)->Option<String>{
  if value["running"].as_bool()!=Some(true){return None;}
  let Some(warning)=value.get("hookWarning").filter(|warning|!warning.is_null()) else{*last=None;return None;};
@@ -43,6 +53,7 @@ impl TrayState {
     self.widget.publish(&value,false);
     if let Ok(mut last)=self.last_summary.lock(){*last=Some(value.clone());}
     let running=value["running"].as_bool().unwrap_or(false);
+    self.running.store(running,Ordering::Release);
     if running{if let Ok(mut deadline)=self.pause_until.lock(){*deadline=None;}let _=std::fs::remove_file(&self.pause_file);}
     if let Some(body)=hook_warning_body(&value,&mut self.last_warning.lock().unwrap()){
      let _=app.notification().builder().title("Agent tracking may be idle").body(body).show();
@@ -56,8 +67,20 @@ impl TrayState {
     let _=self.tokens.set_text(format!("Tokens: {} · ${:.2} API equivalent{}",count,value["apiUsdToday"].as_f64().unwrap_or(0.0),if value["unpricedToday"].as_f64().unwrap_or(0.0)>0.0{" (partial)"}else{""}));
     let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);let _=self.timed_pause.set_enabled(running);
    },
-   Err(_)=>{if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);let _=self.timed_pause.set_enabled(false);}
+   Err(_)=>{self.running.store(false,Ordering::Release);if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);let _=self.timed_pause.set_enabled(false);}
   }
+ }
+ fn wake(&self){
+  if let Ok(mut flag)=self.wake.0.lock(){*flag=true;self.wake.1.notify_all();}
+ }
+ /// Sleep until the next poll, a timed-pause deadline, a menu-open wake, or
+ /// shutdown, whichever comes first.
+ fn wait_next(&self){
+  let interval=if self.running.load(Ordering::Acquire){POLL_RUNNING}else{POLL_PAUSED};
+  let until_resume=self.pause_until.lock().ok().and_then(|deadline|deadline.as_ref().map(|at|at.duration_since(SystemTime::now()).unwrap_or(Duration::ZERO)));
+  let timeout=until_resume.map(|remaining|remaining.min(interval)).unwrap_or(interval);
+  let Ok(flag)=self.wake.0.lock() else{std::thread::sleep(timeout);return;};
+  if let Ok((mut flag,_))=self.wake.1.wait_timeout_while(flag,timeout,|woken|!*woken&&!self.stopped.load(Ordering::Acquire)){*flag=false;}
  }
  pub fn publish_stopped(&self){
   let previous=self.last_summary.lock().ok().and_then(|last|last.clone());
@@ -84,16 +107,23 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let usage=MenuItem::with_id(app,"tray-usage","Tokens and limits…",true,None::<&str>)?;
  let quit=MenuItem::with_id(app,"tray-quit","Quit Agent Time",true,None::<&str>)?;
  let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&health,&repair,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
- TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true).build(app)?;
+ TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true)
+  .on_tray_icon_event(|tray,event|{
+   if matches!(event,TrayIconEvent::Click{..}|TrayIconEvent::Enter{..}){
+    if let Some(state)=tray.app_handle().try_state::<Arc<TrayState>>(){state.wake();}
+   }
+  })
+  .build(app)?;
  let pause_file=bridge.launch.output.join("pause-until");
  let pause_until=pause_deadline(&pause_file);
- let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file});
+ let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file,running:AtomicBool::new(true),wake:(Mutex::new(false),Condvar::new())});
  app.manage(state.clone());
  let handle=app.handle().clone();
- std::thread::spawn(move||{while !state.stopped.load(Ordering::Acquire){
+ std::thread::spawn(move||{let mut last_refresh:Option<Instant>=None;while !state.stopped.load(Ordering::Acquire){
   let due=state.pause_until.lock().ok().and_then(|mut deadline|{if deadline.as_ref().is_some_and(|at|SystemTime::now()>=*at){deadline.take()}else{None}});
   if due.is_some(){if bridge.request("start",json!({})).is_err(){if let Ok(mut deadline)=state.pause_until.lock(){*deadline=Some(SystemTime::now()+Duration::from_secs(60));}}else{let _=std::fs::remove_file(&state.pause_file);}}
-  state.refresh(&bridge,&handle);std::thread::sleep(Duration::from_secs(5));
+  if last_refresh.is_none_or(|at:Instant|at.elapsed()>=WAKE_DEBOUNCE){state.refresh(&bridge,&handle);last_refresh=Some(Instant::now());}
+  state.wait_next();
  }});
  Ok(())
 }
