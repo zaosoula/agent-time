@@ -65,13 +65,16 @@ pub struct WidgetPublisher {
     helper: PathBuf,
     /// Time of the last reload and the state key it carried.
     last: Mutex<Option<(Instant, String)>>,
+    /// Time and message of the last failed reload; retries wait for the
+    /// reload interval so an unavailable app group isn't retried every tick.
+    failure: Mutex<Option<(Instant, String)>>,
 }
 
 impl WidgetPublisher {
     pub fn new() -> std::io::Result<Self> {
         let executable = std::env::current_exe()?;
         let helper = executable.parent().ok_or(std::io::Error::other("Missing executable directory"))?.join("widget-snapshot");
-        Ok(Self { helper, last: Mutex::new(None) })
+        Ok(Self { helper, last: Mutex::new(None), failure: Mutex::new(None) })
     }
 
     pub fn publish(&self, value: &Value, force: bool) {
@@ -80,9 +83,20 @@ impl WidgetPublisher {
         let Ok(mut last) = self.last.lock() else { return; };
         let state = state_key(&body);
         if !should_publish(last.as_ref(), &state, force) { return; }
+        let Ok(mut failure) = self.failure.lock() else { return; };
+        if !force && failure.as_ref().is_some_and(|(at, _)| at.elapsed() < RELOAD_INTERVAL) { return; }
         match run_helper(&self.helper, &body) {
-            Ok(()) => *last = Some((Instant::now(), state)),
-            Err(error) => eprintln!("Could not update Agent Time widget: {error}"),
+            Ok(()) => {
+                *last = Some((Instant::now(), state));
+                *failure = None;
+            }
+            Err(error) => {
+                let message = error.to_string();
+                if failure.as_ref().is_none_or(|(_, previous)| previous != &message) {
+                    eprintln!("Could not update Agent Time widget: {message}");
+                }
+                *failure = Some((Instant::now(), message));
+            }
         }
     }
 }
