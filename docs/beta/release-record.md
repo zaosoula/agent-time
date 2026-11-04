@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.20` candidate — 2026-11-04
+
+Bulk review assignment failed with “Select up to 500 recorded intervals at a time.” after selecting about 30 items: each review row groups up to 500 intervals, and the cap counted intervals rather than rows. The desktop bridge, collector protocol, and collector now accept up to 10,000 intervals in one decision, stored as one undoable action, and the collector's request line limit rises from 64 KB to 4 MB to fit it. Group splits keep their 500-interval cap. See [updater notes](0.2.0-beta.20-notes.md).
+
 ## `0.2.0-beta.19` published — 2026-11-04
 
 This candidate applies a full performance, stability, and interface audit. Day summaries read a bounded per-day window with closed-day caching; on the release Mac's 1.13M-event database one day costs 0.2–1.5 seconds instead of a 7.1-second full replay. The usage reader shares the collector's database connection, the tray polls every 20 seconds, widget reloads are limited to every 5 minutes, the activity probe bounds its accessibility calls, and the dashboard pauses polling while hidden. The bridge no longer kills the collector during long storage operations, quit is capped at a few seconds, and hook timeouts rise from 2 to 10 seconds. Updates now run through Rust commands, so the webview no longer holds updater or restart permissions. See [updater notes](0.2.0-beta.19-notes.md).
