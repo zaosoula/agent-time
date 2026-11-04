@@ -1,8 +1,12 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.19` candidate — 2026-11-04
+## `0.2.0-beta.19` published — 2026-11-04
 
 This candidate applies a full performance, stability, and interface audit. Day summaries read a bounded per-day window with closed-day caching; on the release Mac's 1.13M-event database one day costs 0.2–1.5 seconds instead of a 7.1-second full replay. The usage reader shares the collector's database connection, the tray polls every 20 seconds, widget reloads are limited to every 5 minutes, the activity probe bounds its accessibility calls, and the dashboard pauses polling while hidden. The bridge no longer kills the collector during long storage operations, quit is capped at a few seconds, and hook timeouts rise from 2 to 10 seconds. Updates now run through Rust commands, so the webview no longer holds updater or restart permissions. See [updater notes](0.2.0-beta.19-notes.md).
+
+The first [release run 41843661824](https://github.com/zaosoula/agent-time/actions/runs/41843661824) stopped at candidate checks: a website-rule test failed on the slower runner because a matching user rule waited on an `lsof` port lookup. Commit `f616939d93ed5a57a9e0ca675a495aad24f0e7a1` applies rules before that lookup; locally 317 JavaScript tests, typecheck, UI build, production audit (0 vulnerabilities), sidecar packaging, and 26 locked Rust tests passed. GitHub's Apple Silicon [release run 41844435664](https://github.com/zaosoula/agent-time/actions/runs/41844435664) then passed candidate checks, Developer ID signing, notarization, staging, and publication for that exact commit.
+
+The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.19 for `darwin-aarch64`. Independent public downloads matched staged SHA-256 `d5c2d199ba5381a3a212eff24ea5250bfd66a10a41fd7471be287d1746129460` for the updater archive and `e9d5b2ed3a255be377779ed2bf87bd80489c66b8a245f46dc0b701865af216ee` for the [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.19/Agent%20Time_0.2.0-beta.19_aarch64.dmg). The mounted app passed Gatekeeper as a notarized Developer ID app and strict nested signature verification. It replaced beta.18 in `/Applications` on the owner's Mac by DMG install, not an in-app update; the collector, activity probe, hooks, and Orca polling resumed capture within seconds and the collector settled below 1% CPU.
 
 ## `0.2.0-beta.18` published — 2026-11-02
 
