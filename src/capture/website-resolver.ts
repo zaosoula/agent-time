@@ -291,6 +291,10 @@ export class WebsiteResolver {
  async resolve(raw:string,known:KnownWorkspace[],recentOrca?:{workspaceId:string;observedAt:number}):Promise<WebsiteResolution|null>{
   let url:URL;try{url=new URL(raw);if(!['http:','https:'].includes(url.protocol))return null;}catch{return null;}
   const key=websiteKey(raw,this.savedRules)!,local=localHost(url.hostname);
+  // A user rule wins regardless of which process owns a local port, so it
+  // applies at once without waiting on a listener lookup.
+  const rule=matchingRule(url,this.savedRules);
+  if(rule)return {key,origin:url.origin,url:raw,observedAt:Date.now()/1000,suggestions:[],...this.match(rule.projectPath,known,'rule',`User rule ${rule.pattern}`)};
   const port=Number(url.port||(url.protocol==='https:'?'443':'80'));
   const cached=this.resolutions.get(key);
   if(cached&&Date.now()-cached.at<resolutionTtlMs){
