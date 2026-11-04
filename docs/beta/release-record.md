@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.19` candidate — 2026-11-04
+
+This candidate applies a full performance, stability, and interface audit. Day summaries read a bounded per-day window with closed-day caching; on the release Mac's 1.13M-event database one day costs 0.2–1.5 seconds instead of a 7.1-second full replay. The usage reader shares the collector's database connection, the tray polls every 20 seconds, widget reloads are limited to every 5 minutes, the activity probe bounds its accessibility calls, and the dashboard pauses polling while hidden. The bridge no longer kills the collector during long storage operations, quit is capped at a few seconds, and hook timeouts rise from 2 to 10 seconds. Updates now run through Rust commands, so the webview no longer holds updater or restart permissions. See [updater notes](0.2.0-beta.19-notes.md).
+
 ## `0.2.0-beta.18` published — 2026-11-02
 
 The installed beta.17 app displayed “Unsupported operation or parameters” and left My day at zero while its collector was running. The Tauri bridge rejected the new `reported_work` request used by the dashboard, and its `Promise.all` refresh discarded the measured summary when that optional request failed. The bridge also rejected background summary requests and other newer desktop methods. Beta.18 admits the exact bounded request shapes used by the UI and lets the measured dashboard refresh independently of optional reported work. See [updater notes](0.2.0-beta.18-notes.md).
