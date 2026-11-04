@@ -277,7 +277,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "linear_connect" if p.len()==1 && p.get("clientId").and_then(Value::as_str).map(|v|v.len()>=8&&v.len()<=128&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')).unwrap_or(false)=>Ok(()),
   "website_rule_set"|"website_rule_preview" if p.len()==2 && p.get("pattern").map(website_pattern).unwrap_or(false) && p.get("projectPath").map(project_path).unwrap_or(false)=>Ok(()),
   "website_rule_remove" if p.len()==1 && p.get("pattern").map(website_pattern).unwrap_or(false)=>Ok(()),
-  "human_decision_set" if optional_date(p) && p.get("mode").and_then(Value::as_str).map(|mode|{let base=p.len()-usize::from(p.contains_key("date"));match mode {"assigned"=>base==3&&p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>base==2,_=>false}}).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false)=>Ok(()),
+  "human_decision_set" if optional_date(p) && p.get("mode").and_then(Value::as_str).map(|mode|{let base=p.len()-usize::from(p.contains_key("date"));match mode {"assigned"=>base==3&&p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>base==2,_=>false}}).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=10_000&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false)=>Ok(()),
   "tracking_cleanup" if p.len()==1 && p.get("confirmed")==Some(&Value::Bool(true))=>Ok(()),
   "hooks_install" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(source_id).unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
   "mcp_install"|"mcp_remove" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(|id|id=="claude"||id=="codex").unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
@@ -478,6 +478,10 @@ pub fn run(){
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"unassigned"})).is_ok());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a"]],"mode":"assigned","projectPath":"/project"})).is_err());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"clear","projectPath":"/project"})).is_err());
+ // Bulk assign spans many review rows, each holding up to 500 intervals.
+ let pairs=|n:usize|(0..n).map(|i|json!([format!("s{i}"),format!("e{i}")])).collect::<Vec<_>>();
+ assert!(validate_method("human_decision_set",&json!({"pairs":pairs(5000),"mode":"unassigned"})).is_ok());
+ assert!(validate_method("human_decision_set",&json!({"pairs":pairs(10_001),"mode":"unassigned"})).is_err());
 }}
 
 #[cfg(all(test,unix))]

@@ -58,7 +58,7 @@ if(command==='hook') {
       else{
         const lines=createInterface({input:process.stdin});const pending=new Set<Promise<void>>();
         lines.on('line',line=>{
-          const task=(async()=>{if(line.length>65536){console.log(JSON.stringify({id:null,error:'Request too large'}));return;}
+          const task=(async()=>{if(line.length>4*1024*1024){console.log(JSON.stringify({id:null,error:'Request too large'}));return;}
             try{console.log(JSON.stringify(await dispatchRequest(JSON.parse(line),collector)));}catch{console.log(JSON.stringify({id:null,error:'Invalid JSON'}));}})();
           pending.add(task);void task.finally(()=>pending.delete(task));
         });

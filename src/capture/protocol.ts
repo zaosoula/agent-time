@@ -2,7 +2,7 @@ import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
-import {validateManualNote,type ManualNote} from './store.ts';
+import {MAX_DECISION_PAIRS,validateManualNote,type ManualNote} from './store.ts';
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string):unknown;markDayReview?(date:string):unknown;}
 interface Controller {reportedWork?(date:string):unknown;}
 interface Controller {claudeStatusLineStatus?():unknown;installClaudeStatusLine?(targetId:string):unknown;removeClaudeStatusLine?(targetId:string):unknown;}
@@ -31,7 +31,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:controller.removeWebsiteRule(params.pattern)};
     }
     if(request.method==='human_decision_set'){
-      if(!controller.setHumanDecision||Object.keys(params).some(key=>!['pairs','mode','projectPath','date'].includes(key))||!optionalDate(params.date)||!Array.isArray(params.pairs)||!params.pairs.length||params.pairs.length>500||!['assigned','unassigned','clear'].includes(String(params.mode))||params.pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128))||params.mode==='assigned'&&typeof params.projectPath!=='string'||params.mode!=='assigned'&&params.projectPath!==undefined)throw new Error('Invalid human activity decision');
+      if(!controller.setHumanDecision||Object.keys(params).some(key=>!['pairs','mode','projectPath','date'].includes(key))||!optionalDate(params.date)||!Array.isArray(params.pairs)||!params.pairs.length||params.pairs.length>MAX_DECISION_PAIRS||!['assigned','unassigned','clear'].includes(String(params.mode))||params.pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128))||params.mode==='assigned'&&typeof params.projectPath!=='string'||params.mode!=='assigned'&&params.projectPath!==undefined)throw new Error('Invalid human activity decision');
       return {id,result:controller.setHumanDecision(params.pairs as Array<[string,string]>,params.mode as 'assigned'|'unassigned'|'clear',params.projectPath as string|undefined,params.date as string|undefined)};
     }
     if(request.method==='review_undo'){

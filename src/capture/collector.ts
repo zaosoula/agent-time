@@ -1,7 +1,7 @@
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync, readdirSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
 import {createHash} from 'node:crypto';
-import { EventStore, type ManualNote } from './store.ts';
+import { EventStore, MAX_DECISION_PAIRS, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
@@ -321,7 +321,7 @@ export class Collector {
    */
   setHumanDecision(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string):Summary {
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
-    if(!Array.isArray(pairs)||!pairs.length||pairs.length>500||!['assigned','unassigned','clear'].includes(mode))throw new Error('Invalid activity selection');
+    if(!Array.isArray(pairs)||!pairs.length||pairs.length>MAX_DECISION_PAIRS||!['assigned','unassigned','clear'].includes(mode))throw new Error('Invalid activity selection');
     if(date!==undefined)localDayBounds(date);
     if(pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128)))throw new Error('Activity changed; refresh and try again');
     const keys=new Set(this.humanIntervals(this.datesForPairs(pairs)).map(humanIntervalKey).filter(Boolean));

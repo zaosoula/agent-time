@@ -20,6 +20,8 @@ export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdA
  return {start:item.start,end:item.end,project:item.project.trim(),note:item.note.trim()};
 }
 
+// A review row groups up to 500 intervals; bulk actions span many rows.
+export const MAX_DECISION_PAIRS=10000;
 export class EventStore {
   private db: DatabaseSync;private generation=0;private nonEventGeneration=0;
   constructor(path: string) {

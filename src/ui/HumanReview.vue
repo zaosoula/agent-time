@@ -303,8 +303,9 @@ async function bulkAssign() {
   const pairs = [
     ...new Map(bulkGroups.value.flatMap((group) => group.pairs).map((pair) => [pair.join(':'), pair])).values(),
   ];
-  if (!pairs.length || pairs.length > 500) {
-    error.value = 'Select up to 500 recorded intervals at a time.';
+  if (!pairs.length) return;
+  if (pairs.length > 10000) {
+    error.value = `This selection covers ${pairs.length} recorded intervals; assign at most 10,000 at a time. Select fewer items.`;
     return;
   }
   // Capture the counts now: the summary (and so the selection) is replaced when the action returns.
