@@ -1,4 +1,7 @@
-import { mkdirSync, copyFileSync, cpSync, writeFileSync, chmodSync, readFileSync } from 'node:fs';
+import { mkdirSync, copyFileSync as copyInPlace, cpSync, writeFileSync, chmodSync, readFileSync, rmSync } from 'node:fs';
+// Overwriting a signed Mach-O in place leaves macOS's cached code signature
+// stale, and the kernel then kills the new binary (exit 137). Replace it.
+const copyFileSync=(source,target)=>{rmSync(target,{force:true});copyInPlace(source,target);};
 import { execFileSync } from 'node:child_process';
 import { checkBundledNode } from './node-runtime.mjs';
 // The running Node binary is copied into the app. Refuse one that does not
