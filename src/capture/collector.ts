@@ -36,7 +36,7 @@ import {prepareCompactionAsync,prepareRestore,cancelPendingReplacement,pendingRe
 import {runStorageTask} from './storage-worker.ts';
 import {DaySummaries,applyTerminalTitles} from './day-summaries.ts';
 import {staticOrcaScopeReason} from './observation-retention.ts';
-import {addDays,localDate,localDayBounds} from './summary-window.ts';
+import {addDays,localDate,localDayBounds,windowBounds} from './summary-window.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
 import {clearStaleLock,ownsLock,writeLock} from './capture-lock.ts';
@@ -60,6 +60,8 @@ function reviewFingerprint(intervals:unknown[],issues:unknown[],notes:unknown[])
 /** Prefix of order-independent fingerprints; unprefixed ones come from earlier versions. */
 const FINGERPRINT_VERSION='v2:';
 /** Stored after a failed legacy check so the costly check is never repeated. */
+/** Bump when the review snapshot logic changes, to drop cached snapshots. */
+const DAY_REVIEW_CACHE_VERSION='r1';
 const LEGACY_STALE_FINGERPRINT=`${FINGERPRINT_VERSION}legacy-stale`;
 
 export class Collector {
@@ -69,7 +71,7 @@ export class Collector {
   private lastError:string|null=null; private macos:Record<string,unknown>|null=null; private lockOwned=false;
   private failedPoller:string|null=null; private macError:string|null=null;
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
-  private surfaces:CaptureSettings={...defaultSettings};private resourceCache?:{at:number;value:Map<string,ReportedResource>}; private revision=0;
+  private surfaces:CaptureSettings={...defaultSettings};private resourceCache?:{at:number;value:Map<string,ReportedResource>};private summaryTokens=new WeakMap<Summary,string>();private summaryTokenCount=0;private summaryEpoch=Date.now().toString(36);private derivedMemo?:{day:Summary;resources:Map<string,ReportedResource>;counters:string;value:Summary}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
   /** Whole-history summary, only for callers that ask without a date. */
   private summaryCache:{revision:string;at:number;value:Summary}|undefined;
@@ -338,6 +340,25 @@ export class Collector {
     return this.daySummary(this.reviewDate(pairs,date));
   }
   reviewHistory(){return this.store.reviewActions();}
+  /**
+   * Review snapshot for a past day, from the persistent cache when nothing it
+   * depends on changed. Days whose window still reaches the present are rebuilt.
+   */
+  private pastDayReviewSnapshot(date:string){
+    const {from,to}=localDayBounds(date),bounds=windowBounds(from,to,this.summaryOptions().agentIdleThreshold);
+    if(bounds.readTo>Date.now()/1000)return this.dayReviewSnapshot(date);
+    const saved=this.store.dayReview(date);
+    // Reviews saved before fingerprints were versioned need the one-time check.
+    if(saved&&!saved.fingerprint.startsWith(FINGERPRINT_VERSION))return this.dayReviewSnapshot(date);
+    const {humanIdleMinutes,agentIdleMinutes,countTaskCounters}=this.surfaces;
+    const signature=[DAY_REVIEW_CACHE_VERSION,humanIdleMinutes,agentIdleMinutes,countTaskCounters,this.store.daySignature(bounds.readFrom,bounds.readTo,date)].join('|');
+    type Snapshot=ReturnType<Collector['dayReviewSnapshot']>;
+    const cached=this.store.cachedDayReview(date,signature) as Snapshot|undefined;
+    if(cached)return {...cached,completedAt:saved?.completedAt||null,stale:Boolean(saved&&saved.fingerprint!==cached.fingerprint)};
+    const snapshot=this.dayReviewSnapshot(date);
+    if(this.lockOwned||!existsSync(join(this.output,'capture.lock')))this.store.cacheDayReview(date,signature,snapshot);
+    return snapshot;
+  }
   private dayReviewSnapshot(date:string){
     const day=this.daySummary(date),groups=groupHumanReview(day.intervals),pending=groups.filter(group=>['unmatched','conflict'].includes(humanReviewState(group))),captured=groups.filter(group=>humanReviewState(group)==='captured'),unmatched=pending.filter(group=>humanReviewState(group)==='unmatched'),conflicts=pending.filter(group=>humanReviewState(group)==='conflict'),gaps=unobservedGaps(day.intervals);
     const notes=this.store.manualNotes(date);
@@ -360,7 +381,7 @@ export class Collector {
   dayReviewStatus(date:string){
     localDayBounds(date);
     const current=this.dayReviewSnapshot(date),backlog=[];
-    for(let days=1;days<=7;days++){const key=addDays(date,-days);const item=this.dayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
+    for(let days=1;days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
     const {fingerprint:_,...view}=current;return {...view,backlog};
   }
   markDayReview(date:string){
@@ -514,15 +535,24 @@ export class Collector {
   private daySummary(date:string,maxAgeMs=0):Summary{
     const window=this.windowSummary(date,maxAgeMs),cached=this.decorated.get(date);
     const day=cached?.value!==window?summaryForDate(window,date):cached.day||=summaryForDate(window,date);
-    const resourced=applyReportedResources(day,this.resources());
+    const resources=this.resources(),reports=this.surfaces.countTaskCounters?this.reportedWork(date):[],counters=JSON.stringify(reports);
+    // Same inputs return the same object, so its version token stays stable.
+    const memo=this.derivedMemo;
+    if(memo&&memo.day===day&&memo.resources===resources&&memo.counters===counters)return memo.value;
+    const resourced=applyReportedResources(day,resources);
     // Counters are opt-in credit and stay open while running, so they are applied per read.
-    return this.surfaces.countTaskCounters?creditTaskCounters(resourced,this.reportedWork(date)):resourced;
+    const value=reports.length?creditTaskCounters(resourced,reports):resourced;
+    this.derivedMemo={day,resources,counters,value};
+    return value;
   }
   /** Pages agents reported in the last 31 days, refreshed at most every 10 seconds. */
   private resources(){
     if(!this.resourceCache||Date.now()-this.resourceCache.at>10_000){
       const now=Date.now()/1000;
-      this.resourceCache={at:Date.now(),value:reportedResources(this.store.agentReports(now-31*86400,now+60))};
+      const next=reportedResources(this.store.agentReports(now-31*86400,now+60)),previous=this.resourceCache?.value;
+      // Keep the previous map when nothing changed, so derived summaries keep their identity.
+      const same=previous&&previous.size===next.size&&[...next].every(([key,value])=>previous.get(key)?.observedAt===value.observedAt);
+      this.resourceCache={at:Date.now(),value:same?previous:next};
     }
     return this.resourceCache.value;
   }
@@ -560,7 +590,18 @@ export class Collector {
     this.legacySummaryRelease.unref?.();
     return value;
   }
+  /**
+   * Day summary with a version token. When `since` matches the token of the
+   * summary the caller already has, only `{unchanged:true,token}` is returned,
+   * so polls do not resend megabytes of unchanged intervals.
+   */
   summaryForDate(date:string,maxAgeMs=0):Summary{return this.daySummary(date,maxAgeMs);}
+  versionedSummary(date:string,maxAgeMs=0,since?:string):Summary&{token:string}|{unchanged:true;token:string}{
+    const summary=this.daySummary(date,maxAgeMs);
+    let token=this.summaryTokens.get(summary);
+    if(!token){token=`${this.summaryEpoch}-${++this.summaryTokenCount}`;this.summaryTokens.set(summary,token);}
+    return since===token?{unchanged:true,token}:{...summary,token};
+  }
   reportedWork(date:string){
     const first=new Date(`${date}T00:00:00`),last=new Date(first);
     last.setDate(last.getDate()+1);
@@ -593,6 +634,11 @@ export class Collector {
     try{
       this.store.put(makeEvent('capture','capture_start'));
       this.activityProbe.start();
+      // After an app update, install the new hook runtime without asking. Only
+      // the packaged app does this: the runtime copies the running Node binary.
+      if(process.execPath.includes('.app/Contents/MacOS/'))setTimeout(()=>{
+        try{if(this.running&&this.hookInstallation.refreshRuntime())this.hookStatusCache=undefined;}catch(error){this.lastError=`Hook runtime refresh failed: ${String(error)}`;}
+      },3000).unref();
       this.syncUsage();
       if(durationSeconds!==undefined)this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
       await this.tick();return this.status();

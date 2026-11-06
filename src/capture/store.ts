@@ -30,7 +30,7 @@ export class EventStore {
       closeSync(openSync(path, 'a', 0o600)); chmodSync(path, 0o600);
     }
     this.db = new DatabaseSync(path);
-    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
+    this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS day_review_cache (date TEXT PRIMARY KEY,signature TEXT NOT NULL,snapshot TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
     this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
     // Per-provider hook lookups must not walk every hook row when a provider is quiet.
     this.db.exec("CREATE INDEX IF NOT EXISTS events_hook_provider ON events(json_extract(payload,'$.provider')) WHERE json_extract(payload,'$.source')='hook'");
@@ -223,6 +223,25 @@ export class EventStore {
   markDayReview(date:string,fingerprint:string):void{
     this.db.prepare('INSERT INTO day_reviews VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET completed_at=excluded.completed_at,fingerprint=excluded.fingerprint').run(date,Date.now()/1000,fingerprint);
     this.generation++;this.nonEventGeneration++;
+  }
+  /**
+   * Cheap change marker for a past day's review: events read by its window,
+   * review decisions and undo history, notes and reported resources. When it
+   * is unchanged, the day's review snapshot need not be rebuilt.
+   */
+  daySignature(readFrom:number,readTo:number,date:string):string{
+    const events=this.db.prepare('SELECT count(*) c,ifnull(max(rowid),0) m FROM events WHERE observed_at>=? AND observed_at<?').get(readFrom,readTo)!;
+    const review=this.db.prepare('SELECT (SELECT count(*)||\':\'||ifnull(max(decided_at),0) FROM human_decisions) d,(SELECT count(*) FROM human_splits) s,(SELECT ifnull(max(at),0)||\':\'||ifnull(max(undone_at),0) FROM review_actions) a').get()!;
+    const notes=this.manualNotes(date).map(note=>note.id).join(',');
+    const resources=this.db.prepare("SELECT count(*) c,ifnull(max(rowid),0) m FROM events INDEXED BY events_reports_at WHERE observed_at>0 AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'").get()!;
+    return [events.c,events.m,review.d,review.s,review.a,notes,resources.c,resources.m].join('|');
+  }
+  cachedDayReview(date:string,signature:string):unknown{
+    const row=this.db.prepare('SELECT snapshot FROM day_review_cache WHERE date=? AND signature=?').get(date,signature);
+    return row?JSON.parse(String(row.snapshot)):undefined;
+  }
+  cacheDayReview(date:string,signature:string,snapshot:unknown):void{
+    this.db.prepare('INSERT INTO day_review_cache VALUES(?,?,?) ON CONFLICT(date) DO UPDATE SET signature=excluded.signature,snapshot=excluded.snapshot').run(date,signature,JSON.stringify(snapshot));
   }
   /** Replace a review's fingerprint with an equivalent one, keeping when it was completed. */
   updateDayReviewFingerprint(date:string,fingerprint:string):void{

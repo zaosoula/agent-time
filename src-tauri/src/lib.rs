@@ -269,7 +269,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "archive_delete" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "storage_restore_prepare" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "privacy_exclusions_set" if p.len()==1 && p.get("entries").and_then(Value::as_array).map(|entries|entries.len()<=100&&entries.iter().all(|entry|entry.as_object().map(|item|item.len()==2&&["app","site"].contains(&item.get("kind").and_then(Value::as_str).unwrap_or(""))&&item.get("value").and_then(Value::as_str).map(|value|!value.is_empty()&&value.len()<=253).unwrap_or(false)).unwrap_or(false))).unwrap_or(false)=>Ok(()),
-  "summary" if (p.len()==1||p.len()==2) && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false) && (p.len()==1||p.get("background").and_then(Value::as_bool).is_some())=>Ok(()),
+  "summary" if (1..=3).contains(&p.len()) && p.keys().all(|k|["date","background","since"].contains(&k.as_str())) && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false) && p.get("background").map(|v|v.is_boolean()).unwrap_or(true) && p.get("since").map(|v|v.as_str().map(|t|!t.is_empty()&&t.len()<=64).unwrap_or(false)).unwrap_or(true)=>Ok(()),
   "weekly_review" if p.len()==1 && p.get("startDate").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_notes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_note_add" if p.len()==4 && p.get("start").and_then(Value::as_f64).zip(p.get("end").and_then(Value::as_f64)).map(|(start,end)|start.is_finite()&&end.is_finite()&&end>start&&end-start<=86400.0).unwrap_or(false) && p.get("project").and_then(Value::as_str).map(|value|value.len()<=256).unwrap_or(false) && p.get("note").and_then(Value::as_str).map(|value|!value.trim().is_empty()&&value.len()<=500).unwrap_or(false)=>Ok(()),
@@ -466,6 +466,8 @@ pub fn run(){
  assert!(validate_method("summary",&json!({"date":"2026-11-02","background":true})).is_ok());
  assert!(validate_method("summary",&json!({"date":"2026-11-02","background":"true"})).is_err());
  assert!(validate_method("summary",&json!({"date":"2026-11-02","extra":true})).is_err());
+ assert!(validate_method("summary",&json!({"date":"2026-11-02","background":true,"since":"abc-1"})).is_ok());
+ assert!(validate_method("summary",&json!({"date":"2026-11-02","since":7})).is_err());
  for method in ["reported_work","work_outcomes"] {
   assert!(validate_method(method,&json!({"date":"2026-11-02"})).is_ok());
   assert!(validate_method(method,&json!({"date":"2026-11-02","extra":true})).is_err());

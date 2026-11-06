@@ -84,3 +84,32 @@ test('an appended foreground sample credits both sides of local midnight exactly
   for(const date of ['2026-10-21','2026-10-22'])assert.deepEqual(collector.summaryForDate(date),summaryForDate(summarize([before,after]),date));
  }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
 });
+
+test('a day summary poll with the current token returns only an unchanged marker',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-token-')),collector=new Collector(root);
+ try{
+  const day=new Date('2026-10-22T09:00:00').getTime()/1000;
+  for(let at=day;at<day+600;at+=5)collector.store.put(event(`t${at}`,at));
+  const first=collector.versionedSummary('2026-10-22',60_000);
+  assert.ok('token' in first&&!('unchanged' in first));
+  assert.deepEqual(collector.versionedSummary('2026-10-22',60_000,first.token),{unchanged:true,token:first.token});
+  collector.store.put(event('later',day+700));
+  const next=collector.versionedSummary('2026-10-22',0,first.token);
+  assert.ok(!('unchanged' in next)&&next.token!==first.token);
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('a past day review snapshot is reused until its window changes',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'agent-time-review-cache-')),collector=new Collector(root);
+ try{
+  const day=new Date('2026-10-20T09:00:00').getTime()/1000;
+  for(let at=day;at<day+600;at+=5)collector.store.put(event(`r${at}`,at));
+  let builds=0;const summaryForDay=(collector as unknown as {daySummary:(date:string)=>unknown});const original=summaryForDay.daySummary.bind(collector);
+  summaryForDay.daySummary=(date:string)=>{if(date==='2026-10-20')builds++;return original(date);};
+  collector.dayReviewStatus('2026-10-22');collector.dayReviewStatus('2026-10-22');
+  assert.equal(builds,1);
+  collector.store.put(event('late',day+900));
+  collector.dayReviewStatus('2026-10-22');
+  assert.equal(builds,2);
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});

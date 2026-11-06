@@ -6,7 +6,9 @@ import {prepareConfig,applyConfig,restoreConfig,hookEvents,type Manifest} from '
 import {agents,agentById} from './sources/agent-registry.ts';
 import {pruneHookRuntimes} from './hook-runtime-prune.ts';
 export type HookProvider=string;
-export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;reason?:string|null;}
+export interface HookTarget{id:string;provider:HookProvider;label:string;path:string;state:'not-installed'|'installed'|'needs-update'|'error';lastEvent:number|null;error:string|null;reason?:string|null;
+ /** What differs from the expected installation, for the repair dialog. */
+ details?:string[];}
 export interface HookInstallationStatus {setupSeen:boolean;runtimeVersion:string;runtimeReady:boolean;agents:Array<{id:string;name:string;setting:string;usageSetting:string;trustNote?:string}>;targets:HookTarget[];legacyPaths:string[];migrationError:string|null;}
 export interface TrackingCleanupPreview {configurations:string[];helpers:string[];errors:string[];}
 export interface TrackingCleanupResult {removedConfigurations:string[];removedHelpers:string[];errors:string[];}
@@ -30,6 +32,28 @@ exec "$root/$version/node" "$root/$version/hook-runner.ts" "$@" --runtime-versio
 `;
 // Agents and Orca may append their own hooks after ours. Only our handlers'
 // content matters, not where they sit relative to foreign groups.
+/** Per-event differences between the managed hooks in two configurations. */
+function managedDifferences(current:any,desired:any,recognized:string[]):string[]{
+ const owned=(config:any,event:string)=>(Array.isArray(config?.hooks?.[event])?config.hooks[event]:[]).filter((group:any)=>Array.isArray(group?.hooks)&&group.hooks.some((hook:any)=>recognized.includes(hook?.command)));
+ const events=[...new Set([...Object.keys(current?.hooks||{}),...Object.keys(desired?.hooks||{})])].sort();
+ const out:string[]=[];
+ for(const event of events){
+  const now=owned(current,event),want=owned(desired,event);
+  if(!now.length&&!want.length||isDeepStrictEqual(now,want))continue;
+  if(!now.length){out.push(`${event}: hook missing`);continue;}
+  if(!want.length){out.push(`${event}: hook no longer used`);continue;}
+  const a=now[0],b=want[0],ha=a.hooks?.find((h:any)=>recognized.includes(h?.command))||{},hb=b.hooks?.find((h:any)=>recognized.includes(h?.command))||{};
+  const changes:string[]=[];
+  if(JSON.stringify(a.matcher)!==JSON.stringify(b.matcher))changes.push(`matcher ${JSON.stringify(a.matcher??null)} → ${JSON.stringify(b.matcher??null)}`);
+  for(const key of [...new Set([...Object.keys(ha),...Object.keys(hb)])].sort())if(JSON.stringify(ha[key])!==JSON.stringify(hb[key]))changes.push(`${key} ${JSON.stringify(ha[key]??null)} → ${JSON.stringify(hb[key]??null)}`);
+  if(now.length!==want.length)changes.push(`${now.length} entries → ${want.length}`);
+  out.push(`${event}: ${changes.join(', ')||'entry changed'}`);
+ }
+ // Most changes repeat for every event; list each distinct change once.
+ const byChange=new Map<string,string[]>();
+ for(const line of out){const index=line.indexOf(': '),event=line.slice(0,index),change=line.slice(index+2);byChange.set(change,[...(byChange.get(change)||[]),event]);}
+ return [...byChange].map(([change,events])=>`${events.length>3?`${events.length} events`:events.join(', ')}: ${change}`);
+}
 function managedLast(config:any,recognized:string[]){
  const owned=(group:any)=>Array.isArray(group?.hooks)&&group.hooks.some((hook:any)=>recognized.includes(hook?.command));
  const hooks=Object.fromEntries(Object.entries(config?.hooks||{}).map(([event,groups])=>[event,Array.isArray(groups)?[...groups.filter(group=>!owned(group)),...groups.filter(owned)]:groups]));
@@ -67,6 +91,16 @@ export class HookInstallation{
  }
  private command(provider:HookProvider,id:string){return ['/bin/sh',join(dirname(this.runtime),'launch.sh'),'--provider',provider,'--spool',join(this.output,'spool'),'--installation-id',id].map(quote).join(' ');}
  private ready(){try{const parent=dirname(this.runtime),node=join(this.runtime,'node');if(!lstatSync(node).isFile()||!lstatSync(join(parent,'launch.sh')).isFile()||!lstatSync(join(parent,'current')).isFile())return false;accessSync(node,constants.X_OK);return readFileSync(join(parent,'launch.sh'),'utf8')===launcher&&readFileSync(join(parent,'current'),'utf8')===runtimeVersion+'\n'&&files.every(f=>lstatSync(join(this.runtime,f)).isFile()&&readFileSync(join(this.runtime,f),'utf8')===readFileSync(join(source,f),'utf8'));}catch{return false;}}
+ private installedRuntime(){try{return readFileSync(join(dirname(this.runtime),'current'),'utf8').trim();}catch{return null;}}
+ /**
+  * After an app update the hook runtime is stale while agent configurations,
+  * which only name the stable launcher, are unchanged. Install the new runtime
+  * without asking; returns true when it did.
+  */
+ refreshRuntime():boolean{
+  if(this.ready()||!this.installedRuntime())return false;
+  this.installRuntime();return true;
+ }
  private installRuntime(){
   const parent=dirname(this.runtime);if(existsSync(parent)&&lstatSync(parent).isSymbolicLink())throw new Error('symlink runtime refused');
   mkdirSync(parent,{recursive:true,mode:0o700});
@@ -120,7 +154,7 @@ export class HookInstallation{
   }finally{db.close();}}catch{}
   const ready=this.ready(),targets=discovered.map(t=>{
    let state:HookTarget['state']='not-installed',error:string|null=null,reason:string|null=null;
-   let matchedId:string|undefined;
+   let matchedId:string|undefined,details:string[]=[];
    try{
     const command=this.command(t.provider,t.id),owned=this.commands(t.id);
     // Orca can copy the user hook config into an account home. Its command is
@@ -132,18 +166,21 @@ export class HookInstallation{
      const managed=all.filter((h:any)=>recognized.includes(h.command));
      if(managed.length){
       state='needs-update';reason=ready?'Managed hook configuration changed':'Hook runtime needs repair';
+      details=managedDifferences(current,JSON.parse(desired.updated),recognized);
       if(ready)for(const candidate of candidates){
        const candidateCommand=this.command(candidate.provider,candidate.id);
        const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state='installed';reason=null;matchedId=candidate.id;break;}
+       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state='installed';reason=null;details=[];matchedId=candidate.id;break;}
       }
      }
     }
-    if(state==='not-installed'&&owned.length){state='needs-update';reason='Previously managed hook is missing';}
+    if(state==='not-installed'&&owned.length){state='needs-update';reason='Previously managed hook is missing';details=['Agent Time hooks were removed from this configuration'];}
     if(state==='not-installed')reason='No Agent Time hook is installed';
    }catch(e){state='error';error=String(e);reason='Configuration could not be read safely';}
    if(this.installErrors.has(t.id)){state='error';error=this.installErrors.get(t.id)!;reason='Last repair failed';}
-   return {...t,state,error,reason,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
+   if(state==='needs-update'&&!ready)details=[`Hook runtime ${this.installedRuntime()||'missing'} → ${runtimeVersion} (new Agent Time version)`,...details];
+   if(state!=='installed'&&state!=='not-installed')details=[...details,`Configuration: ${t.path}`];
+   return {...t,state,error,reason,details,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
   });
   let legacyPaths:string[]=[];try{legacyPaths=this.legacy().map(l=>l.path);}catch(e){this.migrationError=String(e);}
   return {setupSeen:existsSync(join(this.stateRoot,'hook-setup.json')),runtimeVersion,runtimeReady:ready,agents:agents.map(({id,name,setting,usageSetting,trustNote})=>({id,name,setting,usageSetting,trustNote})),targets,legacyPaths,migrationError:this.migrationError};

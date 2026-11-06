@@ -167,7 +167,10 @@ function createStore() {
     summaryRevision = 0,
     summaryFetchedAt = 0;
 
+  /** Collector version of the summary on screen; polls skip the download while it is current. */
+  let summaryToken: string | undefined;
   function storeSummary(next: Summary, date: string) {
+    summaryToken = undefined;
     const key = `${date}|${summarySignature(next)}`;
     summaryFetchedAt = Date.now();
     summaryLoaded.value = true;
@@ -188,11 +191,20 @@ function createStore() {
     const due = !background || summaryKey.split('|')[0] !== date || Date.now() - summaryFetchedAt >= 60_000;
     try {
       const [next, reports] = await Promise.all([
-        due ? transport.summary(date, background) : Promise.resolve(null),
+        due
+          ? transport.summarySince(date, background, summaryKey.split('|')[0] === date ? summaryToken : undefined)
+          : Promise.resolve(null),
         reportedWorkTransport.list(date).catch(() => null),
       ]);
       if (revision !== summaryRevision || date !== selectedDate.value) return;
-      if (next) storeSummary(next, date);
+      if (next && 'unchanged' in next) {
+        summaryFetchedAt = Date.now();
+        summaryLoaded.value = true;
+      } else if (next) {
+        const { token, ...rest } = next;
+        storeSummary(rest as Summary, date);
+        summaryToken = token;
+      }
       if (reports) reportedWork.value = markRaw(reports);
       pollError.value = '';
     } catch (cause) {
@@ -527,6 +539,9 @@ function createStore() {
     () => new Set(creditedSessions.value.map((session) => session.runId).filter(Boolean)).size,
   );
 
+  /** Key linking reported work to the agent session row that reported it. */
+  const reportedSessionKey = (provider: string | undefined, sessionId: string | undefined) =>
+    `${provider || ''}:${sessionId || ''}`;
   /** Project a reported item belongs to: its workspace, its agent session, or a uniquely named project. */
   function reportedProject(item: ReportedWorkItem, projectNames: string[]): string | undefined {
     const workspace = workspaceProject(item.workspaceId);
@@ -548,13 +563,19 @@ function createStore() {
     const names = timelineProjects.value.map((group) => group.name),
       visible = new Set(names);
     const byProject = new Map<string, ReportedWorkItem[]>(),
+      bySession = new Map<string, ReportedWorkItem[]>(),
       unplaced: ReportedWorkItem[] = [];
+    for (const item of visibleReportedWork.value)
+      if (item.sessionId) {
+        const key = reportedSessionKey(item.provider, item.sessionId);
+        bySession.set(key, [...(bySession.get(key) || []), item]);
+      }
     for (const item of visibleReportedWork.value) {
       const project = reportedProject(item, names);
       if (project && visible.has(project)) byProject.set(project, [...(byProject.get(project) || []), item]);
       else unplaced.push(item);
     }
-    return { byProject, unplaced };
+    return { byProject, bySession, unplaced };
   });
   const timelineProjects = computed<TimelineGroup[]>(() => {
     const groups = groupTimelineProjects(
@@ -746,6 +767,7 @@ function createStore() {
     filteredIntervals,
     visibleReportedWork,
     reportedPlacement,
+    reportedSessionKey,
     agentTime,
     agentOverlap,
     humanTime,

@@ -162,6 +162,13 @@ export const transport = {
   status: () => request<CaptureStatus>('status'),
   summary: (date: string, background = false) =>
     request<Summary>('summary', { date, ...(background ? { background: true } : {}) }),
+  /** Day summary unless the collector's version still equals `since`. */
+  summarySince: (date: string, background: boolean, since?: string) =>
+    request<(Summary & { token?: string }) | { unchanged: true; token: string }>('summary', {
+      date,
+      ...(background ? { background: true } : {}),
+      ...(since ? { since } : {}),
+    }),
   captureHealth: () => request<CaptureHealth>('capture_health'),
   captureChecks: () => request<CaptureCheck[]>('capture_checks'),
   diagnostics: () => request<DiagnosticSummary>('diagnostics'),

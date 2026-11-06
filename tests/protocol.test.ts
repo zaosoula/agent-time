@@ -15,7 +15,7 @@ test('capture monitor is read-only and accepts no caller-controlled query',async
  assert.ok('error' in await dispatchRequest({id:'health',method:'capture_health',params:{limit:10000}},c));assert.equal(calls,1);
 });
 test('day summary requests remain bounded to a validated date',async()=>{
- const controller={status:()=>({}),summary:()=>({full:true}),summaryForDate:(date:string,maxAgeMs?:number)=>({date,maxAgeMs}),start:async()=>({}),stop:async()=>({})};
+ const controller={status:()=>({}),summary:()=>({full:true}),versionedSummary:(date:string,maxAgeMs?:number,since?:string)=>since?{date,maxAgeMs,since}:{date,maxAgeMs},start:async()=>({}),stop:async()=>({})};
  assert.deepEqual(await dispatchRequest({id:'day',method:'summary',params:{date:'2026-10-14'}},controller),{id:'day',result:{date:'2026-10-14',maxAgeMs:15000}});
  assert.deepEqual(await dispatchRequest({id:'day',method:'summary',params:{date:'2026-10-14',background:true}},controller),{id:'day',result:{date:'2026-10-14',maxAgeMs:60000}});
  assert.ok('error' in await dispatchRequest({id:'day',method:'summary',params:{date:'2026-10-14',path:'/tmp'}},controller));
