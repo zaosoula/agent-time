@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.22` candidate — 2026-11-06
+
+Agents connected to beta.21 reported they had no Agent Time guidance: the MCP server sent no instructions, so agents only saw tool descriptions and did not report work unless asked. The server now sends instructions on connect (set work context, wrap multi-step tasks in counters, report remote resources, pass session identity). A new `report_resource` tool records a page an agent created or updated; human browser intervals on the same origin and path are attributed to the reporting agent's project for time before and after the report, while review decisions and user website rules stay authoritative. Locally 328 JavaScript tests and typecheck passed. See [updater notes](0.2.0-beta.22-notes.md).
+
 ## `0.2.0-beta.21` published — 2026-11-06
 
 Includes the beta.20 bulk-assignment fix. Agent-reported contexts and counters from the MCP `set_work_context` and `start_task` tools now render under the project they belong to (by workspace, agent session, or a uniquely named project), visible even when the project is collapsed; items with no project on the day stay in the top section. A new `countTaskCounters` setting, off by default, credits counter spans as agent time: only time not already covered by that agent's measured time in the same project (Orca worktrees count as their repository) is added, to the matching session or to a session of its own. My day, weekly totals, and MCP time tools apply it, and `start_task`/`stop_task` report `measured` from the setting. Locally 322 JavaScript tests, typecheck, UI build, and 26 Rust tests passed. See [updater notes](0.2.0-beta.21-notes.md).
