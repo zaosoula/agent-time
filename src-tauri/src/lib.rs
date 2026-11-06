@@ -431,7 +431,16 @@ pub fn run(){
    name:Some("Agent Time".into()),version:Some(version.clone()),short_version:Some(version),
    website:Some("https://agent-time.ezyostudio.com".into()),website_label:Some("agent-time.ezyostudio.com".into()),
    copyright:Some("© EZYOSTUDIO".into()),..Default::default()}))?;
-  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&[&about,&tauri::menu::PredefinedMenuItem::separator(app)?,&show,&quit])?,&edit])?;
+  let check=tauri::menu::MenuItem::with_id(app,"app-check-updates","Check for Updates…",true,None::<&str>)?;
+  let toggle=tauri::menu::MenuItem::with_id(app,"app-toggle","Pause Capture",true,None::<&str>)?;
+  let restart=tauri::menu::MenuItem::with_id(app,"app-restart-collector","Restart Collector",true,None::<&str>)?;
+  tray::set_app_toggle(app,toggle.clone());
+  let (first,second,third)=(tauri::menu::PredefinedMenuItem::separator(app)?,tauri::menu::PredefinedMenuItem::separator(app)?,tauri::menu::PredefinedMenuItem::separator(app)?);
+  let beta=option_env!("AGENT_TIME_BETA")==Some("1");
+  let mut items:Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>>=vec![&about];
+  if beta{items.push(&check);}
+  items.extend([&first as &dyn tauri::menu::IsMenuItem<tauri::Wry>,&toggle,&restart,&second,&show,&third,&quit]);
+  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&items)?,&edit])?;
   app.set_menu(menu)?;
   if !std::env::args().any(|arg|arg=="--background") { if let Some(window)=app.get_webview_window("main"){window.show()?;} }
   Ok(())

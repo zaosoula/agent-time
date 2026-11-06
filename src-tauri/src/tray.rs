@@ -11,6 +11,8 @@ pub struct TrayState {
  pause_until:Mutex<Option<SystemTime>>,pause_file:PathBuf,
  /// Last observed capture state; paused capture is polled less often.
  running:AtomicBool,
+ /// Pause/Resume item in the app menu, mirrored from the tray toggle.
+ app_toggle:Mutex<Option<MenuItem<tauri::Wry>>>,
  /// Set when the tray menu is about to open so the poller refreshes now.
  wake:(Mutex<bool>,Condvar),
 }
@@ -65,7 +67,7 @@ impl TrayState {
     let _=self.detail.set_text(format!("Agents: {} · Mac: {}",duration(value["agentSeconds"].as_f64().unwrap_or(0.0)),duration(value["humanSeconds"].as_f64().unwrap_or(0.0))));
     let n=value["tokensToday"].as_f64().unwrap_or(0.0);let count=if n>=1e6{format!("{:.1}M",n/1e6)}else if n>=1e3{format!("{:.1}K",n/1e3)}else{format!("{:.0}",n)};
     let _=self.tokens.set_text(format!("Tokens: {} · ${:.2} API equivalent{}",count,value["apiUsdToday"].as_f64().unwrap_or(0.0),if value["unpricedToday"].as_f64().unwrap_or(0.0)>0.0{" (partial)"}else{""}));
-    let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);let _=self.timed_pause.set_enabled(running);
+    let _=self.toggle.set_text(if running{"Pause capture"}else{"Resume capture"});let _=self.toggle.set_enabled(true);if let Ok(item)=self.app_toggle.lock(){if let Some(item)=item.as_ref(){let _=item.set_text(if running{"Pause Capture"}else{"Resume Capture"});}}let _=self.timed_pause.set_enabled(running);
    },
    Err(_)=>{self.running.store(false,Ordering::Release);if let Ok(mut last)=self.last_summary.lock(){*last=None;}self.widget.publish(&json!({"available":false,"running":false,"humanSeconds":0,"agentSeconds":0,"workingAgents":0}),false);let _=self.status.set_text("Capture unavailable");let _=self.today.set_text("Today: unavailable");let _=self.detail.set_text("Open dashboard for capture details");let _=self.toggle.set_enabled(false);let _=self.timed_pause.set_enabled(false);}
   }
@@ -116,7 +118,7 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
   .build(app)?;
  let pause_file=bridge.launch.output.join("pause-until");
  let pause_until=pause_deadline(&pause_file);
- let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file,running:AtomicBool::new(true),wake:(Mutex::new(false),Condvar::new())});
+ let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,app_toggle:Mutex::new(None),busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file,running:AtomicBool::new(true),wake:(Mutex::new(false),Condvar::new())});
  app.manage(state.clone());
  let handle=app.handle().clone();
  std::thread::spawn(move||{let mut last_refresh:Option<Instant>=None;while !state.stopped.load(Ordering::Acquire){
@@ -134,7 +136,22 @@ fn open_page(app:&tauri::AppHandle,page:&str){
 }
 pub fn handle(app:&tauri::AppHandle,id:&str){match id{
  "tray-dashboard"=>open_page(app,"today"),"tray-health"=>open_page(app,"health"),"tray-repair-hooks"=>open_page(app,"hook-setup"),"tray-settings"=>open_page(app,"settings"),"tray-usage"=>open_page(app,"usage"),"tray-quit"=>app.exit(0),
- "tray-toggle"=>{
+ "app-check-updates"=>{
+  if let Some(window)=app.get_webview_window("main"){let _=window.unminimize();let _=window.show();let _=window.set_focus();let _=window.emit("check-updates",app.package_info().version.to_string());}
+ },
+ "app-restart-collector"=>{
+  let bridge=app.state::<Arc<Bridge>>().inner().clone();let handle=app.clone();
+  let state=app.try_state::<Arc<TrayState>>().map(|state|state.inner().clone());
+  if let Some(state)=&state{let _=state.status.set_text("Restarting collector…");}
+  std::thread::spawn(move||{
+   // Same path as an update: stop the collector, then start a fresh one with capture as it was.
+   bridge.pause_for_update();
+   let result=bridge.recover_from_update();
+   let _=handle.emit("collector-restarted",result.as_ref().err().cloned());
+   if let Some(state)=state{state.refresh(&bridge,&handle);}
+  });
+ },
+ "tray-toggle"|"app-toggle"=>{
   let Some(state)=app.try_state::<Arc<TrayState>>() else{return;};let state=state.inner().clone();
   if state.busy.swap(true,Ordering::AcqRel){return;}
   let _=state.toggle.set_enabled(false);let _=state.status.set_text("Updating capture…");
@@ -172,3 +189,11 @@ pub fn handle(app:&tauri::AppHandle,id:&str){match id{
  assert!(hook_warning_body(&json!({"running":true,"hookWarning":null}),&mut last).is_none());
  assert!(hook_warning_body(&old,&mut last).is_some());
 }}
+
+/// Attach the app menu's Pause/Resume item so it follows capture state.
+pub fn set_app_toggle(app:&tauri::App,item:MenuItem<tauri::Wry>){
+ if let Some(state)=app.try_state::<Arc<TrayState>>(){
+  let _=item.set_text(if state.running.load(Ordering::Acquire){"Pause Capture"}else{"Resume Capture"});
+  if let Ok(mut slot)=state.app_toggle.lock(){*slot=Some(item);}
+ }
+}

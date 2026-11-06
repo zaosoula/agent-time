@@ -141,8 +141,17 @@ async function listenNavigation() {
     } else if (['settings', 'today', 'usage', 'health', 'review'].includes(event.payload))
       navigate(event.payload as Page);
   });
-  if (unmounted) dispose();
-  else unlistenNavigation = dispose;
+  const disposeRestart = await listen<string | null>('collector-restarted', (event) => {
+    if (event.payload) toast.error(`Collector restart failed: ${event.payload}`, 'collector-restart');
+    else toast.success('Collector restarted.', 'collector-restart');
+    void store.refreshStatus();
+  });
+  const disposeAll = () => {
+    dispose();
+    disposeRestart();
+  };
+  if (unmounted) disposeAll();
+  else unlistenNavigation = disposeAll;
 }
 function handleDeepLink(urls: string[]) {
   for (const raw of urls) {

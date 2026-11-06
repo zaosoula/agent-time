@@ -10,6 +10,7 @@ import {
 } from './beta-updates.ts';
 import { humanizeError } from './errors.ts';
 import { native } from './transport.ts';
+import { toast } from './toast.ts';
 
 const update = ref<BetaUpdateInfo | null>(null),
   error = ref(''),
@@ -17,6 +18,7 @@ const update = ref<BetaUpdateInfo | null>(null),
   installing = ref(false),
   progress = ref<BetaUpdateProgress | null>(null);
 let unlistenAvailable: (() => void) | undefined,
+  unlistenCheck: (() => void) | undefined,
   unmounted = false,
   lastCheck = 0;
 
@@ -64,10 +66,20 @@ onMounted(async () => {
   const dispose = await listen('update-available', () => void checkNow());
   if (unmounted) dispose();
   else unlistenAvailable = dispose;
+  // "Check for Updates…" in the app menu: always check, and say so when there is nothing new.
+  const disposeCheck = await listen<string>('check-updates', async (event) => {
+    if (installing.value) return;
+    if (checking.value) await new Promise((resolve) => setTimeout(resolve, 500));
+    await checkNow();
+    if (!update.value && !error.value) toast.success(`Agent Time ${event.payload} is up to date.`, 'update-check');
+  });
+  if (unmounted) disposeCheck();
+  else unlistenCheck = disposeCheck;
 });
 onUnmounted(() => {
   unmounted = true;
   unlistenAvailable?.();
+  unlistenCheck?.();
   window.removeEventListener('focus', checkOnReturn);
   document.removeEventListener('visibilitychange', checkOnReturn);
 });
