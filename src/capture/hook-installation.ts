@@ -28,6 +28,13 @@ case "$version" in
 esac
 exec "$root/$version/node" "$root/$version/hook-runner.ts" "$@" --runtime-version "$version"
 `;
+// Agents and Orca may append their own hooks after ours. Only our handlers'
+// content matters, not where they sit relative to foreign groups.
+function managedLast(config:any,recognized:string[]){
+ const owned=(group:any)=>Array.isArray(group?.hooks)&&group.hooks.some((hook:any)=>recognized.includes(hook?.command));
+ const hooks=Object.fromEntries(Object.entries(config?.hooks||{}).map(([event,groups])=>[event,Array.isArray(groups)?[...groups.filter(group=>!owned(group)),...groups.filter(owned)]:groups]));
+ return {...config,hooks};
+}
 function privateWrite(path:string,text:string){mkdirSync(dirname(path),{recursive:true,mode:0o700});if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('symlink state refused');const temp=path+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,path);}
 export class HookInstallation{
  private output:string;private home:string;private env:NodeJS.ProcessEnv;private runtime:string;private stateRoot:string;private migrationError:string|null=null;private busy=false;private installErrors=new Map<string,string>();
@@ -128,7 +135,7 @@ export class HookInstallation{
       if(ready)for(const candidate of candidates){
        const candidateCommand=this.command(candidate.provider,candidate.id);
        const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(isDeepStrictEqual(current,JSON.parse(equivalent.updated))){state='installed';reason=null;matchedId=candidate.id;break;}
+       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state='installed';reason=null;matchedId=candidate.id;break;}
       }
      }
     }

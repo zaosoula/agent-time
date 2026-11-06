@@ -238,3 +238,21 @@ test('installed hooks with the old two-second timeout are reported for update an
   assert.equal(f.manager.status().targets.find(t=>t.provider==='claude'&&t.path===path)?.state,'installed');
  }finally{f.close();}
 });
+test('a managed hook placed before a foreign hook still counts as installed',async()=>{
+ const f=fixture();try{
+  await f.manager.install('claude');
+  const user=join(f.home,'.claude/settings.json'),profile=join(f.home,'Library/Application Support/orca/claude-profiles/profile/home');mkdirSync(profile,{recursive:true});
+  const path=join(profile,'settings.json');writeFileSync(path,readFileSync(user,'utf8'));
+  const target=f.manager.status().targets.find(t=>t.path===path)!;await f.manager.install('claude',[target.id]);
+  // Orca rewrites the profile from the user configuration and appends its own hook after ours.
+  const config=JSON.parse(readFileSync(user,'utf8'));
+  for(const groups of Object.values(config.hooks) as any[])groups.push({hooks:[{type:'command',command:'orca-status-hook'}]});
+  writeFileSync(path,JSON.stringify(config,null,2)+'\n');const before=readFileSync(path,'utf8');
+  assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'installed');
+  await f.manager.install('claude');assert.equal(readFileSync(path,'utf8'),before);
+  // A changed managed handler is still reported wherever it sits.
+  for(const groups of Object.values(config.hooks) as any[])groups[0].hooks[0].timeout=2;
+  writeFileSync(path,JSON.stringify(config,null,2)+'\n');
+  assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'needs-update');
+ }finally{f.close();}
+});
