@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.23` candidate — 2026-11-06
+
+Adds About Agent Time to the app menu (native About panel with the bundle version, website, and copyright). Hook status now compares managed handlers by content regardless of position, because Orca rebuilds Claude profile settings and appends its own hook after ours, which made those profiles show as needing an update after every Orca sync. Locally the Rust app built and 21 hook-installation tests passed. This release is intended to be the first observed in-app update (beta.22 to beta.23) on the owner's Mac. See [updater notes](0.2.0-beta.23-notes.md).
+
 ## `0.2.0-beta.22` published — 2026-11-06
 
 Agents connected to beta.21 reported they had no Agent Time guidance: the MCP server sent no instructions, so agents only saw tool descriptions and did not report work unless asked. The server now sends instructions on connect (set work context, wrap multi-step tasks in counters, report remote resources, pass session identity). A new `report_resource` tool records a page an agent created or updated; human browser intervals on the same origin and path are attributed to the reporting agent's project for time before and after the report, while review decisions and user website rules stay authoritative. Locally 328 JavaScript tests and typecheck passed. See [updater notes](0.2.0-beta.22-notes.md).
