@@ -29,6 +29,10 @@ When a reported issue and an observed human project agree within 30 minutes, iss
 
 The server reads only the local data directory. It does not read prompts, tool output, or keystrokes. To use a nonstandard data directory, set `ADE_CAPTURE_OUTPUT` in the MCP server's environment to the same directory as the running collector.
 
+## Reported resources
+
+`report_resource` records a remote page an agent created or updated, such as a Claude, Codex or Orca artifact, pull request, issue, deployment or preview. Browser time on that page (same origin and path; query and fragment ignored) is attributed to the reporting agent's project, for time before and after the report. Review decisions and user website rules take precedence. Reports need a workspace ID or an absolute project path; reports from the last 31 days apply.
+
 ## Agent instructions
 
 The server sends instructions when an agent connects (`instructions` in `src/mcp/server.ts`). They ask agents to call `set_work_context` when a task starts or changes, to wrap multi-step tasks in `start_task`/`stop_task`, to pass their provider, session and workspace IDs, and to query time only when the user asks. Clients that support MCP server instructions, such as Claude Code and Codex, add them to the agent's context; reports remain advisory.

@@ -11,6 +11,7 @@ import {applyHumanDecisions,groupHumanReview,humanReviewState,type HumanDecision
 import {unobservedGaps} from '../capture/gaps.ts';
 import {projectPathFromWorktree} from '../capture/website-resolver.ts';
 import {creditTaskCounters,reportedWorkForDay} from '../capture/reported-work.ts';
+import {applyReportedResources,reportedResources} from '../capture/reported-resources.ts';
 import {issuePattern,uuidPattern,validAgentReport} from './report.ts';
 
 export const defaultDataDirectory=()=>process.env.ADE_CAPTURE_OUTPUT||join(homedir(),'Library','Application Support','studio.ezyo.agenttime');
@@ -75,6 +76,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
   const options=snapshotSettings(output),pending=pendingReports(output);
+  const resources=reportedResources([...db.prepare("SELECT payload FROM events WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'").all(now()-31*86400).map(row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
   const intervals:Interval[]=[],coverage:Issue[]=[],unresolved:Issue[]=[],sessions=new Map<string,Session>(),firstSeen=new Map<string,number>();
   const kept=new Map<string,CaptureEvent>();let previousTrusted=true;let readFrom=Infinity;
   for(const [start,end] of chunks(from,to)){
@@ -82,7 +84,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    if(window.events.length>maxWindowEvents)throw new Error('Too many events for one day; use a shorter date range');
    readFrom=Math.min(readFrom,window.bounds.readFrom);
    const events=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
-   const decided=applyHumanDecisions(summarize(events,options),decisions,splits);
+   const decided=applyReportedResources(applyHumanDecisions(summarize(events,options),decisions,splits),resources);
    const summary=options.countTaskCounters?creditTaskCounters(decided,reportedWorkForDay(events,start,end,now())):decided;
    const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
    for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}

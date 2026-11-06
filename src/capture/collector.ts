@@ -8,6 +8,7 @@ import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool,spoolStatus } from './hooks.ts';
 import {validAgentReport} from '../mcp/report.ts';
 import {creditTaskCounters,reportedWorkForDay} from './reported-work.ts';
+import {applyReportedResources,reportedResources,type ReportedResource} from './reported-resources.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {resolveOrcaTab,tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -68,7 +69,7 @@ export class Collector {
   private lastError:string|null=null; private macos:Record<string,unknown>|null=null; private lockOwned=false;
   private failedPoller:string|null=null; private macError:string|null=null;
   private stopping:Promise<ReturnType<Collector['status']>>|undefined;
-  private surfaces:CaptureSettings={...defaultSettings}; private revision=0;
+  private surfaces:CaptureSettings={...defaultSettings};private resourceCache?:{at:number;value:Map<string,ReportedResource>}; private revision=0;
   private surfaceHistory:CaptureEvent[]=[];
   /** Whole-history summary, only for callers that ask without a date. */
   private summaryCache:{revision:string;at:number;value:Summary}|undefined;
@@ -513,8 +514,17 @@ export class Collector {
   private daySummary(date:string,maxAgeMs=0):Summary{
     const window=this.windowSummary(date,maxAgeMs),cached=this.decorated.get(date);
     const day=cached?.value!==window?summaryForDate(window,date):cached.day||=summaryForDate(window,date);
+    const resourced=applyReportedResources(day,this.resources());
     // Counters are opt-in credit and stay open while running, so they are applied per read.
-    return this.surfaces.countTaskCounters?creditTaskCounters(day,this.reportedWork(date)):day;
+    return this.surfaces.countTaskCounters?creditTaskCounters(resourced,this.reportedWork(date)):resourced;
+  }
+  /** Pages agents reported in the last 31 days, refreshed at most every 10 seconds. */
+  private resources(){
+    if(!this.resourceCache||Date.now()-this.resourceCache.at>10_000){
+      const now=Date.now()/1000;
+      this.resourceCache={at:Date.now(),value:reportedResources(this.store.agentReports(now-31*86400,now+60))};
+    }
+    return this.resourceCache.value;
   }
   /** Day summaries for `count` days from `startDate`, joined into one summary. */
   private rangeSummary(startDate:string,count:number,maxAgeMs=0):Summary{
