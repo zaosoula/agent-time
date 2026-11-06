@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.22` candidate — 2026-11-06
+## `0.2.0-beta.22` published — 2026-11-06
 
 Agents connected to beta.21 reported they had no Agent Time guidance: the MCP server sent no instructions, so agents only saw tool descriptions and did not report work unless asked. The server now sends instructions on connect (set work context, wrap multi-step tasks in counters, report remote resources, pass session identity). A new `report_resource` tool records a page an agent created or updated; human browser intervals on the same origin and path are attributed to the reporting agent's project for time before and after the report, while review decisions and user website rules stay authoritative. Locally 328 JavaScript tests and typecheck passed. See [updater notes](0.2.0-beta.22-notes.md).
+
+GitHub's Apple Silicon [release run 42252747198](https://github.com/zaosoula/agent-time/actions/runs/42252747198) passed candidate checks, Developer ID signing, notarization, staging, and publication for exact commit `9619ed442b7564d9f93eb2c2eac7136fefb549d4`. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.22. Independent public downloads matched staged SHA-256 `333a0e52b7656887557505b2ef11fff447b8b3cd47ef4628608601a3a102a730` for the updater archive and `19ad19014d18240f847cc9fa2f7fc1debcd5a5131973e9bd791e75f05f9f4e28` for the [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.22/Agent%20Time_0.2.0-beta.22_aarch64.dmg); the mounted app passed Gatekeeper as a notarized Developer ID app and strict nested signature verification. It replaced beta.21 in `/Applications` by DMG install; capture resumed, and an `initialize` request to the installed MCP server returned the new instructions.
 
 ## `0.2.0-beta.21` published — 2026-11-06
 
