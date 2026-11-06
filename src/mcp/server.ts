@@ -16,8 +16,18 @@ const report=(kind:'work_context'|'task_start'|'task_stop'|'port_state',id:strin
  return writeReport(output,kind,id||randomUUID(),contextId,data,{provider,workspaceId,sessionId:who.sessionId||provider&&inferRecentSession(output,provider,workspaceId)||undefined});
 };
 
+/** Sent once when an agent connects, so agents report their work without being asked each time. */
+export const instructions=[
+ 'Agent Time measures local human and agent work time on this Mac. Help it attribute that time:',
+ '- When you start a distinct task, call set_work_context with a short task summary, the project and, when known, the Linear issue key. Call it again when the task changes.',
+ '- For a multi-step task, call start_task with a short name when you begin and stop_task with the returned taskCounterId when you finish or stop, including on failure. Keep one counter open per task.',
+ '- Pass provider, and your hook sessionId and workspaceId when you have them, so reports link to the right session.',
+ '- Reuse the same requestId when retrying a call. Reports are context; they never change measured time unless the user turned on counting task counters.',
+ '- Use time_for_project, time_for_issue and timeline only when the user asks about time spent.',
+].join('\n');
+
 export function createServer(){
- const server=new McpServer({name:'agent-time',version:'0.2.0'});
+ const server=new McpServer({name:'agent-time',version:'0.2.0'},{instructions});
  server.registerTool('time_for_issue',{description:'Measured local time linked to a reported Linear issue, with evidence and overlap-aware totals. Reported context is advisory, not billing approval.',inputSchema:z.object({...dates,issueKey})},({fromDate,toDate,issueKey})=>result(timeForIssue(snap(fromDate,toDate),issueKey)));
  server.registerTool('time_for_project',{description:'Measured local time for a tracked project, grouped by reported issue and unmatched time.',inputSchema:z.object({...dates,project:z.string().min(1).max(512)})},({fromDate,toDate,project})=>result(timeForProject(snap(fromDate,toDate),project)));
  server.registerTool('timeline',{description:'Observed human and agent intervals with source event IDs and attribution confidence.',inputSchema:z.object({...dates,project:z.string().min(1).max(512).optional()})},({fromDate,toDate,project})=>result(timeline(snap(fromDate,toDate),project)));

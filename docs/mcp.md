@@ -29,6 +29,10 @@ When a reported issue and an observed human project agree within 30 minutes, iss
 
 The server reads only the local data directory. It does not read prompts, tool output, or keystrokes. To use a nonstandard data directory, set `ADE_CAPTURE_OUTPUT` in the MCP server's environment to the same directory as the running collector.
 
+## Agent instructions
+
+The server sends instructions when an agent connects (`instructions` in `src/mcp/server.ts`). They ask agents to call `set_work_context` when a task starts or changes, to wrap multi-step tasks in `start_task`/`stop_task`, to pass their provider, session and workspace IDs, and to query time only when the user asks. Clients that support MCP server instructions, such as Claude Code and Codex, add them to the agent's context; reports remain advisory.
+
 ## Limits before invoice use
 
 Issue matching currently uses an agent-reported key tied to an observed provider session or a key in an observed Orca worktree name. `time_for_project` accepts a repository path, Orca workspace ID, or an exact agent-reported project name; it does not map Linear project names to repositories. It does not infer historic issue IDs from Git commits or a Linear project. The query starts with a one-hour observation lookback, so a session already active before that window can be incomplete. Read tools keep at most 250,000 events in a request and cap returned interval lists. Keep the app's review decisions and coverage view as the source for invoice approval.

@@ -26,6 +26,7 @@ test('stdio MCP negotiates with legacy clients and exposes bounded local tools',
   send({id:3,method:'tools/call',params:{name:'current_work',arguments:{}}});
   await done;
   assert.equal((replies.get(1)?.result as {serverInfo?:{name?:string}})?.serverInfo?.name,'agent-time');
+  assert.match(String((replies.get(1)?.result as {instructions?:string})?.instructions),/set_work_context[\s\S]*start_task[\s\S]*stop_task/);
   const tools=(replies.get(2)?.result as {tools?:Array<{name:string}>})?.tools||[];
   assert.deepEqual(['time_for_issue','time_for_project','timeline','sessions','coverage','unattributed','explain_attribution','current_work','set_work_context','start_task','stop_task','report_port_state'].every(name=>tools.some(tool=>tool.name===name)),true);
   assert.equal((replies.get(3)?.result as {content?:Array<{text:string}>})?.content?.[0]?.text.includes('"tasks":[]'),true);
