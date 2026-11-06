@@ -302,6 +302,7 @@ onUnmounted(() => {
           </div>
         </header>
 
+        <BetaUpdates v-if="betaUpdatesEnabled" />
         <div v-if="pollProblem" class="banner danger" role="alert">
           <CircleHelp :size="16" /><span>{{ pollProblem }}</span>
           <button class="btn btn-sm" @click="retry">Retry</button>
@@ -346,8 +347,6 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
-        <BetaUpdates v-if="betaUpdatesEnabled" />
-
         <TodayPage
           v-if="store.page === 'today' || store.page === 'sessions'"
           :busy="busy"

@@ -248,12 +248,14 @@ async function verify() {
 }
 async function dismiss() {
   if (busy.value) return;
+  // Close at once: recording the dismissal rescans every hook target, which can take seconds.
+  open.value = false;
+  void showPermission();
   try {
     state.value = await transport.dismissHookSetup();
-    open.value = false;
-    void showPermission();
   } catch (e) {
     error.value = humanizeError(e);
+    open.value = true;
   }
 }
 function reopen() {
