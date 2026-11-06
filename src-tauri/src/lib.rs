@@ -426,7 +426,12 @@ pub fn run(){
    &tauri::menu::PredefinedMenuItem::separator(app)?, &tauri::menu::PredefinedMenuItem::cut(app,None)?,
    &tauri::menu::PredefinedMenuItem::copy(app,None)?, &tauri::menu::PredefinedMenuItem::paste(app,None)?,
    &tauri::menu::PredefinedMenuItem::select_all(app,None)?])?;
-  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&[&show,&quit])?,&edit])?;
+  let version=app.package_info().version.to_string();
+  let about=tauri::menu::PredefinedMenuItem::about(app,Some("About Agent Time"),Some(tauri::menu::AboutMetadata{
+   name:Some("Agent Time".into()),version:Some(version.clone()),short_version:Some(version),
+   website:Some("https://agent-time.ezyostudio.com".into()),website_label:Some("agent-time.ezyostudio.com".into()),
+   copyright:Some("© EZYOSTUDIO".into()),..Default::default()}))?;
+  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&[&about,&tauri::menu::PredefinedMenuItem::separator(app)?,&show,&quit])?,&edit])?;
   app.set_menu(menu)?;
   if !std::env::args().any(|arg|arg=="--background") { if let Some(window)=app.get_webview_window("main"){window.show()?;} }
   Ok(())
