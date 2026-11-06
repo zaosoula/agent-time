@@ -1,8 +1,14 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.20` candidate — 2026-11-04
+## `0.2.0-beta.21` candidate — 2026-11-06
+
+Includes the beta.20 bulk-assignment fix. Agent-reported contexts and counters from the MCP `set_work_context` and `start_task` tools now render under the project they belong to (by workspace, agent session, or a uniquely named project), visible even when the project is collapsed; items with no project on the day stay in the top section. A new `countTaskCounters` setting, off by default, credits counter spans as agent time: only time not already covered by that agent's measured time in the same project (Orca worktrees count as their repository) is added, to the matching session or to a session of its own. My day, weekly totals, and MCP time tools apply it, and `start_task`/`stop_task` report `measured` from the setting. Locally 322 JavaScript tests, typecheck, UI build, and 26 Rust tests passed. See [updater notes](0.2.0-beta.21-notes.md).
+
+## `0.2.0-beta.20` cancelled — 2026-11-06
 
 Bulk review assignment failed with “Select up to 500 recorded intervals at a time.” after selecting about 30 items: each review row groups up to 500 intervals, and the cap counted intervals rather than rows. The desktop bridge, collector protocol, and collector now accept up to 10,000 intervals in one decision, stored as one undoable action, and the collector's request line limit rises from 64 KB to 4 MB to fit it. Group splits keep their 500-interval cap. See [updater notes](0.2.0-beta.20-notes.md).
+
+[Release run 41875438850](https://github.com/zaosoula/agent-time/actions/runs/41875438850) for commit `8661bc5` twice found no GitHub macOS arm64 runner, and its third attempt was cancelled before publication so the fix could ship with beta.21. Beta.20 was never published.
 
 ## `0.2.0-beta.19` published — 2026-11-04
 
