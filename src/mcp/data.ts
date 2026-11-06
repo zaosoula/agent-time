@@ -10,6 +10,7 @@ import {minuteCreditSeconds,summarize} from '../capture/correlate.ts';
 import {applyHumanDecisions,groupHumanReview,humanReviewState,type HumanDecision,type HumanSplit} from '../capture/human-review.ts';
 import {unobservedGaps} from '../capture/gaps.ts';
 import {projectPathFromWorktree} from '../capture/website-resolver.ts';
+import {creditTaskCounters,reportedWorkForDay} from '../capture/reported-work.ts';
 import {issuePattern,uuidPattern,validAgentReport} from './report.ts';
 
 export const defaultDataDirectory=()=>process.env.ADE_CAPTURE_OUTPUT||join(homedir(),'Library','Application Support','studio.ezyo.agenttime');
@@ -45,11 +46,11 @@ function pendingReports(output:string):CaptureEvent[]{
 export interface Snapshot {summary:Summary;events:CaptureEvent[];from:number;to:number;truncatedBefore:boolean;firstSeen?:Map<string,number>;}
 // A safety cap on one day's window, far above a day of two-second samples.
 const maxWindowEvents=1_500_000;
-function snapshotSettings(output:string){
+export function snapshotSettings(output:string){
  const settingsPath=join(output,'settings.json');let settings:Record<string,unknown>={};
  if(existsSync(settingsPath))try{settings=JSON.parse(readFileSync(settingsPath,'utf8'));}catch{/* Use collector defaults for invalid settings. */}
  const idle=Number(settings.humanIdleMinutes),agentIdle=Number(settings.agentIdleMinutes);
- return {idleThreshold:Number.isFinite(idle)&&idle>0?idle*60:300,agentIdleThreshold:Number.isFinite(agentIdle)&&agentIdle>0?agentIdle*60:300};
+ return {idleThreshold:Number.isFinite(idle)&&idle>0?idle*60:300,agentIdleThreshold:Number.isFinite(agentIdle)&&agentIdle>0?agentIdle*60:300,countTaskCounters:settings.countTaskCounters===true};
 }
 /** Split a range into pieces of at most one day, so each summary reads a bounded window. */
 function chunks(from:number,to:number):Array<[number,number]>{
@@ -81,7 +82,8 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    if(window.events.length>maxWindowEvents)throw new Error('Too many events for one day; use a shorter date range');
    readFrom=Math.min(readFrom,window.bounds.readFrom);
    const events=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
-   const summary=applyHumanDecisions(summarize(events,options),decisions,splits);
+   const decided=applyHumanDecisions(summarize(events,options),decisions,splits);
+   const summary=options.countTaskCounters?creditTaskCounters(decided,reportedWorkForDay(events,start,end,now())):decided;
    const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
    for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}
    for(const session of summary.sessions)if(session.cwd&&session.sessionId)sessionPaths.set(`${session.provider}:${session.sessionId}`,session.cwd);

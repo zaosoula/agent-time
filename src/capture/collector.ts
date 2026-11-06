@@ -7,7 +7,7 @@ import { defaultSettings, validateSettings, storedSettings, browserEnabled, type
 import { callOrca,orcaCliAvailable } from './orca.ts';
 import { importSpool,spoolStatus } from './hooks.ts';
 import {validAgentReport} from '../mcp/report.ts';
-import {reportedWorkForDay} from './reported-work.ts';
+import {creditTaskCounters,reportedWorkForDay} from './reported-work.ts';
 import { normalizeActivity,MacActivityProbe } from './macos.ts';
 import {resolveOrcaTab,tabIndexFromTerminalList,type FocusedOrcaTab} from './orca-focus.ts';
 import { summarize } from './correlate.ts';
@@ -512,8 +512,9 @@ export class Collector {
   }
   private daySummary(date:string,maxAgeMs=0):Summary{
     const window=this.windowSummary(date,maxAgeMs),cached=this.decorated.get(date);
-    if(cached?.value!==window)return summaryForDate(window,date);
-    return cached.day||=summaryForDate(window,date);
+    const day=cached?.value!==window?summaryForDate(window,date):cached.day||=summaryForDate(window,date);
+    // Counters are opt-in credit and stay open while running, so they are applied per read.
+    return this.surfaces.countTaskCounters?creditTaskCounters(day,this.reportedWork(date)):day;
   }
   /** Day summaries for `count` days from `startDate`, joined into one summary. */
   private rangeSummary(startDate:string,count:number,maxAgeMs=0):Summary{

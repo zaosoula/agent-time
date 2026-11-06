@@ -527,6 +527,35 @@ function createStore() {
     () => new Set(creditedSessions.value.map((session) => session.runId).filter(Boolean)).size,
   );
 
+  /** Project a reported item belongs to: its workspace, its agent session, or a uniquely named project. */
+  function reportedProject(item: ReportedWorkItem, projectNames: string[]): string | undefined {
+    const workspace = workspaceProject(item.workspaceId);
+    if (workspace !== unassignedProject) return workspace;
+    const session =
+      item.sessionId &&
+      summary.value.sessions.find(
+        (candidate) => candidate.sessionId === item.sessionId && (!item.provider || candidate.provider === item.provider),
+      );
+    if (session && sessionProject(session) !== unassignedProject) return sessionProject(session);
+    if (!item.project) return undefined;
+    const named = projectNames.filter(
+      (name) => name === item.project || name.split('/').filter(Boolean).at(-1) === item.project,
+    );
+    return named.length === 1 ? named[0] : undefined;
+  }
+  /** Reported work shown inside its project's row; anything without a visible project stays on top. */
+  const reportedPlacement = computed(() => {
+    const names = timelineProjects.value.map((group) => group.name),
+      visible = new Set(names);
+    const byProject = new Map<string, ReportedWorkItem[]>(),
+      unplaced: ReportedWorkItem[] = [];
+    for (const item of visibleReportedWork.value) {
+      const project = reportedProject(item, names);
+      if (project && visible.has(project)) byProject.set(project, [...(byProject.get(project) || []), item]);
+      else unplaced.push(item);
+    }
+    return { byProject, unplaced };
+  });
   const timelineProjects = computed<TimelineGroup[]>(() => {
     const groups = groupTimelineProjects(
       timelineEligible.value,
@@ -716,6 +745,7 @@ function createStore() {
     timelineEligible,
     filteredIntervals,
     visibleReportedWork,
+    reportedPlacement,
     agentTime,
     agentOverlap,
     humanTime,

@@ -234,6 +234,26 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 </option>
               </select>
             </div>
+            <div class="control-row">
+              <div class="control-copy">
+                <label id="count-counters-label" for="count-counters"
+                  ><strong>Count agent task counters as agent time</strong></label
+                >
+                <p>
+                  Time between an agent's start_task and stop_task counts for its project. Only time not
+                  already measured is added, so nothing is counted twice.
+                </p>
+              </div>
+              <SwitchRoot
+                id="count-counters"
+                aria-labelledby="count-counters-label"
+                class="surface-switch"
+                :model-value="Boolean(status?.surfaces.countTaskCounters)"
+                :disabled="busy || !status"
+                @update:model-value="emit('change', { countTaskCounters: $event })"
+                ><SwitchThumb class="surface-thumb"
+              /></SwitchRoot>
+            </div>
           </div>
           <footer class="settings-footnote">
             <p>Changes apply immediately. Existing history is kept.</p>

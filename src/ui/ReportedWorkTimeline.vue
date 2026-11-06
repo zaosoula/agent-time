@@ -5,7 +5,8 @@ import type { ReportedWorkItem } from '../capture/reported-work.ts';
 import type { TimeRange } from './timeline-viewport.ts';
 import { clock, duration as elapsed } from './format.ts';
 
-const props = defineProps<{ items: ReportedWorkItem[]; range: TimeRange; now: number }>();
+/** `compact` renders inside a project row: no heading, every item shown. */
+const props = defineProps<{ items: ReportedWorkItem[]; range: TimeRange; now: number; compact?: boolean }>();
 const expanded = ref(false);
 const visible = computed(() =>
   props.items.filter((item) =>
@@ -14,7 +15,7 @@ const visible = computed(() =>
       : item.end >= props.range.start && item.start <= props.range.end,
   ),
 );
-const shown = computed(() => (expanded.value ? visible.value : visible.value.slice(0, 6)));
+const shown = computed(() => (expanded.value || props.compact ? visible.value : visible.value.slice(0, 6)));
 function placement(item: ReportedWorkItem) {
   const span = props.range.end - props.range.start;
   const from = Math.max(item.start, props.range.start),
@@ -26,10 +27,15 @@ function placement(item: ReportedWorkItem) {
 }
 </script>
 <template>
-  <section v-if="visible.length" class="reported-work" aria-label="Agent reported work on timeline">
-    <div class="reported-heading">
+  <section
+    v-if="visible.length"
+    class="reported-work"
+    :class="{ compact }"
+    :aria-label="compact ? 'Agent reported work for this project' : 'Agent reported work on timeline'"
+  >
+    <div v-if="!compact" class="reported-heading">
       <strong>Agent reported work</strong
-      ><small>Task context and elapsed counters · excluded from tracked totals</small>
+      ><small>Task context and elapsed counters with no project on this day</small>
     </div>
     <div v-for="item in shown" :key="item.id" class="reported-row">
       <div class="reported-label">
@@ -59,7 +65,7 @@ function placement(item: ReportedWorkItem) {
         }}<small v-if="item.active">open counter</small></span
       >
     </div>
-    <button v-if="visible.length > 6" class="reported-more" @click="expanded = !expanded">
+    <button v-if="!compact && visible.length > 6" class="reported-more" @click="expanded = !expanded">
       {{ expanded ? 'Show fewer' : `Show ${visible.length - 6} more reported items` }}
     </button>
   </section>
@@ -68,6 +74,15 @@ function placement(item: ReportedWorkItem) {
 .reported-work {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
+}
+.reported-work.compact {
+  background: transparent;
+  border-bottom: 0;
+}
+.reported-work.compact .reported-row {
+  min-height: 34px;
+  padding-left: 41px;
+  border-bottom: 1px dashed var(--border);
 }
 .reported-heading {
   display: flex;

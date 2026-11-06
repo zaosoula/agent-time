@@ -446,7 +446,7 @@ onUnmounted(() => {
     </div>
 
     <div class="timeline-body">
-      <ReportedWorkTimeline :items="store.visibleReportedWork" :range="timelineRange" :now="store.minute" />
+      <ReportedWorkTimeline :items="store.reportedPlacement.unplaced" :range="timelineRange" :now="store.minute" />
 
       <template v-if="!store.summaryLoaded">
         <div v-for="index in 4" :key="index" class="timeline-row skeleton-row" aria-hidden="true">
@@ -559,6 +559,12 @@ onUnmounted(() => {
             </small>
           </span>
         </button>
+        <ReportedWorkTimeline
+          compact
+          :items="store.reportedPlacement.byProject.get(projectGroup.name) || []"
+          :range="timelineRange"
+          :now="store.minute"
+        />
 
         <template v-if="!projectCollapsed(projectGroup.name)">
           <div

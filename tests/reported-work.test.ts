@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import {test} from 'node:test';
 import {EventStore} from '../src/capture/store.ts';
-import {reportedWorkForDay} from '../src/capture/reported-work.ts';
-import type {CaptureEvent} from '../src/capture/events.ts';
+import {creditTaskCounters,reportedWorkForDay,type ReportedWorkItem} from '../src/capture/reported-work.ts';
+import type {CaptureEvent,Summary} from '../src/capture/events.ts';
 
 const day=1_800_000_000;
 function report(id:string,kind:string,at:number,data:Record<string,unknown>):CaptureEvent{
@@ -33,4 +33,42 @@ test('report query reads only reports within its bounded date range',()=>{
  store.put(report('late','task_stop',day+86400,{taskCounterId:'one'}));
  assert.deepEqual(store.agentReports(day,day+86400).map(event=>event.eventId),['one']);
  store.close();
+});
+
+const counter=(fields:Partial<ReportedWorkItem>):ReportedWorkItem=>({id:'c1',kind:'counter',title:'Audit',provider:'claude',workspaceId:'/w/caex',start:0,end:600,active:false,...fields});
+const base=():Summary=>({intervals:[{start:0,end:300,state:'running',proof:'observed',sourceEventIds:[],sessionId:'s1',provider:'claude',workspaceId:'/w/caex'}],unresolved:[],coverage:[],
+ sessions:[{key:'s1',sessionId:'s1',provider:'claude',workspaceId:'/w/caex',title:'Claude',state:'stopped',lastObservedAt:300,seconds:300,observedSeconds:300,child:false,proof:'observed'}],
+ humanSeconds:0,agentSeconds:300,elapsedSeconds:300,childAgentSeconds:0});
+
+test('task counters credit only time the agent was not already measured',()=>{
+ const credited=creditTaskCounters(base(),[counter({})]);
+ assert.equal(credited.agentSeconds,600);
+ assert.equal(credited.sessions[0].seconds,600);
+ const added=credited.intervals.filter(i=>i.attributionSource==='task-counter');
+ assert.deepEqual(added.map(i=>[i.start,i.end,i.sessionId]),[[300,600,'s1']]);
+});
+
+test('a counter fully covered by measured time adds nothing',()=>{
+ const summary=base();
+ assert.equal(creditTaskCounters(summary,[counter({end:300})]),summary);
+});
+
+test('a counter with no matching session gets a session of its own in its workspace',()=>{
+ const credited=creditTaskCounters(base(),[counter({workspaceId:'/w/other',start:1000,end:1600})]);
+ const own=credited.sessions.find(session=>session.sessionId==='task-counter:c1');
+ assert.equal(own?.workspaceId,'/w/other');
+ assert.equal(own?.seconds,600);
+ assert.equal(credited.agentSeconds,900);
+});
+
+test('contexts are never credited',()=>{
+ const summary=base();
+ assert.equal(creditTaskCounters(summary,[{...counter({}),kind:'context'}]),summary);
+});
+
+test('a counter matches an agent session in a worktree of the same project',()=>{
+ const summary=base();summary.sessions[0].workspaceId='orca::/w/caex/.orca/workspaces/fix';summary.intervals[0].workspaceId='orca::/w/caex/.orca/workspaces/fix';
+ const credited=creditTaskCounters(summary,[counter({})]);
+ assert.equal(credited.sessions.length,1);
+ assert.equal(credited.agentSeconds,600);
 });

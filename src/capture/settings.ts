@@ -2,10 +2,10 @@ import {browsers,browserByBundle,sources} from './sources/registry.ts';
 import type {CaptureSource} from './sources/types.ts';
 export interface CaptureSettings {
   macosActivity:boolean;browserSafari:boolean;browserChrome:boolean;browserBrave:boolean;claudeHooks:boolean; codexHooks:boolean; orcaPolling:boolean;tokenUsage:boolean;claudeTokenUsage:boolean;codexTokenUsage:boolean;
-  humanIdleMinutes:number;agentIdleMinutes:number;
+  humanIdleMinutes:number;agentIdleMinutes:number;countTaskCounters:boolean;
   [key:string]:boolean|number;
 }
-export function settingsForSources(sources:CaptureSource[]):Record<string,boolean|number>{return {macosActivity:true,tokenUsage:false,humanIdleMinutes:5,agentIdleMinutes:5,
+export function settingsForSources(sources:CaptureSource[]):Record<string,boolean|number>{return {macosActivity:true,tokenUsage:false,countTaskCounters:false,humanIdleMinutes:5,agentIdleMinutes:5,
   ...Object.fromEntries(sources.map(source=>[source.setting,source.defaultEnabled])),
   ...Object.fromEntries(sources.filter(source=>source.kind==='agent').map(source=>[source.usageSetting,true]))};}
 export const defaultSettings=settingsForSources(sources) as unknown as CaptureSettings;
