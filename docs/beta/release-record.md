@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.21` candidate — 2026-11-06
+## `0.2.0-beta.21` published — 2026-11-06
 
 Includes the beta.20 bulk-assignment fix. Agent-reported contexts and counters from the MCP `set_work_context` and `start_task` tools now render under the project they belong to (by workspace, agent session, or a uniquely named project), visible even when the project is collapsed; items with no project on the day stay in the top section. A new `countTaskCounters` setting, off by default, credits counter spans as agent time: only time not already covered by that agent's measured time in the same project (Orca worktrees count as their repository) is added, to the matching session or to a session of its own. My day, weekly totals, and MCP time tools apply it, and `start_task`/`stop_task` report `measured` from the setting. Locally 322 JavaScript tests, typecheck, UI build, and 26 Rust tests passed. See [updater notes](0.2.0-beta.21-notes.md).
+
+GitHub's Apple Silicon [release run 42249723134](https://github.com/zaosoula/agent-time/actions/runs/42249723134) passed candidate checks, Developer ID signing, notarization, staging, and publication for exact commit `a9ef629f43d4ebfa434f7ee9e08f07d429570765`. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.21 for `darwin-aarch64`. Independent public downloads matched staged SHA-256 `d3efcddf60354c41bba1b8ea84311c835271b9a185062966de5cb784cb37c805` for the updater archive and `2805931e6dddc2620a827b8b413e2572c9bc98b9aec15f0f2facc083d5282760` for the [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.21/Agent%20Time_0.2.0-beta.21_aarch64.dmg). The mounted app passed Gatekeeper as a notarized Developer ID app and strict nested signature verification. It replaced beta.19 in `/Applications` on the owner's Mac by DMG install; hooks, Mac activity, and Orca polling resumed capture within a minute.
 
 ## `0.2.0-beta.20` cancelled — 2026-11-06
 
