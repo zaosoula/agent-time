@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.23` candidate — 2026-11-06
+## `0.2.0-beta.23` published — 2026-11-06
 
 Adds About Agent Time to the app menu (native About panel with the bundle version, website, and copyright). Hook status now compares managed handlers by content regardless of position, because Orca rebuilds Claude profile settings and appends its own hook after ours, which made those profiles show as needing an update after every Orca sync. Locally the Rust app built and 21 hook-installation tests passed. This release is intended to be the first observed in-app update (beta.22 to beta.23) on the owner's Mac. See [updater notes](0.2.0-beta.23-notes.md).
+
+GitHub's Apple Silicon [release run 42284648808](https://github.com/zaosoula/agent-time/actions/runs/42284648808) passed candidate checks, Developer ID signing, notarization, staging, and publication for exact commit `7dbc4e0c0cdc57c84a79e489c5f58b3c1843b186`. The [live feed](https://agent-time.ezyostudio.com/beta/latest.json) advertises beta.23. Independent public downloads matched staged SHA-256 `d18c482fa6b86d505cbafa7fc471fa062d7d10396be334dd91747af961d67ba0` for the updater archive and `be09f242b548a613e0b06f62127ceaeaf9006119ec41d9180e7807cec1d0809a` for the [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.23/Agent%20Time_0.2.0-beta.23_aarch64.dmg). It was not installed by DMG: the owner's Mac (beta.22) is to update through the in-app updater.
 
 ## `0.2.0-beta.22` published — 2026-11-06
 
