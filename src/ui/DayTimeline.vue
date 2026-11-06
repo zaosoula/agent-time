@@ -130,6 +130,24 @@ const expandedRoots = ref<Record<string, boolean>>({});
 const collapsedProjects = ref<Record<string, boolean>>({});
 const collapsedActivities = ref<Record<string, boolean>>({});
 const projectCollapsed = (name: string) => collapsedProjects.value[name] !== false;
+/** Reported work for a session row: checkpoints and timers its agent declared. */
+const sessionReported = (session: DaySession) =>
+  session.child ? [] : store.reportedPlacement.bySession.get(store.reportedSessionKey(session.provider, session.sessionId)) || [];
+/** The project's unified reported row; items shown on a visible agent row are left out of it. */
+function unifiedReported(group: TimelineGroup) {
+  const items = store.reportedPlacement.byProject.get(group.name) || [];
+  if (projectCollapsed(group.name)) return items;
+  const onRows = new Set(
+    visibleRows(group).flatMap((row) => sessionReported(row.session).map((item) => item.id)),
+  );
+  return items.filter((item) => !onRows.has(item.id));
+}
+const reportedStyle = (item: { kind: string; start: number; end: number }) =>
+  item.kind === 'context' ? { left: percent(item.start), width: '3px' } : barStyle(item);
+const reportedTitle = (item: { kind: string; title: string; start: number; end: number; active: boolean }) =>
+  item.kind === 'context'
+    ? `${tickClock(item.start)} · checkpoint: ${item.title}`
+    : `${tickClock(item.start)}–${item.active ? 'now' : tickClock(item.end)} · timer: ${item.title}`;
 const activityKey = (projectName: string, kind: 'mac' | 'browser') => `${projectName}:${kind}`;
 const activityCollapsed = (projectName: string, kind: 'mac' | 'browser') =>
   collapsedActivities.value[activityKey(projectName, kind)] === true;
@@ -561,7 +579,7 @@ onUnmounted(() => {
         </button>
         <ReportedWorkTimeline
           compact
-          :items="store.reportedPlacement.byProject.get(projectGroup.name) || []"
+          :items="unifiedReported(projectGroup)"
           :range="timelineRange"
           :now="store.minute"
         />
@@ -608,6 +626,14 @@ onUnmounted(() => {
                 class="time-block agent"
                 :style="barStyle(interval)"
                 :title="`${tickClock(interval.start)}–${tickClock(interval.end)} · agent work`"
+              ></span>
+              <span
+                v-for="item in sessionReported(row.session)"
+                :key="'r' + item.id"
+                class="reported-pin"
+                :class="[item.kind, { active: item.active }]"
+                :style="reportedStyle(item)"
+                :title="reportedTitle(item)"
               ></span>
               <template v-if="!row.session.child">
                 <span

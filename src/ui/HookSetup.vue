@@ -350,6 +350,16 @@ onUnmounted(() => {
               {{ busy ? 'Installing…' : repairing ? 'Update selected hooks' : 'Install selected hooks' }}
             </button>
           </div>
+          <details v-if="repairTargets.length" class="hook-why">
+            <summary>Why is this needed?</summary>
+            <div v-for="t in repairTargets" :key="t.id" class="hook-why-target">
+              <strong>{{ t.label }}</strong> — {{ t.reason || label(t.state) }}
+              <ul v-if="t.details?.length || t.error">
+                <li v-for="line in t.details || []" :key="line">{{ line }}</li>
+                <li v-if="t.error">{{ t.error }}</li>
+              </ul>
+            </div>
+          </details>
         </DialogContent></DialogPortal
       ></DialogRoot
     >
@@ -735,6 +745,27 @@ input {
   font-size: 12px;
   color: var(--blue);
   line-height: 1.5;
+}
+.hook-why {
+  margin-top: 14px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.hook-why summary {
+  cursor: pointer;
+  user-select: none;
+}
+.hook-why-target {
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+}
+.hook-why-target strong {
+  color: var(--text);
+  font-weight: 600;
+}
+.hook-why ul {
+  margin: 4px 0 0;
+  padding-left: 16px;
 }
 .hook-problems {
   max-height: 110px;

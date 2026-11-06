@@ -755,6 +755,24 @@ h1 {
   border-radius: 3px;
   opacity: 0.8;
 }
+.reported-pin {
+  position: absolute;
+  bottom: 4px;
+  height: 5px;
+  min-width: 3px;
+  border-radius: 3px;
+  background: var(--blue);
+  z-index: 1;
+}
+.reported-pin.context {
+  bottom: 2px;
+  height: 11px;
+  border-radius: 2px;
+  background: var(--status-good);
+}
+.reported-pin.active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 35%, transparent);
+}
 .time-block.inferred {
   opacity: 0.42;
 }

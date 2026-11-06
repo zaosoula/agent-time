@@ -15,6 +15,17 @@ const visible = computed(() =>
       : item.end >= props.range.start && item.start <= props.range.end,
   ),
 );
+const counters = computed(() => visible.value.filter((item) => item.kind === 'counter'));
+const checkpoints = computed(() => visible.value.filter((item) => item.kind === 'context'));
+const counterSeconds = computed(() =>
+  counters.value.reduce((total, item) => total + ((item.active ? props.now : item.end) - item.start), 0),
+);
+function describe(item: ReportedWorkItem) {
+  const scope = `${item.issueKey ? item.issueKey + ' · ' : ''}${item.provider || 'Agent'}${item.sessionId ? ' · session ' + item.sessionId.slice(-6) : ''}`;
+  return item.kind === 'context'
+    ? `${clock(item.start)} · checkpoint: ${item.title} (${scope})`
+    : `${clock(item.start)}–${item.active ? 'now' : clock(item.end)} · timer: ${item.title} · ${elapsed((item.active ? props.now : item.end) - item.start)} (${scope})`;
+}
 const shown = computed(() => (expanded.value || props.compact ? visible.value : visible.value.slice(0, 6)));
 function placement(item: ReportedWorkItem) {
   const span = props.range.end - props.range.start;
@@ -27,13 +38,41 @@ function placement(item: ReportedWorkItem) {
 }
 </script>
 <template>
-  <section
-    v-if="visible.length"
-    class="reported-work"
-    :class="{ compact }"
-    :aria-label="compact ? 'Agent reported work for this project' : 'Agent reported work on timeline'"
+  <div
+    v-if="compact && visible.length"
+    class="reported-row unified"
+    role="group"
+    aria-label="Agent reported checkpoints and timers for this project"
   >
-    <div v-if="!compact" class="reported-heading">
+    <div class="reported-label">
+      <Flag :size="14" /><span
+        ><strong>Agent reported</strong
+        ><small
+          >{{ counters.length ? `${counters.length} ${counters.length === 1 ? 'timer' : 'timers'}` : ''
+          }}{{ counters.length && checkpoints.length ? ' · ' : ''
+          }}{{
+            checkpoints.length ? `${checkpoints.length} ${checkpoints.length === 1 ? 'checkpoint' : 'checkpoints'}` : ''
+          }}</small
+        ></span
+      >
+    </div>
+    <div class="reported-track">
+      <span
+        v-for="item in visible"
+        :key="item.id"
+        class="reported-mark"
+        :class="[item.kind, { active: item.active }]"
+        :style="placement(item)"
+        :title="describe(item)"
+      ></span>
+    </div>
+    <span class="reported-value"
+      >{{ counters.length ? elapsed(counterSeconds) : clock(checkpoints[0]!.start)
+      }}<small>{{ counters.some((item) => item.active) ? 'timer running' : counters.length ? 'reported' : 'last checkpoint' }}</small></span
+    >
+  </div>
+  <section v-else-if="!compact && visible.length" class="reported-work" aria-label="Agent reported work on timeline">
+    <div class="reported-heading">
       <strong>Agent reported work</strong
       ><small>Task context and elapsed counters with no project on this day</small>
     </div>
@@ -65,7 +104,7 @@ function placement(item: ReportedWorkItem) {
         }}<small v-if="item.active">open counter</small></span
       >
     </div>
-    <button v-if="!compact && visible.length > 6" class="reported-more" @click="expanded = !expanded">
+    <button v-if="visible.length > 6" class="reported-more" @click="expanded = !expanded">
       {{ expanded ? 'Show fewer' : `Show ${visible.length - 6} more reported items` }}
     </button>
   </section>
@@ -75,14 +114,13 @@ function placement(item: ReportedWorkItem) {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
 }
-.reported-work.compact {
-  background: transparent;
-  border-bottom: 0;
-}
-.reported-work.compact .reported-row {
+.reported-row.unified {
   min-height: 34px;
   padding-left: 41px;
   border-bottom: 1px dashed var(--border);
+}
+.reported-mark.active {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 35%, transparent);
 }
 .reported-heading {
   display: flex;
