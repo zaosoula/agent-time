@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.28` candidate — 2026-11-07
+## `0.2.0-beta.28` published — 2026-11-07
 
 Hotfix: the beta.27 dashboard stayed blank. Commit `def580b` made `correlate.ts` (bundled into the UI) import `observation-retention.ts`, which imported `orca.ts`; its top-level `promisify(execFile)` throws in the webview, where Vite externalizes `node:` built-ins (the build only warned). The pure snapshot rule moved into `observation-retention.ts`. A new test walks the UI import graph from `src/ui/main.ts` and fails on runtime `node:` imports; it fails on beta.27's code. The collector, hooks and tray were unaffected, so capture continued. Also ships the running-timer badge with stop and discard, timers ending with their agent session, and stacked timer lanes. Locally 338 JavaScript tests, typecheck, UI build without externalized-module warnings, and 26 Rust tests passed. See [updater notes](0.2.0-beta.28-notes.md).
+
+GitHub's Apple Silicon [release run 42410206337](https://github.com/zaosoula/agent-time/actions/runs/42410206337) published exact commit `3f41c79`; public downloads matched staged SHA-256 `c2555c05c6d390ac71bc96cbd37d39314afa672ac2d2c4c901951102160785bf` (updater archive) and `d81a95d633cf9b9f2acb8a662fdda41bdad85fccf74c39a90d1a3a87d38654e1` (DMG), and the mounted app passed Gatekeeper as a notarized Developer ID app.
 
 ## `0.2.0-beta.27` published — 2026-11-07
 
