@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.29` candidate — 2026-11-08
+
+Day page redesign: Home (formerly My day) across projects and the same view per project from the sidebar. A new overview shows sessions, subagents, peak concurrency, cumulative agent time, human time and the agent-to-human ratio, and an agent-concurrency chart (main sessions plus subagents) with a human-activity lane, idle shading over 30 minutes, zoomable work periods and hover details. Work periods use 10-minute slots holding at least two minutes of activity, because sub-minute scheduled-agent blips otherwise left no idle gap on the owner's 7 November. The timers popover can discard all timers started before the selected day. Rendered in a headless browser against a copy of the owner's data; locally 338 JavaScript tests, typecheck, the UI import guard and the UI build passed. See [updater notes](0.2.0-beta.29-notes.md).
+
 ## `0.2.0-beta.28` published — 2026-11-07
 
 Hotfix: the beta.27 dashboard stayed blank. Commit `def580b` made `correlate.ts` (bundled into the UI) import `observation-retention.ts`, which imported `orca.ts`; its top-level `promisify(execFile)` throws in the webview, where Vite externalizes `node:` built-ins (the build only warned). The pure snapshot rule moved into `observation-retention.ts`. A new test walks the UI import graph from `src/ui/main.ts` and fails on runtime `node:` imports; it fails on beta.27's code. The collector, hooks and tray were unaffected, so capture continued. Also ships the running-timer badge with stop and discard, timers ending with their agent session, and stacked timer lanes. Locally 338 JavaScript tests, typecheck, UI build without externalized-module warnings, and 26 Rust tests passed. See [updater notes](0.2.0-beta.28-notes.md).
