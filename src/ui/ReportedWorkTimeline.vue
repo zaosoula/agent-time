@@ -20,6 +20,25 @@ const checkpoints = computed(() => visible.value.filter((item) => item.kind === 
 const counterSeconds = computed(() =>
   counters.value.reduce((total, item) => total + ((item.active ? props.now : item.end) - item.start), 0),
 );
+/** Timers that overlap are stacked into lanes; checkpoints sit on a line of their own above them. */
+const maxLanes = 6;
+const lanes = computed(() => {
+  const ends: number[] = [],
+    lane = new Map<string, number>();
+  for (const item of [...counters.value].sort((a, b) => a.start - b.start || a.end - b.end)) {
+    const end = item.active ? props.now : item.end;
+    let index = ends.findIndex((last) => last <= item.start);
+    if (index < 0) index = ends.length < maxLanes ? ends.length : ends.indexOf(Math.min(...ends));
+    ends[index] = Math.max(ends[index] ?? 0, end);
+    lane.set(item.id, index);
+  }
+  return { lane, count: Math.max(1, ends.length) };
+});
+function laneStyle(item: ReportedWorkItem) {
+  const base = placement(item);
+  if (item.kind === 'context') return { ...base, top: '2px', height: '9px' };
+  return { ...base, top: `${14 + (lanes.value.lane.get(item.id) ?? 0) * 8}px`, height: '6px' };
+}
 function describe(item: ReportedWorkItem) {
   const scope = `${item.issueKey ? item.issueKey + ' · ' : ''}${item.provider || 'Agent'}${item.sessionId ? ' · session ' + item.sessionId.slice(-6) : ''}`;
   return item.kind === 'context'
@@ -56,13 +75,13 @@ function placement(item: ReportedWorkItem) {
         ></span
       >
     </div>
-    <div class="reported-track">
+    <div class="reported-track stacked" :style="{ height: `${18 + lanes.count * 8}px` }">
       <span
         v-for="item in visible"
         :key="item.id"
         class="reported-mark"
         :class="[item.kind, { active: item.active }]"
-        :style="placement(item)"
+        :style="laneStyle(item)"
         :title="describe(item)"
       ></span>
     </div>
@@ -118,6 +137,12 @@ function placement(item: ReportedWorkItem) {
   min-height: 34px;
   padding-left: 41px;
   border-bottom: 1px dashed var(--border);
+}
+.reported-track.stacked {
+  border-bottom: 0;
+}
+.reported-track.stacked .reported-mark {
+  border-radius: 3px;
 }
 .reported-mark.active {
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--blue) 35%, transparent);

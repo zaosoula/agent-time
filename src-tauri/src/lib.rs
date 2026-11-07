@@ -264,6 +264,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "linear_sync"|"linear_disconnect" if p.is_empty() || p.len()==1 && p.get("workspaceId").and_then(Value::as_str).map(linear_workspace).unwrap_or(false)=>Ok(()),
   "review_undo" if p.len()==1+usize::from(p.contains_key("date")) && optional_date(p) && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).unwrap_or(false)=>Ok(()),
   "human_group_split" if p.len()>=2 && p.len()<=5 && optional_date(p) && p.get("splitAt").and_then(Value::as_f64).map(f64::is_finite).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false) && ["beforeProject","afterProject"].iter().all(|key|p.get(*key).map(|value|value.as_str().is_some()).unwrap_or(true)) && p.keys().all(|key|["pairs","splitAt","beforeProject","afterProject","date"].contains(&key.as_str()))=>Ok(()),
+  "reported_timer_stop" if p.keys().all(|k|k=="taskCounterId"||k=="discard") && p.get("taskCounterId").and_then(Value::as_str).map(|id|id.len()==36&&id.bytes().all(|b|b.is_ascii_hexdigit()||b==b'-')).unwrap_or(false) && p.get("discard").map(Value::is_boolean).unwrap_or(true)=>Ok(()),
   "day_review_status"|"day_review_mark"|"reported_work"|"work_outcomes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|date.len()==10&&date.bytes().enumerate().all(|(index,byte)|if index==4||index==7{byte==b'-'}else{byte.is_ascii_digit()})).unwrap_or(false)=>Ok(()),
   "archive_preview"|"archive_import" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
   "archive_delete" if p.len()==2 && p.get("confirmed")==Some(&Value::Bool(true)) && p.get("id").and_then(Value::as_str).map(|id|id.len()>30&&id.len()<100&&id.starts_with("agent-time-")&&id.ends_with(".sqlite")&&id.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'-'||b==b'.')).unwrap_or(false)=>Ok(()),
@@ -468,6 +469,8 @@ pub fn run(){
  assert!(validate_method("summary",&json!({"date":"2026-11-02","extra":true})).is_err());
  assert!(validate_method("summary",&json!({"date":"2026-11-02","background":true,"since":"abc-1"})).is_ok());
  assert!(validate_method("summary",&json!({"date":"2026-11-02","since":7})).is_err());
+ assert!(validate_method("reported_timer_stop",&json!({"taskCounterId":"7a2b3c4d-5e6f-4a8b-9c0d-1e2f3a4b5c62","discard":true})).is_ok());
+ assert!(validate_method("reported_timer_stop",&json!({"taskCounterId":"x;rm"})).is_err());
  for method in ["reported_work","work_outcomes"] {
   assert!(validate_method(method,&json!({"date":"2026-11-02"})).is_ok());
   assert!(validate_method(method,&json!({"date":"2026-11-02","extra":true})).is_err());

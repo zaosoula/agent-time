@@ -606,7 +606,21 @@ export class Collector {
     const first=new Date(`${date}T00:00:00`),last=new Date(first);
     last.setDate(last.getDate()+1);
     const start=first.getTime()/1000,end=last.getTime()/1000;
-    return reportedWorkForDay(this.store.agentReports(start-86400,end),start,end,Date.now()/1000);
+    const now=Date.now()/1000;
+    return reportedWorkForDay(this.store.agentReports(start-86400,end),start,end,now,this.store.sessionEnds(start-86400,Math.max(end,now)+60));
+  }
+  /**
+   * Stop an agent-reported timer from the app, for timers an agent left open.
+   * `discard` removes it from the timeline and from counted time.
+   */
+  stopReportedTimer(taskCounterId:string,discard=false){
+    if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Stop timers in the app that owns capture');
+    if(!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(taskCounterId))throw new Error('Invalid timer');
+    const now=Date.now()/1000,start=this.store.agentReports(now-31*86400,now+60).find(event=>event.kind==='task_start'&&event.eventId===taskCounterId);
+    if(!start)throw new Error('This timer no longer exists');
+    this.store.put(makeEvent('agent_report','task_stop',{provider:start.provider,sessionId:start.sessionId,workspaceId:start.workspaceId,data:{taskCounterId,stoppedBy:'user',...(discard?{discarded:true}:{})}}));
+    this.summaryCache=undefined;
+    return {stopped:taskCounterId,discarded:discard};
   }
   weeklyReview(startDate:string){
     try{localDayBounds(startDate);}catch{throw new Error('Invalid week start');}

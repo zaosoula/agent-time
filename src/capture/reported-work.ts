@@ -8,13 +8,18 @@ export interface ReportedWorkItem {
 }
 
 /** Declarations are context, never credited time. A context is a point; a counter is an elapsed span. */
-export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number,now:number):ReportedWorkItem[]{
- const starts=new Map<string,CaptureEvent>(),stops=new Map<string,number>();
+/**
+ * `sessionEnds` maps `provider:sessionId` to when that agent session ended: a
+ * timer its agent never stopped ends with the session instead of running on.
+ * A stop with `discarded` (from the app) removes the timer altogether.
+ */
+export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number,now:number,sessionEnds:Map<string,number>=new Map()):ReportedWorkItem[]{
+ const starts=new Map<string,CaptureEvent>(),stops=new Map<string,number>(),discarded=new Set<string>();
  const contexts:ReportedWorkItem[]=[];
  for(const event of events){
   if(event.source!=='agent_report'||event.observedAt>=end)continue;
   if(event.kind==='task_start')starts.set(event.eventId,event);
-  else if(event.kind==='task_stop')stops.set(String(event.data?.taskCounterId),event.observedAt);
+  else if(event.kind==='task_stop'){const id=String(event.data?.taskCounterId);if(event.data?.discarded===true)discarded.add(id);if(!stops.has(id))stops.set(id,event.observedAt);}
   else if(event.kind==='work_context'&&event.observedAt>=start){
    const title=String(event.data?.task||event.data?.issueKey||event.data?.project||'Work context');
    contexts.push({id:event.eventId,kind:'context',title,issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,project:typeof event.data?.project==='string'?event.data.project:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:event.observedAt,active:false});
@@ -22,7 +27,10 @@ export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number
  }
  const counters:ReportedWorkItem[]=[];
  for(const event of starts.values()){
-  const stoppedAt=stops.get(event.eventId),until=Math.min(stoppedAt??now,end);
+  if(discarded.has(event.eventId))continue;
+  const sessionEnd=event.sessionId?sessionEnds.get(`${event.provider||''}:${event.sessionId}`):undefined;
+  const endedWithSession=sessionEnd!==undefined&&sessionEnd>=event.observedAt?sessionEnd:undefined;
+  const stoppedAt=stops.get(event.eventId)??endedWithSession,until=Math.min(stoppedAt??now,end);
   if(until<=start||event.observedAt>=end)continue;
   counters.push({id:event.eventId,kind:'counter',title:String(event.data?.name||'Task counter'),issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:Math.max(event.observedAt,until),active:stoppedAt===undefined&&now<end});
  }

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui';
-import { ArrowRight, Bot, CalendarDays, CheckCircle2, Clock3, Layers3, Monitor, Radio, Search, ShieldCheck } from '@lucide/vue';
+import { ArrowRight, Bot, CalendarDays, CheckCircle2, Clock3, Layers3, Monitor, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
+import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
 import DayPicker from './DayPicker.vue';
 import DayTimeline from './DayTimeline.vue';
@@ -16,6 +17,18 @@ import { projectLabel, workspaceProject, unassignedProject } from './project-ide
 const props = defineProps<{ busy: boolean }>();
 const emit = defineEmits<{ start: [] }>();
 const store = reactive(useStore());
+const timerBusy = ref('');
+async function stopTimer(id: string, discard = false) {
+  timerBusy.value = id;
+  try {
+    await store.stopTimer(id, discard);
+    toast.success(discard ? 'Timer discarded.' : 'Timer stopped.', 'timer');
+  } catch (cause) {
+    toast.error(cause, 'timer');
+  } finally {
+    timerBusy.value = '';
+  }
+}
 
 const view = ref(store.page === 'sessions' ? 'sessions' : 'timeline');
 watch(
@@ -108,6 +121,39 @@ const websites = computed(() => {
           <span v-if="store.isToday && store.runningCount" class="badge good working-now">
             <Radio :size="11" />{{ store.runningCount }} {{ store.runningCount === 1 ? 'agent' : 'agents' }} working now
           </span>
+          <InfoPopover v-if="store.runningTimers.length" label="Running agent timers">
+            <template #trigger>
+              <span class="badge working-now timers-badge"
+                ><Timer :size="11" />{{ store.runningTimers.length }}
+                {{ store.runningTimers.length === 1 ? 'timer' : 'timers' }} running</span
+              >
+            </template>
+            <h3>Running agent timers</h3>
+            <p>
+              Timers agents started with start_task and have not stopped. A timer also ends when its agent session
+              ends. Stop one to end it now, or discard one an agent left behind.
+            </p>
+            <ul class="timer-list">
+              <li v-for="timer in store.runningTimers" :key="timer.id">
+                <span
+                  ><strong :title="timer.title">{{ timer.title }}</strong
+                  ><small
+                    >{{ timer.provider || 'Agent' }} · since {{ clock(timer.start) }} ·
+                    {{ duration(store.minute - timer.start) }}</small
+                  ></span
+                >
+                <button class="btn btn-sm" :disabled="timerBusy === timer.id" @click="stopTimer(timer.id)">Stop</button>
+                <button
+                  class="btn btn-sm"
+                  :disabled="timerBusy === timer.id"
+                  title="Remove this timer from the timeline and counted time"
+                  @click="stopTimer(timer.id, true)"
+                >
+                  Discard
+                </button>
+              </li>
+            </ul>
+          </InfoPopover>
         </p>
       </div>
       <DayPicker />
@@ -410,6 +456,39 @@ const websites = computed(() => {
 .working-now {
   margin-left: var(--space-2);
   vertical-align: middle;
+}
+.timers-badge {
+  color: var(--blue);
+  cursor: pointer;
+}
+.timer-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 260px;
+  overflow: auto;
+}
+.timer-list li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 0;
+  border-top: 1px solid var(--border);
+}
+.timer-list li > span {
+  flex: 1;
+  min-width: 0;
+}
+.timer-list strong,
+.timer-list small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.timer-list small {
+  color: var(--muted);
+  font-size: var(--text-xs);
 }
 .popover-list {
   margin: 0 0 8px;

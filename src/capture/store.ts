@@ -131,6 +131,14 @@ export class EventStore {
     if(!row)return [];
     return (JSON.parse(String(row.before_json)) as Array<{start:string;end:string}>).flatMap(pair=>[pair.start,pair.end]);
   }
+  /** When each agent session ended, as `provider:sessionId` → time, from session-end hooks in [start,end). */
+  sessionEnds(start:number,end:number):Map<string,number>{
+    const ends=new Map<string,number>();
+    for(const row of this.db.prepare("SELECT json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') session,observed_at at FROM events INDEXED BY events_hooks WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at").iterate(start,end)){
+      if(row.session)ends.set(`${row.provider||''}:${row.session}`,Number(row.at));
+    }
+    return ends;
+  }
   agentReports(start:number,end:number):CaptureEvent[]{
     return this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").all(start,end)
       .map(row=>JSON.parse(String(row.payload)) as CaptureEvent);

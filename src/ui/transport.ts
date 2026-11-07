@@ -97,6 +97,12 @@ export const workOutcomeTransport = {
 };
 export const reportedWorkTransport = {
   list: (date: string) => request<ReportedWorkItem[]>('reported_work', { date }),
+  /** Stop a timer an agent left running; `discard` also removes it from the timeline and counted time. */
+  stop: (taskCounterId: string, discard = false) =>
+    request<{ stopped: string; discarded: boolean }>('reported_timer_stop', {
+      taskCounterId,
+      ...(discard ? { discard: true } : {}),
+    }),
 };
 export const manualNoteTransport = {
   list: (date: string) => request<ManualNote[]>('manual_notes', { date }),

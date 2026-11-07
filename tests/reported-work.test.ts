@@ -72,3 +72,18 @@ test('a counter matches an agent session in a worktree of the same project',()=>
  assert.equal(credited.sessions.length,1);
  assert.equal(credited.agentSeconds,600);
 });
+
+test('a timer its agent never stopped ends with the agent session',()=>{
+ const start=report('t1','task_start',day+100,{name:'Audit'});
+ const open=reportedWorkForDay([start],day,day+86400,day+5000);
+ assert.equal(open[0].active,true);
+ const ended=reportedWorkForDay([start],day,day+86400,day+5000,new Map([['claude:session-one',day+700]]));
+ assert.deepEqual([ended[0].end,ended[0].active],[day+700,false]);
+});
+
+test('a timer stopped from the app ends then; a discarded one disappears',()=>{
+ const start=report('t1','task_start',day+100,{name:'Audit'});
+ const stopped=reportedWorkForDay([start,report('s1','task_stop',day+400,{taskCounterId:'t1',stoppedBy:'user'})],day,day+86400,day+5000);
+ assert.deepEqual([stopped[0].end,stopped[0].active],[day+400,false]);
+ assert.equal(reportedWorkForDay([start,report('s2','task_stop',day+400,{taskCounterId:'t1',stoppedBy:'user',discarded:true})],day,day+86400,day+5000).length,0);
+});

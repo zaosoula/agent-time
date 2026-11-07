@@ -552,6 +552,15 @@ function createStore() {
     () => new Set(creditedSessions.value.map((session) => session.runId).filter(Boolean)).size,
   );
 
+  /** Agent-reported timers still running on the selected day, across all projects. */
+  const runningTimers = computed(() =>
+    reportedWork.value.filter((item) => item.kind === 'counter' && item.active).sort((a, b) => a.start - b.start),
+  );
+  async function stopTimer(id: string, discard = false) {
+    await reportedWorkTransport.stop(id, discard);
+    reportedWork.value = markRaw(reportedWork.value.filter((item) => item.id !== id || !discard));
+    await pollers.summary.refresh();
+  }
   /** Key linking reported work to the agent session row that reported it. */
   const reportedSessionKey = (provider: string | undefined, sessionId: string | undefined) =>
     `${provider || ''}:${sessionId || ''}`;
@@ -780,6 +789,8 @@ function createStore() {
     filteredIntervals,
     visibleReportedWork,
     reportedPlacement,
+    runningTimers,
+    stopTimer,
     reportedSessionKey,
     agentTime,
     mainAgentTime,
