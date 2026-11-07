@@ -1,8 +1,14 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.25` candidate — 2026-11-07
+## `0.2.0-beta.26` candidate — 2026-11-07
+
+Agent time in day summaries, the weekly review, project rows, menu bar, widget and MCP `agentRunningSeconds` is now cumulative (main sessions plus subagents, each counted in full); `childAgentSeconds` was computed but never displayed. `mainAgentSeconds` and `agentWallSeconds` (clock time with any agent working) are added. Non-fresh Orca worker snapshots are deduplicated with a 5-minute heartbeat while fresh snapshots stay per poll; hook-to-worker binding accepts a non-fresh snapshot for one heartbeat plus 45 s. Replaying six days of the owner's history gave identical intervals with and without deduplication and the same results as the previous rule. Storage compaction drops snapshots live capture no longer stores; on a snapshot of the owner's 1.5 GB store it passed whole-history verification, 2,258,288 to 778,705 rows and 650 MB, in 91 s with a 7.5 GB peak. Constructing a hook installer no longer installs the runtime: test and development processes had replaced the owner's runtime with their own Node and sources, prompting a repair of every hook; only the packaged app refreshes it at capture start. Locally 333 JavaScript tests, typecheck, UI build and 26 Rust tests passed. See [updater notes](0.2.0-beta.26-notes.md).
+
+## `0.2.0-beta.25` published — 2026-11-07
 
 Orca worker snapshots were 1.46M of 2.26M events (about 580 MB of 1 GB of payload) in the owner's history; 99.7% were non-fresh workers with no host, no final outcome and a released, retained or reclaimable terminal, rewritten each 30 s quiet-Run poll and never deduplicated (the observation key required a host). They credit no interval (only fresh pairs do), cannot bind hooks (hooks carry host `local` and a terminal; these rows have neither) and close nothing, so the poller no longer stores them. Runs whose workers all have released or reclaimable terminals now use the 5-minute settled cadence. Replaying 2026-10-30 to 2026-11-06 from a snapshot with and without these rows produced identical intervals and agent, human and elapsed totals; events per day fell 90–96% (e.g. 896,945 → 45,232) and reducer time fell from 0.6–1.2 s to 0.05–0.3 s per day. Today's summary also drops 247 empty dispatch sessions (state unknown, 0 s). Existing rows stay until a later compaction. Locally 331 JavaScript tests and typecheck passed. See [updater notes](0.2.0-beta.25-notes.md).
+
+GitHub's Apple Silicon [release run 42324303576](https://github.com/zaosoula/agent-time/actions/runs/42324303576) published exact commit `3cebb3d`; public downloads matched staged SHA-256 `a6a732e98c2b4a5521a480030a1812ffca5930e8a35453933c6e5ca743f94d15` (updater archive) and `f4caa740cc086e37cfe02a5a9eafb284de63769869612ad4328a8743cbfc4da7` (DMG). The owner's Mac updated in-app.
 
 ## `0.2.0-beta.24` published — 2026-11-07
 
