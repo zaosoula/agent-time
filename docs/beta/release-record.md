@@ -1,8 +1,14 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.24` candidate — 2026-11-07
+## `0.2.0-beta.25` candidate — 2026-11-07
+
+Orca worker snapshots were 1.46M of 2.26M events (about 580 MB of 1 GB of payload) in the owner's history; 99.7% were non-fresh workers with no host, no final outcome and a released, retained or reclaimable terminal, rewritten each 30 s quiet-Run poll and never deduplicated (the observation key required a host). They credit no interval (only fresh pairs do), cannot bind hooks (hooks carry host `local` and a terminal; these rows have neither) and close nothing, so the poller no longer stores them. Runs whose workers all have released or reclaimable terminals now use the 5-minute settled cadence. Replaying 2026-10-30 to 2026-11-06 from a snapshot with and without these rows produced identical intervals and agent, human and elapsed totals; events per day fell 90–96% (e.g. 896,945 → 45,232) and reducer time fell from 0.6–1.2 s to 0.05–0.3 s per day. Today's summary also drops 247 empty dispatch sessions (state unknown, 0 s). Existing rows stay until a later compaction. Locally 331 JavaScript tests and typecheck passed. See [updater notes](0.2.0-beta.25-notes.md).
+
+## `0.2.0-beta.24` published — 2026-11-07
 
 Measured against a snapshot of the owner's 1.5 GB, 2M-event history: `day_review_status` rebuilt eight day summaries (26 s cold), blocking the single-threaded collector. Past days' review snapshots are now cached in a `day_review_cache` table keyed by a signature of their event window (count and max rowid), review decisions and undo history, notes, reported resources, and settings; after a restart the request takes 9 s (today and yesterday rebuilt) and 0.1–0.2 s warm. Day summary polls carry a version token, so an unchanged day answers with a 59-byte marker instead of 2.5–5.3 MB every five seconds. The hook runtime version hashes shared sources, so most releases flagged every hook as needing repair; the packaged collector now installs the new runtime on start when configurations are unchanged, and hook status lists per-configuration differences. Also adds app-menu update check, capture toggle and collector restart, unified reported-work rows, the update banner first, and an immediate hook-dialog dismissal. Locally 330 JavaScript tests, typecheck, UI build and 26 Rust tests passed. See [updater notes](0.2.0-beta.24-notes.md).
+
+GitHub's Apple Silicon [release run 42303340581](https://github.com/zaosoula/agent-time/actions/runs/42303340581) published exact commit `9679fd5`; public downloads matched staged SHA-256 `324db13b0b13c359203fee800567f79c5645708c9e45a8ae2e09228b8d988b03` (updater archive) and `2b5f2d65b4f6a5cbc79305de1016a0965a1df7dfcd7eb2d70430216da3aedd00` (DMG). Left for the in-app updater.
 
 ## `0.2.0-beta.23` published — 2026-11-06
 
