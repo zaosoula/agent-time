@@ -26,6 +26,11 @@ test('a stable hook command survives runtime refresh at startup',async()=>{
   writeFileSync(current,'0000000000000000\n');
   writeFileSync(join(f.home,'Library/Application Support/studio.ezyo.agenttime/hook-runtime',f.manager.status().runtimeVersion,'node'),'damaged executable');
   const restarted=new HookInstallation(f.output,{home:f.home,env:{}});
+  // Constructing an installer never touches the runtime; the packaged app refreshes it at start.
+  assert.equal(readFileSync(current,'utf8'),'0000000000000000\n');
+  assert.equal(restarted.status().targets.find(t=>t.provider==='codex')?.reason,'Hook runtime needs repair');
+  assert.deepEqual(restarted.status().targets.find(t=>t.provider==='codex')?.details?.[0]?.startsWith('Hook runtime 0000000000000000 →'),true);
+  assert.equal(restarted.refreshRuntime(),true);
   assert.equal(restarted.status().runtimeReady,true);
   assert.equal(restarted.status().targets.find(t=>t.provider==='codex')?.state,'installed');
   assert.equal(readFileSync(configPath,'utf8'),before);

@@ -62,7 +62,9 @@ function managedLast(config:any,recognized:string[]){
 function privateWrite(path:string,text:string){mkdirSync(dirname(path),{recursive:true,mode:0o700});if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('symlink state refused');const temp=path+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,path);}
 export class HookInstallation{
  private output:string;private home:string;private env:NodeJS.ProcessEnv;private runtime:string;private stateRoot:string;private migrationError:string|null=null;private busy=false;private installErrors=new Map<string,string>();
- constructor(output:string,options:Options={}){this.output=resolve(output);this.home=options.home||homedir();this.env=options.env||process.env;this.stateRoot=join(this.home,'Library/Application Support/studio.ezyo.agenttime');this.runtime=join(this.stateRoot,'hook-runtime',runtimeVersion);const records=join(this.stateRoot,'hook-installations');const installed=existsSync(records)&&readdirSync(records,{withFileTypes:true}).some(entry=>entry.isDirectory()&&existsSync(this.ledgerPath(entry.name)));if(installed)try{this.installRuntime();}catch{/* Status reports a runtime that needs repair without blocking capture startup. */}}
+ constructor(output:string,options:Options={}){this.output=resolve(output);this.home=options.home||homedir();this.env=options.env||process.env;this.stateRoot=join(this.home,'Library/Application Support/studio.ezyo.agenttime');this.runtime=join(this.stateRoot,'hook-runtime',runtimeVersion);}
+ /** Whether this Mac has hooks installed by Agent Time. */
+ private hasInstallations(){const records=join(this.stateRoot,'hook-installations');return existsSync(records)&&readdirSync(records,{withFileTypes:true}).some(entry=>entry.isDirectory()&&existsSync(this.ledgerPath(entry.name)));}
  private ledgerPath(id:string){return join(this.stateRoot,'hook-installations',id,'managed.json');}
  private commands(id:string):string[]{const p=this.ledgerPath(id);if(!existsSync(p))return [];const value=JSON.parse(readFileSync(p,'utf8'));if(!Array.isArray(value.commands)||!value.commands.every((v:unknown)=>typeof v==='string'))throw new Error('Invalid managed hook record');return value.commands;}
  private recognizedCommands(provider:HookProvider,targets:Array<{provider:HookProvider;id:string}>):string[]{
@@ -95,10 +97,12 @@ export class HookInstallation{
  /**
   * After an app update the hook runtime is stale while agent configurations,
   * which only name the stable launcher, are unchanged. Install the new runtime
-  * without asking; returns true when it did.
+  * without asking; returns true when it did. Only the packaged app calls this:
+  * a development or test process must never replace the user's runtime with
+  * its own Node and sources (constructing an installer used to do exactly that).
   */
  refreshRuntime():boolean{
-  if(this.ready()||!this.installedRuntime())return false;
+  if(this.ready()||!this.hasInstallations())return false;
   this.installRuntime();return true;
  }
  private installRuntime(){
@@ -167,10 +171,10 @@ export class HookInstallation{
      if(managed.length){
       state='needs-update';reason=ready?'Managed hook configuration changed':'Hook runtime needs repair';
       details=managedDifferences(current,JSON.parse(desired.updated),recognized);
-      if(ready)for(const candidate of candidates){
+      for(const candidate of candidates){
        const candidateCommand=this.command(candidate.provider,candidate.id);
        const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state='installed';reason=null;details=[];matchedId=candidate.id;break;}
+       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state=ready?'installed':'needs-update';reason=ready?null:'Hook runtime needs repair';details=[];matchedId=candidate.id;break;}
       }
      }
     }
