@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.29` candidate — 2026-11-08
+## `0.2.0-beta.29` published — 2026-11-08
 
 Day page redesign: Home (formerly My day) across projects and the same view per project from the sidebar. A new overview shows sessions, subagents, peak concurrency, cumulative agent time, human time and the agent-to-human ratio, and an agent-concurrency chart (main sessions plus subagents) with a human-activity lane, idle shading over 30 minutes, zoomable work periods and hover details. Work periods use 10-minute slots holding at least two minutes of activity, because sub-minute scheduled-agent blips otherwise left no idle gap on the owner's 7 November. The timers popover can discard all timers started before the selected day. Rendered in a headless browser against a copy of the owner's data; locally 338 JavaScript tests, typecheck, the UI import guard and the UI build passed. See [updater notes](0.2.0-beta.29-notes.md).
+
+GitHub's Apple Silicon [release run 42425467399](https://github.com/zaosoula/agent-time/actions/runs/42425467399) published exact commit `f8af2ad`; public downloads matched staged SHA-256 `db414879884bee2badeae36b9a8585cad165054fdf09e3145a2aaaa5e717ea9d` (updater archive) and `f40f187034c32f617ca282dbf2450516ba79fc99e4a7f94e2bf18225a22b12ea` (DMG).
 
 ## `0.2.0-beta.28` published — 2026-11-07
 
