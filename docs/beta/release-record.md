@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.27` candidate — 2026-11-07
+## `0.2.0-beta.27` published — 2026-11-07
 
 Hook commands drop `--installation-id`: every configuration of an agent runs the same launcher command, so Orca's copies of the user configuration (which carried the user-level ID and showed as needing an update) are current as copied. The runner derives the installation as the same 16-hex hash of the config file path, from the payload's `transcript_path` (Claude `…/projects/`, Codex `…/sessions/`), else `CLAUDE_CONFIG_DIR`/`CODEX_HOME`, else the default folder; Orca does not pass `CLAUDE_CONFIG_DIR` to child processes. Commands with an ID, including copies carrying another configuration's ID, are accepted as installed, and existing configurations are not rewritten. The runtime now contains only `hook-runner.ts`, `hooks.ts`, `events.ts`, a new `json.ts` helper and the agent sources, instead of also `store.ts`, `orca.ts` and `observation-retention.ts`, so its version follows hook code; this release still refreshes it once, silently at capture start. It also carries the unpublished beta.26 changes. Locally 335 JavaScript tests and typecheck passed, including an end-to-end hook delivered through an installed runtime. See [updater notes](0.2.0-beta.27-notes.md).
+
+GitHub's Apple Silicon [release run 42404794702](https://github.com/zaosoula/agent-time/actions/runs/42404794702) published exact commit `3fd78b7`; public downloads matched staged SHA-256 `0079e54f09ed976037164ee2fbfc6d8f1f024e7ae1192f839ee0a60b8cc55b2a` (updater archive) and `bd482515616cc9f60eacc087b953f80e03cee10e5a10f9958b8d98bcd56218c5` (DMG). Left for the in-app updater.
 
 ## `0.2.0-beta.26` cancelled — 2026-11-07
 
