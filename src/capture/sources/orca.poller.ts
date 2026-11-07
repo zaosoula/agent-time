@@ -1,4 +1,4 @@
-import {readWorkers,readFleet,workerEvent,terminalEvents,FleetCache} from '../orca.ts';
+import {readWorkers,readFleet,workerEvent,informativeWorker,terminalEvents,FleetCache} from '../orca.ts';
 import {makeEvent} from '../events.ts';
 import {staticOrcaScopeReason} from '../observation-retention.ts';
 import {resolveOrcaTab} from '../orca-focus.ts';
@@ -10,7 +10,7 @@ export default {kind:'poller',id:'orca',name:'Orca',setting:'orcaPolling',defaul
   const fleet=memory?(memory.fleet as FleetCache|undefined)||(memory.fleet=new FleetCache()) as FleetCache:undefined;
   const {workers,coverage}=runId?await readWorkers(reader,runId,valid):await readFleet(reader,valid,fleet);
   if(!valid())return null;
-  store.putObservations(workers.map(workerEvent));
+  store.putObservations(workers.map(workerEvent).filter(informativeWorker));
   for(const issue of coverage){if(issue.reason===staticOrcaScopeReason)store.putObservations([makeEvent('orca','coverage',{data:{reason:issue.reason}})]);else record(issue.reason);}
   try{const events=await terminalEvents(reader,terminals);if(valid())store.putObservations(events);}catch(error){if(valid())record(String(error));}
   return coverage.find(issue=>!issue.reason.startsWith('Only this Orca host'))?.reason||null;

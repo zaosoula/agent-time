@@ -51,6 +51,16 @@ export function workerEvent(worker: JsonObject): CaptureEvent {
 }
 const settledOutcomes=new Set(['succeeded','failed','completed','cancelled','abandoned']);
 /**
+ * Whether a worker snapshot can affect a summary. A snapshot that is not fresh
+ * credits no time; without a host and terminal it cannot link a hook to its
+ * dispatch; without a final outcome it closes nothing. Such snapshots were
+ * most of the event store (one row per old dispatch every 30 s) and are skipped.
+ */
+export function informativeWorker(event:CaptureEvent):boolean{
+ return event.data?.fresh===true||Boolean(event.hostId)||settledOutcomes.has(String(event.data?.outcome));
+}
+const finishedTerminal=new Set(['released','reclaimable']);
+/**
  * Poll state kept between fleet reads. Run discovery lists every Run, and each
  * Run costs one worker-list call, so quiet Runs are re-read on a slower clock.
  */
@@ -68,7 +78,9 @@ const settledRunMs=5*60_000;
 function runState(workers:JsonObject[]){
  const events=workers.map(object);
  const fresh=events.some(worker=>object(object(worker.projection).evidence).liveStatus==='fresh');
- const settled=events.length>0&&events.every(worker=>{const p=object(worker.projection);return settledOutcomes.has(String(p.outcome||worker.dispatchStatus))&&object(p.evidence).liveStatus!=='fresh';});
+ // A worker whose terminal is released or reclaimable cannot become live again
+ // without Orca reporting a fresh status, so its Run is polled like a settled one.
+ const settled=events.length>0&&events.every(worker=>{const p=object(worker.projection);return (settledOutcomes.has(String(p.outcome||worker.dispatchStatus))||finishedTerminal.has(String(worker.terminalState)))&&object(p.evidence).liveStatus!=='fresh';});
  return {quiet:!fresh,settled};
 }
 export async function readFleet(call: (argv:string[])=>Promise<unknown> = callOrca, canContinue=()=>true, cache?:FleetCache, now=Date.now()):Promise<{workers:JsonObject[];coverage:Issue[]}> {
