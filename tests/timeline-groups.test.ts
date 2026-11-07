@@ -33,7 +33,7 @@ test('project timeline keeps worktree human time when no session can claim it',(
  assert.equal(groups[0].humanSeconds,60);
  assert.equal(groups[0].macSeconds,60);
  assert.equal(groups[0].browserSeconds,0);
- assert.equal(groups[0].agentSeconds,7);
+ assert.equal(groups[0].agentSeconds,10); // parent 7 + subagent 3, cumulative
  assert.equal(groups[0].agent.length,1);
  assert.equal(groups[0].subagent.length,1);
 });
@@ -80,7 +80,7 @@ test('project workload exposes one agent versus a burst of thirty subagents',()=
  const parent=session('root'),subagents=Array.from({length:30},(_,index)=>session(`child-${index}`,true));
  const groups=groupTimelineProjects([parent,...subagents],[],new Map(),s=>[s.child?interval(2,8,'grouped'):interval(0,10,'grouped')],()=> 'alpha',()=> 'alpha');
  assert.equal(groups[0].peakConcurrent,31);
- assert.equal(groups[0].agentSeconds,parent.seconds);
+ assert.equal(groups[0].agentSeconds,groups[0].sessions.reduce((sum,session)=>sum+session.seconds,0));
 });
 test('project credit spans do not inflate observed concurrent agent load',()=>{
  const parent=session('root'),child=session('child',true);

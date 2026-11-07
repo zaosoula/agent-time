@@ -81,5 +81,9 @@ export function creditTaskCounters(summary:Summary,items:ReportedWorkItem[]):Sum
  if(!added.length)return summary;
  const activity=summary.intervals.filter(i=>agentStates.has(i.state)||i.state==='human').map(i=>[i.start,i.end] as Range);
  const elapsedDelta=Math.max(0,minuteCreditSeconds([...activity,...added])-minuteCreditSeconds(activity));
- return {...summary,intervals:intervals.sort((a,b)=>a.start-b.start),sessions,agentSeconds:summary.agentSeconds+agentDelta,elapsedSeconds:summary.elapsedSeconds+elapsedDelta};
+ const agents=summary.intervals.filter(i=>agentStates.has(i.state)).map(i=>[i.start,i.end] as Range);
+ const wallDelta=Math.max(0,minuteCreditSeconds([...agents,...added])-minuteCreditSeconds(agents));
+ return {...summary,intervals:intervals.sort((a,b)=>a.start-b.start),sessions,agentSeconds:summary.agentSeconds+agentDelta,elapsedSeconds:summary.elapsedSeconds+elapsedDelta,
+  ...(summary.mainAgentSeconds!==undefined?{mainAgentSeconds:summary.mainAgentSeconds+agentDelta}:{}),
+  ...(summary.agentWallSeconds!==undefined?{agentWallSeconds:summary.agentWallSeconds+wallDelta}:{})};
 }

@@ -136,7 +136,7 @@ function exportReviewed() {
           <span
             >You <strong>{{ duration(review.totals.humanSeconds) }}</strong></span
           ><span
-            >Agent <strong>{{ duration(review.totals.agentSeconds) }}</strong></span
+            >Agent <strong>{{ duration(review.totals.agentSeconds) }}</strong> <small>({{ duration(review.totals.agentWallSeconds) }} wall clock)</small></span
           ><span
             >Elapsed <strong>{{ duration(review.totals.elapsedSeconds) }}</strong></span
           >
@@ -154,7 +154,7 @@ function exportReviewed() {
               ><span
                 class="agent"
                 :style="{ width: width(day.agentSeconds) }"
-                :title="`Agent ${duration(day.agentSeconds)}`"
+                :title="`Agent ${duration(day.agentSeconds)} cumulative · ${duration(day.agentWallSeconds)} wall clock`"
               ></span
               ><span
                 class="elapsed"
@@ -173,7 +173,8 @@ function exportReviewed() {
             <tr>
               <th>Project</th>
               <th>You</th>
-              <th>Agent</th>
+              <th title="Every session and subagent counted in full">Agent</th>
+              <th title="Clock time with any agent working">Agent wall</th>
               <th>Elapsed</th>
               <th>Reviewed</th>
               <th>Reviewed goal</th>
@@ -184,6 +185,7 @@ function exportReviewed() {
               <td :title="project.project">{{ label(project.project) }}</td>
               <td>{{ duration(project.humanSeconds) }}</td>
               <td>{{ duration(project.agentSeconds) }}</td>
+              <td>{{ duration(project.agentWallSeconds) }}</td>
               <td>{{ duration(project.elapsedSeconds) }}</td>
               <td>{{ duration(project.reviewedSeconds) }}</td>
               <td>
@@ -209,7 +211,7 @@ function exportReviewed() {
               </td>
             </tr>
             <tr v-if="!review.projects.length">
-              <td colspan="6">No recorded activity this week.</td>
+              <td colspan="7">No recorded activity this week.</td>
             </tr>
           </tbody>
         </table>

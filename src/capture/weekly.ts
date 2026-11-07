@@ -1,9 +1,9 @@
 import type {Summary,Interval} from './events.ts';
 import {dailyTotals} from './daily.ts';
 
-export interface WeeklyProject {project:string;humanSeconds:number;agentSeconds:number;elapsedSeconds:number;reviewedSeconds:number;}
+export interface WeeklyProject {project:string;humanSeconds:number;agentSeconds:number;agentWallSeconds:number;elapsedSeconds:number;reviewedSeconds:number;}
 export interface ReviewedEntry {date:string;start:number;end:number;project:string;source:string;seconds:number;}
-export interface WeeklyReview {startDate:string;endDate:string;projects:WeeklyProject[];totals:Omit<WeeklyProject,'project'>;days:Array<{date:string;humanSeconds:number;agentSeconds:number;elapsedSeconds:number}>;reviewedEntries:ReviewedEntry[];}
+export interface WeeklyReview {startDate:string;endDate:string;projects:WeeklyProject[];totals:Omit<WeeklyProject,'project'>;days:Array<{date:string;humanSeconds:number;agentWallSeconds:number;agentSeconds:number;elapsedSeconds:number}>;reviewedEntries:ReviewedEntry[];}
 const dateString=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const project=(interval:Interval)=>interval.workspaceId?.split('::').at(-1)||'Unassigned';
 export function weeklyReview(summary:Summary,startDate:string,acceptedDays:ReadonlySet<string>=new Set()):WeeklyReview{
@@ -12,7 +12,7 @@ export function weeklyReview(summary:Summary,startDate:string,acceptedDays:Reado
  if(Number.isNaN(start.getTime())||dateString(start)!==startDate)throw new Error('Invalid week start');
  const end=new Date(start);end.setDate(end.getDate()+7);
  const rows=new Map<string,WeeklyProject>(),reviewedEntries:ReviewedEntry[]=[],days:WeeklyReview['days']=[];
- const totals={humanSeconds:0,agentSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
+ const totals={humanSeconds:0,agentSeconds:0,agentWallSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
  for(let day=new Date(start);day<end;day.setDate(day.getDate()+1)){
   const next=new Date(day);next.setDate(next.getDate()+1);
   const from=day.getTime()/1000,to=next.getTime()/1000;
@@ -27,15 +27,15 @@ export function weeklyReview(summary:Summary,startDate:string,acceptedDays:Reado
   }
   for(const [key,intervals] of byProject){
    const totals=dailyTotals({...summary,intervals},day);
-   const row=rows.get(key)||{project:key,humanSeconds:0,agentSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
-   row.humanSeconds+=totals.humanSeconds;row.agentSeconds+=totals.agentSeconds;row.elapsedSeconds+=totals.elapsedSeconds;
+   const row=rows.get(key)||{project:key,humanSeconds:0,agentSeconds:0,agentWallSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
+   row.humanSeconds+=totals.humanSeconds;row.agentSeconds+=totals.agentSeconds;row.agentWallSeconds+=totals.agentWallSeconds;row.elapsedSeconds+=totals.elapsedSeconds;
    row.reviewedSeconds+=intervals.filter(interval=>interval.state==='human'&&(interval.userAttribution||accepted&&interval.workspaceId)).reduce((total,interval)=>total+interval.end-interval.start,0);
    rows.set(key,row);
   }
   const all=[...byProject.values()].flat();
   const dayTotals=dailyTotals({...summary,intervals:all},day);
   days.push({date:dateString(day),...dayTotals});
-  totals.humanSeconds+=dayTotals.humanSeconds;totals.agentSeconds+=dayTotals.agentSeconds;totals.elapsedSeconds+=dayTotals.elapsedSeconds;
+  totals.humanSeconds+=dayTotals.humanSeconds;totals.agentSeconds+=dayTotals.agentSeconds;totals.agentWallSeconds+=dayTotals.agentWallSeconds;totals.elapsedSeconds+=dayTotals.elapsedSeconds;
   totals.reviewedSeconds+=all.filter(interval=>interval.state==='human'&&(interval.userAttribution||accepted&&interval.workspaceId)).reduce((sum,interval)=>sum+interval.end-interval.start,0);
  }
  const projects=[...rows.values()].sort((a,b)=>b.elapsedSeconds-a.elapsedSeconds||a.project.localeCompare(b.project));

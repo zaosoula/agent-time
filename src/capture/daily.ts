@@ -14,10 +14,20 @@ export function dailyTotals(summary:Summary,now=new Date()){
   const key=`${i.hostId}:${i.dispatchId?'dispatch:'+i.dispatchId:'session:'+i.sessionId}`;
   const ranges=roots.get(key)||[];ranges.push([i.start,i.end]);roots.set(key,ranges);
  }
- const agentSeconds=[...roots.values()].reduce((sum,r)=>sum+minuteCreditSeconds(hasGrouped?r:groupIntervals(r)),0);
- const elapsed=hasGrouped?activity.map(i=>[i.start,i.end] as [number,number]):[...roots.values()].flatMap(r=>groupIntervals(r));
+ const children=new Map<string,Array<[number,number]>>();
+ for(const i of activity.filter(i=>i.child)){
+  const key=JSON.stringify([i.hostId,i.sessionId,i.agentId]);
+  const ranges=children.get(key)||[];ranges.push([i.start,i.end]);children.set(key,ranges);
+ }
+ const credit=(groups:Map<string,Array<[number,number]>>)=>[...groups.values()].reduce((sum,r)=>sum+minuteCreditSeconds(hasGrouped?r:groupIntervals(r)),0);
+ const mainAgentSeconds=credit(roots),childAgentSeconds=credit(children);
+ const elapsed=hasGrouped?activity.filter(i=>!i.child).map(i=>[i.start,i.end] as [number,number]):[...roots.values()].flatMap(r=>groupIntervals(r));
+ const allAgents=hasGrouped?activity.map(i=>[i.start,i.end] as [number,number]):[...roots.values(),...children.values()].flatMap(r=>groupIntervals(r));
  const human=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);
- return {agentSeconds,humanSeconds:minuteCreditSeconds(human),elapsedSeconds:minuteCreditSeconds([...elapsed,...human])};
+ // agentSeconds is cumulative: every main session and every subagent counted in full, so it
+ // compares with human time as total agent work. agentWallSeconds is clock time with any agent working.
+ return {agentSeconds:mainAgentSeconds+childAgentSeconds,mainAgentSeconds,childAgentSeconds,agentWallSeconds:minuteCreditSeconds(allAgents),
+  humanSeconds:minuteCreditSeconds(human),elapsedSeconds:minuteCreditSeconds([...elapsed,...human])};
 }
 export function workingAgentCount(summary:Summary,now=new Date(),running=true):number {
  if(!running)return 0;
@@ -67,10 +77,5 @@ export function summaryForDate(summary:Summary,date:string):Summary {
  const unresolved=summary.unresolved.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
  const issueReasons=summary.issueReasons??[...new Set([...summary.coverage,...summary.unresolved].map(issue=>issue.reason))];
  const day={...summary,intervals,sessions,coverage,unresolved,issueReasons};
- const children=new Map<string,Array<[number,number]>>();
- for(const interval of intervals.filter(i=>i.child&&i.state==='grouped')){
-  const key=JSON.stringify([interval.hostId,interval.sessionId,interval.agentId]);
-  const spans=children.get(key)||[];spans.push([interval.start,interval.end]);children.set(key,spans);
- }
- return {...day,...dailyTotals(day,start),childAgentSeconds:[...children.values()].reduce((total,spans)=>total+minuteCreditSeconds(spans),0)};
+ return {...day,...dailyTotals(day,start)};
 }

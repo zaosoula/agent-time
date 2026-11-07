@@ -561,9 +561,9 @@ export class Collector {
     const days=Array.from({length:count},(_,offset)=>this.daySummary(addDays(startDate,offset),maxAgeMs));
     const sessions=new Map<string,Summary['sessions'][number]>();
     for(const day of days)for(const session of day.sessions)sessions.set(session.key,session);
-    const sum=(key:'humanSeconds'|'agentSeconds'|'elapsedSeconds'|'childAgentSeconds')=>days.reduce((total,day)=>total+day[key],0);
+    const sum=(key:'humanSeconds'|'agentSeconds'|'elapsedSeconds'|'childAgentSeconds'|'mainAgentSeconds'|'agentWallSeconds')=>days.reduce((total,day)=>total+(day[key]||0),0);
     return {intervals:days.flatMap(day=>day.intervals),unresolved:days.flatMap(day=>day.unresolved),coverage:days.flatMap(day=>day.coverage),sessions:[...sessions.values()],
-      humanSeconds:sum('humanSeconds'),agentSeconds:sum('agentSeconds'),elapsedSeconds:sum('elapsedSeconds'),childAgentSeconds:sum('childAgentSeconds'),
+      humanSeconds:sum('humanSeconds'),agentSeconds:sum('agentSeconds'),elapsedSeconds:sum('elapsedSeconds'),childAgentSeconds:sum('childAgentSeconds'),mainAgentSeconds:sum('mainAgentSeconds'),agentWallSeconds:sum('agentWallSeconds'),
       issueReasons:[...new Set(days.flatMap(day=>day.issueReasons||[]))]};
   }
   /**

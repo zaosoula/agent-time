@@ -59,7 +59,7 @@ struct SummaryWidgetView: View {
             if let snapshot, snapshot.available {
                 HStack(alignment: .top, spacing: 16) {
                     metric("Mac activity", duration(snapshot.humanSeconds), "Estimated")
-                    metric("Agent time", duration(snapshot.agentSeconds), "Credited")
+                    metric("Agent time", duration(snapshot.agentSeconds), "Incl. subagents")
                     metric("Working now", String(snapshot.running ? snapshot.workingAgents : 0), snapshot.running ? "agents" : "Paused")
                 }
                 Spacer(minLength: 0)

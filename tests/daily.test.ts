@@ -26,7 +26,8 @@ test('menu bar totals clip to local today, union overlap, and keep independent a
  const now=new Date(2026,9,12,12),midnight=new Date(2026,9,12).getTime()/1000;
  const interval=(start:number,end:number,fields:Partial<Interval>={}):Interval=>({start:midnight+start,end:midnight+end,state:'running',proof:'observed',sourceEventIds:[],hostId:'local',sessionId:'s1',...fields});
  const summary:Summary={intervals:[interval(-60,60),interval(20,80),interval(0,30,{sessionId:'s2'}),interval(0,120,{child:true,agentId:'child'}),interval(0,120,{state:'human'}),interval(86400,86430)],sessions:[],coverage:[],unresolved:[],agentSeconds:0,humanSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
- assert.deepEqual(dailyTotals(summary,now),{agentSeconds:180,humanSeconds:120,elapsedSeconds:120});
+ // Cumulative agent time adds the subagent; wall clock counts overlapping agents once.
+ assert.deepEqual(dailyTotals(summary,now),{agentSeconds:300,mainAgentSeconds:180,childAgentSeconds:120,agentWallSeconds:120,humanSeconds:120,elapsedSeconds:120});
 });
 test('daily agent time includes completed turns without adding overlapping tool time twice',()=>{
  const now=new Date(2026,9,12,12),midnight=new Date(2026,9,12).getTime()/1000;
@@ -47,7 +48,7 @@ test('day summary clips intervals without changing full history or crossing loca
  const day=summaryForDate(full,'2026-10-14');
  assert.deepEqual(day.intervals.map(i=>[i.start,i.end]),[[start,start+30],[start+20,start+40],[start+60,start+70]]);
  assert.equal(full.intervals[0].start,start-30);
- assert.equal(day.agentSeconds,60);assert.equal(day.humanSeconds,60);assert.equal(day.childAgentSeconds,60);
+ assert.equal(day.agentSeconds,120);assert.equal(day.mainAgentSeconds,60);assert.equal(day.humanSeconds,60);assert.equal(day.childAgentSeconds,60);
  assert.throws(()=>summaryForDate(full,'2026-02-30'),/Invalid summary date/);
 });
 test('day summary sends only relevant sessions and caveats while retaining health reasons',()=>{

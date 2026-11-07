@@ -150,10 +150,16 @@ const websites = computed(() => {
           <InfoPopover label="About agent time">
             <h3>Agent time</h3>
             <p>
-              Time agents spent working, added up across sessions. When several agents run at once, this can be
-              more than the time that passed.
+              Total agent work: every session and every subagent counted in full, to compare with your own time.
+              When several agents run at once, this is more than the time that passed.
             </p>
             <dl>
+              <dt>Main sessions</dt>
+              <dd>{{ duration(store.mainAgentTime) }}</dd>
+              <dt>Subagents</dt>
+              <dd>{{ duration(store.subagentTime) }}</dd>
+              <dt>Clock time with any agent working</dt>
+              <dd>{{ duration(store.agentWallTime) }}</dd>
               <dt>Agents with recorded work</dt>
               <dd>{{ store.observedAgentSources }}</dd>
               <dt>Time with several agents at once</dt>
@@ -185,6 +191,11 @@ const websites = computed(() => {
         </span>
         <strong v-if="store.summaryLoaded">{{ duration(store.agentTime) }}</strong>
         <span v-else class="skeleton key-skeleton"></span>
+        <small v-if="store.summaryLoaded && store.agentTime" class="key-sub"
+          >{{ duration(store.agentWallTime) }} wall clock<template v-if="store.subagentTime">
+            · {{ duration(store.subagentTime) }} subagents</template
+          ></small
+        >
       </div>
       <div class="key-number">
         <span class="key-label">
@@ -329,6 +340,13 @@ const websites = computed(() => {
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   background: var(--panel);
+}
+.key-sub {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-xs);
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
 }
 .key-label {
   display: flex;

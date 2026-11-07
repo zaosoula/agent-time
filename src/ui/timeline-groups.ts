@@ -209,8 +209,11 @@ export function groupTimelineProjects(
     for (const session of group.sessions) {
       const observed = bars(session);
       group.creditBars.push(...creditedIntervals(observed));
-      if (session.child) group.subagent.push(...observed);
-      else {
+      if (session.child) {
+        group.subagent.push(...observed);
+        // Project agent time is cumulative: subagents count in full alongside their sessions.
+        group.agentSeconds += session.seconds;
+      } else {
         group.agent.push(...observed);
         group.agentSeconds += session.seconds;
         for (const interval of (humanBySession.get(session.key) || []).filter((i) => !i.workspaceId))

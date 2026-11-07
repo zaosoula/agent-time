@@ -24,7 +24,11 @@ export interface Session {
 }
 export interface Summary {
   intervals: Interval[]; unresolved: Issue[]; coverage: Issue[]; sessions: Session[];
-  humanSeconds: number; agentSeconds: number; elapsedSeconds: number; childAgentSeconds: number;
+  humanSeconds: number;
+  /** Day summaries: cumulative agent time, main sessions plus subagents. Raw replays: main sessions only. */
+  agentSeconds: number; elapsedSeconds: number; childAgentSeconds: number;
+  /** Day summaries: main-session agent time and clock time with any agent working. */
+  mainAgentSeconds?: number; agentWallSeconds?: number;
   issueReasons?: string[];
 }
 export interface Verdict { scenario: string; mode: 'live' | 'simulated'; status: 'pass' | 'fail' | 'unsupported' | 'unverified'; evidence: string; }

@@ -114,7 +114,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
   }
   const measured=totals(intervals),children=intervals.filter(i=>i.child&&i.state==='grouped'),byChild=new Map<string,Array<[number,number]>>();
   for(const i of children){const key=JSON.stringify([i.hostId,i.sessionId,i.agentId]),group=byChild.get(key)||[];group.push([i.start,i.end]);byChild.set(key,group);}
-  const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
+  const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,agentWallSeconds:measured.agentWallSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
   const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(readFrom));
   return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,firstSeen};
  }finally{db.close();}
@@ -126,14 +126,18 @@ const issueKeys=(value:unknown):string[]=>typeof value==='string'?[...new Set([.
 const workspaceIssueFromId=(workspaceId?:string)=>{const path=workspaceId?.split('::').at(-1);const keys=issueKeys(path?basename(path):'');return keys.length===1?keys[0]!:null;};
 const workspaceIssue=(i:Interval)=>workspaceIssueFromId(i.workspaceId);
 const agentInterval=(i:Interval)=>!i.child&&i.state==='grouped';
+/** Agent work for totals: main sessions and subagents. */
+const agentWorkInterval=(i:Interval)=>i.state==='grouped';
 const humanInterval=(i:Interval)=>i.state==='human';
 const spans=(items:Interval[])=>items.map(i=>[i.start,i.end] as [number,number]);
 const publicInterval=<T extends Interval>(i:T)=>{const {browserUrl,browserTitle,tabTitle,...safe}=i;return safe;};
 function totals(items:Interval[]){
- const human=items.filter(humanInterval),agent=items.filter(agentInterval),bySession=new Map<string,Interval[]>();
- for(const interval of agent){const key=JSON.stringify([interval.hostId,interval.dispatchId||interval.sessionId]);const group=bySession.get(key)||[];group.push(interval);bySession.set(key,group);}
+ const human=items.filter(humanInterval),agent=items.filter(agentWorkInterval),bySession=new Map<string,Interval[]>();
+ // Cumulative: every main session and every subagent counted in full, like the app's agent time.
+ for(const interval of agent){const key=JSON.stringify([interval.hostId,interval.dispatchId||interval.sessionId,interval.child?interval.agentId??'subagent':null]);const group=bySession.get(key)||[];group.push(interval);bySession.set(key,group);}
  const humanActiveSeconds=minuteCreditSeconds(spans(human)),agentRunningSeconds=[...bySession.values()].reduce((sum,group)=>sum+minuteCreditSeconds(spans(group)),0),overlapMergedWallSeconds=minuteCreditSeconds(spans([...human,...agent]));
- return {humanActiveSeconds,agentRunningSeconds,overlapMergedWallSeconds,hours:{humanActive:(humanActiveSeconds/3600).toFixed(2),agentRunning:(agentRunningSeconds/3600).toFixed(2),overlapMergedWall:(overlapMergedWallSeconds/3600).toFixed(2)}};
+ const agentWallSeconds=minuteCreditSeconds(spans(agent));
+ return {humanActiveSeconds,agentRunningSeconds,agentWallSeconds,overlapMergedWallSeconds,hours:{humanActive:(humanActiveSeconds/3600).toFixed(2),agentRunning:(agentRunningSeconds/3600).toFixed(2),agentWall:(agentWallSeconds/3600).toFixed(2),overlapMergedWall:(overlapMergedWallSeconds/3600).toFixed(2)}};
 }
 function perDay(rows:ReturnType<typeof inRange>){
  const pieces:typeof rows=[];

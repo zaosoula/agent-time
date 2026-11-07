@@ -490,9 +490,22 @@ function createStore() {
     ),
   );
 
-  const agentTime = computed(() =>
+  /** Cumulative agent time: every main session and every subagent counted in full. */
+  const mainAgentTime = computed(() =>
     creditedSessions.value.filter((session) => !session.child).reduce((sum, session) => sum + session.seconds, 0),
   );
+  const subagentTime = computed(() =>
+    creditedSessions.value.filter((session) => session.child).reduce((sum, session) => sum + session.seconds, 0),
+  );
+  const agentTime = computed(() => mainAgentTime.value + subagentTime.value);
+  /** Clock time with at least one agent or subagent working; overlaps counted once. */
+  const agentWallTime = computed(() => {
+    const grouped = filteredIntervals.value.filter((interval) => interval.state === 'grouped');
+    const work = grouped.length
+      ? grouped
+      : filteredIntervals.value.filter((interval) => interval.state === 'running' || interval.state === 'turn');
+    return minuteCreditSeconds(work.map((interval) => [interval.start, interval.end]));
+  });
   const agentOverlap = computed(() => {
     const grouped = filteredIntervals.value.filter((interval) => interval.state === 'grouped' && !interval.child);
     const roots = grouped.length
@@ -769,6 +782,9 @@ function createStore() {
     reportedPlacement,
     reportedSessionKey,
     agentTime,
+    mainAgentTime,
+    subagentTime,
+    agentWallTime,
     agentOverlap,
     humanTime,
     elapsedTime,
