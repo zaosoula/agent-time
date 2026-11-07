@@ -46,7 +46,7 @@ const captureBusy = ref(false),
 const busy = computed(() => captureBusy.value || settingsBusy.value);
 
 const pages: Array<{ id: Page; title: string; icon: typeof CalendarDays }> = [
-  { id: 'today', title: 'My day', icon: CalendarDays },
+  { id: 'today', title: 'Home', icon: CalendarDays },
   { id: 'review', title: 'Review', icon: ClipboardCheck },
   { id: 'sessions', title: 'Agent sessions', icon: Layers3 },
   { id: 'weekly', title: 'Weekly review', icon: BarChart3 },
@@ -55,7 +55,7 @@ const pages: Array<{ id: Page; title: string; icon: typeof CalendarDays }> = [
   { id: 'usage', title: 'Tokens & limits', icon: Bot },
   { id: 'settings', title: 'Settings', icon: Settings2 },
 ];
-const pageTitle = computed(() => pages.find((item) => item.id === store.page)?.title || 'My day');
+const pageTitle = computed(() => pages.find((item) => item.id === store.page)?.title || 'Home');
 const dayPages: Page[] = ['today', 'sessions', 'review', 'outcomes'];
 /** Pages that respect the sidebar's project filter. */
 const projectPages: Page[] = ['today', 'sessions', 'outcomes'];
@@ -280,10 +280,11 @@ onUnmounted(() => {
         <header class="toolbar" data-tauri-drag-region>
           <div class="breadcrumbs">
             <template v-if="showsProject && store.project !== 'all'">
-              <span>{{ projectDisplay(store.project, store.projects) }}</span>
+              <span>{{ pageTitle }}</span>
               <span aria-hidden="true">/</span>
+              <strong>{{ projectDisplay(store.project, store.projects) }}</strong>
             </template>
-            <strong>{{ pageTitle }}</strong>
+            <strong v-else>{{ pageTitle }}</strong>
           </div>
           <div class="toolbar-actions">
             <TooltipRoot v-if="dayPages.includes(store.page)">

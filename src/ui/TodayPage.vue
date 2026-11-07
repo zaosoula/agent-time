@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui';
-import { ArrowRight, Bot, CalendarDays, CheckCircle2, Clock3, Layers3, Monitor, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
+import { ArrowRight, CalendarDays, CheckCircle2, Layers3, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
 import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
+import DayOverview from './DayOverview.vue';
 import DayPicker from './DayPicker.vue';
 import DayTimeline from './DayTimeline.vue';
 import InfoPopover from './InfoPopover.vue';
@@ -18,6 +19,20 @@ const props = defineProps<{ busy: boolean }>();
 const emit = defineEmits<{ start: [] }>();
 const store = reactive(useStore());
 const timerBusy = ref('');
+/** Timers started on an earlier day and still open: almost always left behind by an agent. */
+const leftoverTimers = computed(() => store.runningTimers.filter((timer) => timer.start < store.dayStart));
+async function discardLeftovers() {
+  const ids = leftoverTimers.value.map((timer) => timer.id);
+  timerBusy.value = 'bulk';
+  try {
+    await store.stopTimers(ids, true);
+    toast.success(`Discarded ${ids.length} leftover ${ids.length === 1 ? 'timer' : 'timers'}.`, 'timer');
+  } catch (cause) {
+    toast.error(cause, 'timer');
+  } finally {
+    timerBusy.value = '';
+  }
+}
 async function stopTimer(id: string, discard = false) {
   timerBusy.value = id;
   try {
@@ -41,7 +56,6 @@ watch(
 
 const pending = computed(() => store.reviewPending.length);
 const macSource = computed(() => store.confidence.sources.find((source) => source.id === 'macos'));
-const daySpan = computed(() => store.dayEnd - store.dayStart);
 
 // ---- Your activity details --------------------------------------------------------------
 const humanIntervals = computed(() => store.filteredIntervals.filter((interval) => interval.state === 'human'));
@@ -115,9 +129,21 @@ const websites = computed(() => {
   <section class="day-content">
     <div class="day-heading">
       <div>
-        <h1>{{ store.page === 'sessions' ? 'Agent sessions' : longDate(store.selectedDate) }}</h1>
+        <h1>
+          {{
+            store.page === 'sessions'
+              ? 'Agent sessions'
+              : store.project === 'all'
+                ? 'Home'
+                : projectLabel(store.project)
+          }}
+        </h1>
         <p>
-          {{ store.page === 'sessions' ? longDate(store.selectedDate) : 'Your work and the agents working alongside you.' }}
+          {{
+            store.page === 'sessions'
+              ? longDate(store.selectedDate)
+              : `${longDate(store.selectedDate)} · ${store.project === 'all' ? 'all projects' : store.project}`
+          }}
           <span v-if="store.isToday && store.runningCount" class="badge good working-now">
             <Radio :size="11" />{{ store.runningCount }} {{ store.runningCount === 1 ? 'agent' : 'agents' }} working now
           </span>
@@ -132,6 +158,11 @@ const websites = computed(() => {
             <p>
               Timers agents started with start_task and have not stopped. A timer also ends when its agent session
               ends. Stop one to end it now, or discard one an agent left behind.
+            </p>
+            <p v-if="leftoverTimers.length" class="timer-bulk">
+              <button class="btn btn-sm" :disabled="Boolean(timerBusy)" @click="discardLeftovers">
+                Discard {{ leftoverTimers.length }} started before today
+              </button>
             </p>
             <ul class="timer-list">
               <li v-for="timer in store.runningTimers" :key="timer.id">
@@ -171,93 +202,7 @@ const websites = computed(() => {
       @start="emit('start')"
     />
 
-    <div class="key-numbers" aria-label="Totals for this day">
-      <div class="key-number">
-        <span class="key-label">
-          <Monitor :size="14" />My time
-          <InfoPopover label="About my time">
-            <h3>My time</h3>
-            <p>
-              Time you were actively using your Mac{{ store.project === 'all' ? '' : ' on this project' }}, estimated
-              from the app in front and keyboard or mouse input. Each stretch counts at least one minute.
-            </p>
-            <dl>
-              <dt>Mac activity source</dt>
-              <dd>{{ macSource?.detail || 'Not observed yet' }}</dd>
-            </dl>
-          </InfoPopover>
-        </span>
-        <strong v-if="store.summaryLoaded">{{ duration(store.humanTime) }}</strong>
-        <span v-else class="skeleton key-skeleton"></span>
-      </div>
-      <div class="key-number">
-        <span class="key-label">
-          <Bot :size="14" />Agent time
-          <InfoPopover label="About agent time">
-            <h3>Agent time</h3>
-            <p>
-              Total agent work: every session and every subagent counted in full, to compare with your own time.
-              When several agents run at once, this is more than the time that passed.
-            </p>
-            <dl>
-              <dt>Main sessions</dt>
-              <dd>{{ duration(store.mainAgentTime) }}</dd>
-              <dt>Subagents</dt>
-              <dd>{{ duration(store.subagentTime) }}</dd>
-              <dt>Clock time with any agent working</dt>
-              <dd>{{ duration(store.agentWallTime) }}</dd>
-              <dt>Agents with recorded work</dt>
-              <dd>{{ store.observedAgentSources }}</dd>
-              <dt>Time with several agents at once</dt>
-              <dd>{{ duration(store.agentOverlap.seconds) }}</dd>
-              <dt>Most agents at once</dt>
-              <dd>{{ store.agentOverlap.peak }}</dd>
-              <dt>Orchestration runs</dt>
-              <dd>{{ store.runs }}</dd>
-            </dl>
-            <div
-              v-if="store.agentOverlap.steps.length"
-              class="overlap-track"
-              role="img"
-              :aria-label="`Agent activity across this day; ${duration(store.agentOverlap.seconds)} had several agents at once`"
-            >
-              <span
-                v-for="step in store.agentOverlap.steps"
-                :key="`${step.start}:${step.end}`"
-                :class="{ multiple: step.roots > 1 }"
-                :style="{
-                  left: `${Math.max(0, ((step.start - store.dayStart) / daySpan) * 100)}%`,
-                  width: `${Math.max(0, ((Math.min(step.end, store.dayEnd) - Math.max(step.start, store.dayStart)) / daySpan) * 100)}%`,
-                }"
-                :title="`${clock(step.start)}–${clock(step.end)} · ${step.roots} agents`"
-              ></span>
-            </div>
-            <p>Darker bars show several agents working together.</p>
-          </InfoPopover>
-        </span>
-        <strong v-if="store.summaryLoaded">{{ duration(store.agentTime) }}</strong>
-        <span v-else class="skeleton key-skeleton"></span>
-        <small v-if="store.summaryLoaded && store.agentTime" class="key-sub"
-          >{{ duration(store.agentWallTime) }} wall clock<template v-if="store.subagentTime">
-            · {{ duration(store.subagentTime) }} subagents</template
-          ></small
-        >
-      </div>
-      <div class="key-number">
-        <span class="key-label">
-          <Clock3 :size="14" />Elapsed
-          <InfoPopover label="About elapsed time">
-            <h3>Elapsed</h3>
-            <p>
-              Clock time with any activity, yours or an agent's. Time when several things happened at once is
-              counted only once.
-            </p>
-          </InfoPopover>
-        </span>
-        <strong v-if="store.summaryLoaded">{{ duration(store.elapsedTime) }}</strong>
-        <span v-else class="skeleton key-skeleton"></span>
-      </div>
-    </div>
+    <DayOverview v-if="store.page === 'today'" />
 
     <div class="day-status-row">
       <button
@@ -460,6 +405,9 @@ const websites = computed(() => {
 .timers-badge {
   color: var(--blue);
   cursor: pointer;
+}
+.timer-bulk {
+  margin: 0 0 8px;
 }
 .timer-list {
   list-style: none;

@@ -557,9 +557,20 @@ function createStore() {
     reportedWork.value.filter((item) => item.kind === 'counter' && item.active).sort((a, b) => a.start - b.start),
   );
   async function stopTimer(id: string, discard = false) {
-    await reportedWorkTransport.stop(id, discard);
-    reportedWork.value = markRaw(reportedWork.value.filter((item) => item.id !== id || !discard));
-    await pollers.summary.refresh();
+    await stopTimers([id], discard);
+  }
+  /** Stop or discard several timers, refreshing the day once. */
+  async function stopTimers(ids: string[], discard = false) {
+    const done = new Set<string>();
+    try {
+      for (const id of ids) {
+        await reportedWorkTransport.stop(id, discard);
+        done.add(id);
+      }
+    } finally {
+      if (discard) reportedWork.value = markRaw(reportedWork.value.filter((item) => !done.has(item.id)));
+      await pollers.summary.refresh();
+    }
   }
   /** Key linking reported work to the agent session row that reported it. */
   const reportedSessionKey = (provider: string | undefined, sessionId: string | undefined) =>
@@ -791,6 +802,7 @@ function createStore() {
     reportedPlacement,
     runningTimers,
     stopTimer,
+    stopTimers,
     reportedSessionKey,
     agentTime,
     mainAgentTime,

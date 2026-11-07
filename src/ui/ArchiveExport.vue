@@ -166,7 +166,7 @@ onMounted(() => {
         or prepare an exact replacement.
       </li>
       <li>
-        <strong>Verify after recovery.</strong> Check My day for history and Capture health for a fresh
+        <strong>Verify after recovery.</strong> Check Home for history and Capture health for a fresh
         observation.
       </li>
     </ol>
