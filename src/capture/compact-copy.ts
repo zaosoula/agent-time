@@ -11,7 +11,9 @@ const source=resolve(sourceArg),target=resolve(targetArg);
 const targetExists=(()=>{try{lstatSync(target);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}})();
 if(source===target||!existsSync(source)||targetExists)throw new Error('Source must exist and output must be a new, different path');
 mkdirSync(dirname(target),{recursive:true,mode:0o700});
-const comparable=(summary:Summary)=>JSON.stringify({...summary,coverage:summary.coverage.filter(issue=>issue.reason!==staticOrcaScopeReason)});
+// Dispatch sessions known only from dropped empty snapshots (no time, no host) are not compared.
+const comparable=(summary:Summary)=>JSON.stringify({...summary,coverage:summary.coverage.filter(issue=>issue.reason!==staticOrcaScopeReason),
+ sessions:summary.sessions.filter(session=>session.seconds>0||session.observedSeconds>0||session.hostId||session.state!=='unknown')});
 const scopeDays=(events:CaptureEvent[])=>[...new Set(events.filter(event=>event.source==='orca'&&event.kind==='coverage'&&event.data?.reason===staticOrcaScopeReason).map(event=>new Date(event.observedAt*1000).toISOString().slice(0,10)))].sort();
 
 let copy;

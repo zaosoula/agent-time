@@ -3,7 +3,7 @@ import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
 import type {HumanDecision,HumanSplit} from './human-review.ts';
-import {observationKey,observationSignature} from './observation-retention.ts';
+import {needsHeartbeat,observationKey,observationSignature,workerHeartbeatSeconds} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 import {readWindowEvents} from './summary-window.ts';
 
@@ -60,10 +60,13 @@ export class EventStore {
       for(const event of events){
         validateEvent(event);
         const key=observationKey(event),signature=key?observationSignature(event):null;
-        if(key&&read.get(key)?.signature===signature)continue;
+        // Stored as "<signature>\n<observedAt>" so live workers get a periodic heartbeat row.
+        const stored=key?String(read.get(key)?.signature??''):'',split=stored.lastIndexOf('\n');
+        const previous=split>=0?stored.slice(0,split):stored,writtenAt=split>=0?Number(stored.slice(split+1)):-Infinity;
+        if(key&&previous===signature&&(!needsHeartbeat(event)||event.observedAt-writtenAt<workerHeartbeatSeconds))continue;
         if(this.put(event)){
           inserted++;
-          if(key)write.run(key,signature);
+          if(key)write.run(key,`${signature}\n${event.observedAt}`);
         }
       }
       this.db.exec('COMMIT');return inserted;

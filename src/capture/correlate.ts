@@ -1,4 +1,5 @@
 import type { CaptureEvent, Interval, Issue, Session, Summary } from './events.ts';
+import { workerSnapshotValidSeconds } from './observation-retention.ts';
 export function unionSeconds(intervals:Array<[number,number]>):number {
  const merged:Array<[number,number]>=[];
  for(const [start,end] of [...intervals].sort((a,b)=>a[0]-b[0])) {
@@ -134,7 +135,10 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   let beforeIndex=low-1;
   while(beforeIndex>0&&candidates[beforeIndex-1].observedAt===candidates[beforeIndex].observedAt)beforeIndex--;
   const before=candidates[beforeIndex],after=candidates[low];
-  const match=before&&e.observedAt-before.observedAt<=maxGap?before:after&&after.observedAt-e.observedAt<=maxGap?after:undefined;
+  // An unchanged worker that is not fresh is stored once per heartbeat, so its
+  // latest snapshot describes the terminal until the next heartbeat is due.
+  const reach=before&&before.data?.fresh!==true?Math.max(maxGap,workerSnapshotValidSeconds):maxGap;
+  const match=before&&e.observedAt-before.observedAt<=reach?before:after&&after.observedAt-e.observedAt<=maxGap?after:undefined;
   if(!match||match.data?.takeover||settled(match)||closing)return e;
   if(e.terminalIncarnation&&match.terminalIncarnation&&e.terminalIncarnation!==match.terminalIncarnation)return e;
   const result=applyBinding(e,match);bindings.set(identity(e),result);return result;

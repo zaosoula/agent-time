@@ -195,3 +195,12 @@ test('concurrent sessions keep separate agent credit while elapsed overlap is co
  assert.equal(summary.agentSeconds,120);
  assert.equal(summary.elapsedSeconds,60);
 });
+
+test('a hook links to an unchanged live worker until its next heartbeat is due',()=>{
+ const stale=(id:string,time:number)=>e(id,time,'worker',{source:'orca',hostId:'local',terminalHandle:'t1',workspaceId:'ws',dispatchId:'d1',runId:'r1',taskId:'task-d1',data:{state:'unknown',outcome:'in_progress',fresh:false}});
+ const hook=(id:string,time:number,kind:string)=>e(id,time,kind,{sessionId:'s1',terminalHandle:'t1',hostId:'local',provider:'codex',data:{toolId:'x'}});
+ const linked=summarize([stale('w',0),hook('start',200,'tool_start'),hook('end',210,'tool_end')]);
+ assert.equal(linked.intervals.find(i=>i.state==='running')?.dispatchId,'d1');
+ const late=summarize([stale('w',0),hook('start',400,'tool_start'),hook('end',410,'tool_end')]);
+ assert.equal(late.intervals.find(i=>i.state==='running')?.dispatchId,undefined);
+});

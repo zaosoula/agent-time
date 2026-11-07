@@ -102,3 +102,15 @@ test('repeated static host-scope notice is stored once per UTC day',()=>{
   assert.deepEqual(store.events().map(item=>item.eventId),['first','next-day']);
  }finally{store.close();}
 });
+
+test('unchanged live worker snapshots are stored once per heartbeat, fresh ones every poll',()=>{
+ const store=new EventStore(':memory:');
+ const snap=(id:string,at:number,fresh=false)=>({eventId:id,source:'orca',kind:'worker',observedAt:at,monotonicAt:at,collectorEpoch:'a',hostId:'local',terminalHandle:'t1',dispatchId:'d1',data:{state:fresh?'working':'unknown',outcome:'in_progress',fresh}});
+ try{
+  assert.equal(store.putObservations([snap('a',0),snap('b',30),snap('c',290)]),1);
+  assert.equal(store.putObservations([snap('d',301)]),1);
+  assert.equal(store.putObservations([snap('e',310,true),snap('f',315,true)]),2);
+  const rows=[0,30,290,301,330,600,610].map((at,index)=>({rowid:index+1,event:snap(`r${index}`,at)}));
+  assert.deepEqual([...retainedObservationRows(rows)].sort((a,b)=>a-b),[1,4,7]);
+ }finally{store.close();}
+});
