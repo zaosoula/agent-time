@@ -13,7 +13,9 @@ test('first-run choice persists and user installs are idempotent while preservin
   f.manager.dismiss();assert.equal(new HookInstallation(f.output,{home:f.home,env:{}}).status().setupSeen,true);
   const target=f.manager.status().targets.find(t=>t.provider==='claude')!;
   const command=config.hooks.SessionStart[0].hooks[0].command;
-  execFileSync('/bin/sh',['-c',command],{input:JSON.stringify({hook_event_name:'SessionStart',session_id:'test-session',cwd:'/test',prompt:'secret'}),timeout:5000});
+  // The same command for every configuration: the runtime derives the installation from the transcript path.
+  assert.ok(!command.includes('--installation-id'));
+  execFileSync('/bin/sh',['-c',command],{input:JSON.stringify({hook_event_name:'SessionStart',session_id:'test-session',cwd:'/test',prompt:'secret',transcript_path:join(f.home,'.claude/projects/-test/test-session.jsonl')}),timeout:5000});
   const files=readdirSync(join(f.output,'spool'));assert.equal(files.length,1);const event=JSON.parse(readFileSync(join(f.output,'spool',files[0]),'utf8'));assert.equal(event.sessionId,'test-session');assert.ok(event.runtimeId.includes(target.id));assert.ok(!JSON.stringify(event).includes('secret'));f.db.put(event);assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.lastEvent,event.observedAt);assert.equal(f.manager.status().targets.find(t=>t.provider==='codex')?.lastEvent,null);
  }finally{f.close();}
 });
@@ -113,11 +115,10 @@ test('an Orca Claude profile repairs hooks copied from the user configuration',a
   await f.manager.install('claude');
   const user=join(f.home,'.claude/settings.json'),profile=join(f.home,'Library/Application Support/orca/claude-profiles/profile/home');mkdirSync(profile,{recursive:true});
   const path=join(profile,'settings.json'),userBytes=readFileSync(user,'utf8');writeFileSync(path,userBytes);
-  const target=f.manager.status().targets.find(t=>t.path===path)!;assert.equal(target.state,'needs-update');
-  await f.manager.install('claude',[target.id]);
-  assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'installed');
+  // Hook commands carry no per-configuration ID, so Orca's copy is already current.
+  const target=f.manager.status().targets.find(t=>t.path===path)!;assert.equal(target.state,'installed');
   assert.equal(readFileSync(user,'utf8'),userBytes);
-  assert.notEqual(readFileSync(path,'utf8'),userBytes);
+  assert.equal(readFileSync(path,'utf8'),userBytes);
  }finally{f.close();}
 });
 test('an Orca account inheriting the user Codex hooks stays installed after sync',async()=>{
@@ -260,4 +261,26 @@ test('a managed hook placed before a foreign hook still counts as installed',asy
   writeFileSync(path,JSON.stringify(config,null,2)+'\n');
   assert.equal(f.manager.status().targets.find(t=>t.id===target.id)?.state,'needs-update');
  }finally{f.close();}
+});
+
+test('a configuration copied with an earlier installation ID still counts as installed',async()=>{
+ const f=fixture();try{
+  await f.manager.install('claude');
+  const user=join(f.home,'.claude/settings.json'),config=JSON.parse(readFileSync(user,'utf8'));
+  const id=f.manager.status().targets.find(t=>t.path===user)!.id;
+  for(const groups of Object.values(config.hooks) as any[])for(const group of groups)for(const hook of group.hooks)if(hook.command.includes('launch.sh'))hook.command+=` '--installation-id' '${id}'`;
+  const profile=join(f.home,'Library/Application Support/orca/claude-profiles/profile/home');mkdirSync(profile,{recursive:true});
+  writeFileSync(user,JSON.stringify(config));writeFileSync(join(profile,'settings.json'),JSON.stringify(config));
+  for(const target of f.manager.status().targets.filter(t=>t.provider==='claude'))assert.equal(target.state,'installed',target.label);
+ }finally{f.close();}
+});
+
+test('a hook derives its installation from the transcript path, the config variable or the default folder',async()=>{
+ const {hookInstallationId}=await import('../src/capture/hooks.ts');
+ const {createHash}=await import('node:crypto');
+ const id=(path:string)=>createHash('sha256').update(path).digest('hex').slice(0,16);
+ assert.equal(hookInstallationId('claude',{transcript_path:'/p/home/projects/x/s.jsonl'},{},'/u'),id('/p/home/settings.json'));
+ assert.equal(hookInstallationId('claude',{},{CLAUDE_CONFIG_DIR:'/c'},'/u'),id('/c/settings.json'));
+ assert.equal(hookInstallationId('claude',{},{},'/u'),id('/u/.claude/settings.json'));
+ assert.equal(hookInstallationId('codex',{transcript_path:'/k/home/sessions/2026/r.jsonl'},{},'/u'),id('/k/home/hooks.json'));
 });

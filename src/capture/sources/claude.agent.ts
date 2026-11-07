@@ -1,6 +1,6 @@
 import {createHash} from 'node:crypto';
 import {makeEvent,type CaptureEvent} from '../events.ts';
-import {object} from '../orca.ts';
+import {object} from '../json.ts';
 import type {AgentSource} from './types.ts';
 import type {ParserState,UsageRecord,Counts} from '../../usage/parser.ts';
 import {existsSync} from 'node:fs';

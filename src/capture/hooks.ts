@@ -1,6 +1,7 @@
 import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync, unlinkSync, lstatSync } from 'node:fs';
-import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { join, resolve } from 'node:path';
+import { createHash, randomUUID } from 'node:crypto';
+import { homedir } from 'node:os';
 import { validateEvent, type CaptureEvent, type Issue } from './events.ts';
 import type { EventStore } from './store.ts';
 import {agentById} from './sources/agent-registry.ts';
@@ -8,6 +9,23 @@ export function normalizeHook(provider: string, payload: unknown, context: Parti
   const agent=agentById.get(provider);
   if(!agent)throw new Error('Unsupported hook provider');
   return agent.normalizeHook(payload,context);
+}
+/** Where each agent keeps session transcripts inside its config folder. */
+const transcriptFolders:Record<string,string>={claude:'/projects/',codex:'/sessions/'};
+/**
+ * The hook installation an event came from: a hash of the agent config file
+ * that ran it, the same ID the installer gives that file. Hook commands no
+ * longer carry it, so Orca copying a config between accounts cannot make it
+ * stale. The transcript path names the config folder even where the agent
+ * does not pass its config variable to hooks; otherwise use that variable or
+ * the default folder.
+ */
+export function hookInstallationId(provider:string,payload:unknown,env:NodeJS.ProcessEnv=process.env,home=homedir()):string|undefined{
+  const agent=agentById.get(provider);if(!agent)return undefined;
+  const transcript=payload&&typeof payload==='object'?(payload as Record<string,unknown>).transcript_path:undefined;
+  const marker=transcriptFolders[provider],at=typeof transcript==='string'&&marker?transcript.lastIndexOf(marker):-1;
+  const folder=at>0?(transcript as string).slice(0,at):env[agent.configEnv]||join(home,agent.configDirectory);
+  return createHash('sha256').update(join(resolve(folder),agent.configFile)).digest('hex').slice(0,16);
 }
 export function hookContext(): Partial<CaptureEvent> {
   // Only allowlisted identifiers; never capture the environment or hook endpoint credentials.

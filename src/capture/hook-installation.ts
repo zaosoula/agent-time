@@ -16,7 +16,8 @@ interface Options {home?:string;env?:NodeJS.ProcessEnv;}
 const hash=(value:string)=>createHash('sha256').update(value).digest('hex').slice(0,16);
 const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
 const source=dirname(fileURLToPath(import.meta.url));
-const files=['hook-runner.ts','hooks.ts','events.ts','store.ts','observation-retention.ts','orca.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
+// Only what the hook runner loads, so the runtime version changes only with hook code.
+const files=['hook-runner.ts','hooks.ts','events.ts','json.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
 const runtimeVersion=hash(process.version+files.map(f=>readFileSync(join(source,f),'utf8')).join('\n'));
 // First execution of a copied runtime can exceed five seconds on a busy Mac.
 // This only verifies installation; hook delivery keeps its separate short timeout.
@@ -71,7 +72,7 @@ export class HookInstallation{
   const recognized=new Set<string>();
   for(const target of targets.filter(t=>t.provider===provider)){
    try{for(const command of this.commands(target.id))recognized.add(command);}catch{/* The owning target reports its invalid record separately. */}
-   recognized.add(this.command(provider,target.id));
+   recognized.add(this.command(provider));recognized.add(this.legacyCommand(provider,target.id));
   }
   return [...recognized];
  }
@@ -91,7 +92,10 @@ export class HookInstallation{
   }
   return targets.map(t=>({...t,id:hash(t.path)}));
  }
- private command(provider:HookProvider,id:string){return ['/bin/sh',join(dirname(this.runtime),'launch.sh'),'--provider',provider,'--spool',join(this.output,'spool'),'--installation-id',id].map(quote).join(' ');}
+ /** The hook command: the same for every configuration of an agent, so copies stay current. */
+ private command(provider:HookProvider,_id?:string){return ['/bin/sh',join(dirname(this.runtime),'launch.sh'),'--provider',provider,'--spool',join(this.output,'spool')].map(quote).join(' ');}
+ /** The command earlier versions installed, with the configuration's ID; still recognized and accepted. */
+ private legacyCommand(provider:HookProvider,id:string){return ['/bin/sh',join(dirname(this.runtime),'launch.sh'),'--provider',provider,'--spool',join(this.output,'spool'),'--installation-id',id].map(quote).join(' ');}
  private ready(){try{const parent=dirname(this.runtime),node=join(this.runtime,'node');if(!lstatSync(node).isFile()||!lstatSync(join(parent,'launch.sh')).isFile()||!lstatSync(join(parent,'current')).isFile())return false;accessSync(node,constants.X_OK);return readFileSync(join(parent,'launch.sh'),'utf8')===launcher&&readFileSync(join(parent,'current'),'utf8')===runtimeVersion+'\n'&&files.every(f=>lstatSync(join(this.runtime,f)).isFile()&&readFileSync(join(this.runtime,f),'utf8')===readFileSync(join(source,f),'utf8'));}catch{return false;}}
  private installedRuntime(){try{return readFileSync(join(dirname(this.runtime),'current'),'utf8').trim();}catch{return null;}}
  /**
@@ -163,7 +167,7 @@ export class HookInstallation{
     const command=this.command(t.provider,t.id),owned=this.commands(t.id);
     // Orca can copy the user hook config into an account home. Its command is
     // still ours, even though its installation ID names the original path.
-    const candidates=owned.length?discovered.filter(other=>other.provider===t.provider):[t];
+    const candidates=discovered.filter(other=>other.provider===t.provider);
     const recognized=this.recognizedCommands(t.provider,discovered);
     const desired=prepareConfig(t.path,t.provider,command,hookEvents(t.provider),recognized);
     if(desired.existed){const current=JSON.parse(desired.original);const all=Object.values(current.hooks||{}).flatMap((groups:any)=>groups.flatMap((group:any)=>group.hooks));
@@ -172,9 +176,10 @@ export class HookInstallation{
       state='needs-update';reason=ready?'Managed hook configuration changed':'Hook runtime needs repair';
       details=managedDifferences(current,JSON.parse(desired.updated),recognized);
       for(const candidate of candidates){
-       const candidateCommand=this.command(candidate.provider,candidate.id);
-       const equivalent=prepareConfig(t.path,t.provider,candidateCommand,hookEvents(t.provider),recognized);
-       if(isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(equivalent.updated),recognized))){state=ready?'installed':'needs-update';reason=ready?null:'Hook runtime needs repair';details=[];matchedId=candidate.id;break;}
+       // Current commands carry no ID; a command from an earlier version, possibly copied by Orca
+       // from another configuration, is equally valid.
+       const forms=[this.command(candidate.provider),this.legacyCommand(candidate.provider,candidate.id)];
+       if(forms.some(form=>isDeepStrictEqual(managedLast(current,recognized),managedLast(JSON.parse(prepareConfig(t.path,t.provider,form,hookEvents(t.provider),recognized).updated),recognized)))){state=ready?'installed':'needs-update';reason=ready?null:'Hook runtime needs repair';details=[];matchedId=candidate.id;break;}
       }
      }
     }
@@ -184,7 +189,7 @@ export class HookInstallation{
    if(this.installErrors.has(t.id)){state='error';error=this.installErrors.get(t.id)!;reason='Last repair failed';}
    if(state==='needs-update'&&!ready)details=[`Hook runtime ${this.installedRuntime()||'missing'} → ${runtimeVersion} (new Agent Time version)`,...details];
    if(state!=='installed'&&state!=='not-installed')details=[...details,`Configuration: ${t.path}`];
-   return {...t,state,error,reason,details,lastEvent:lastEvents.get(`${matchedId||t.id}/${runtimeVersion}`)||null};
+   return {...t,state,error,reason,details,lastEvent:lastEvents.get(`${t.id}/${runtimeVersion}`)||(matchedId?lastEvents.get(`${matchedId}/${runtimeVersion}`):undefined)||null};
   });
   let legacyPaths:string[]=[];try{legacyPaths=this.legacy().map(l=>l.path);}catch(e){this.migrationError=String(e);}
   return {setupSeen:existsSync(join(this.stateRoot,'hook-setup.json')),runtimeVersion,runtimeReady:ready,agents:agents.map(({id,name,setting,usageSetting,trustNote})=>({id,name,setting,usageSetting,trustNote})),targets,legacyPaths,migrationError:this.migrationError};

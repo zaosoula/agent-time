@@ -4,8 +4,8 @@ import {delimiter,join} from 'node:path';
 import { promisify } from 'node:util';
 import { makeEvent, type CaptureEvent, type Issue } from './events.ts';
 const exec = promisify(execFile);
-export type JsonObject = Record<string, any>;
-export function object(value: unknown): JsonObject { return value && typeof value === 'object' && !Array.isArray(value) ? value as JsonObject : {}; }
+import { object, type JsonObject } from './json.ts';
+export { object, type JsonObject };
 export function orcaCliAvailable(command=process.env.ORCA_CLI_COMMAND||'orca',path=process.env.PATH||''):boolean{
   const executable=(file:string)=>{try{accessSync(file,constants.X_OK);return statSync(file).isFile();}catch{return false;}};
   return command.includes('/')?executable(command):path.split(delimiter).some(folder=>executable(join(folder||'.',command)));
