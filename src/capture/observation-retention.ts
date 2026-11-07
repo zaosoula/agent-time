@@ -1,6 +1,6 @@
 import type {CaptureEvent} from './events.ts';
-import {informativeWorker} from './orca.ts';
 
+// Imported by the UI through correlate.ts: keep this module free of Node and Orca CLI imports.
 const settled=new Set(['succeeded','failed','completed','cancelled','abandoned']);
 export const staticOrcaScopeReason='Only this Orca host is observed; remote execution has not been verified';
 
@@ -51,4 +51,13 @@ export function retainedObservationRows(rows:Array<{rowid:number;event:CaptureEv
  }
  for(const last of latest.values())keep.add(last.rowid);
  return keep;
+}
+/**
+ * Whether a worker snapshot can affect a summary. A snapshot that is not fresh
+ * credits no time; without a host and terminal it cannot link a hook to its
+ * dispatch; without a final outcome it closes nothing. Such snapshots were
+ * most of the event store (one row per old dispatch every 30 s) and are skipped.
+ */
+export function informativeWorker(event:CaptureEvent):boolean{
+ return event.data?.fresh===true||Boolean(event.hostId)||settled.has(String(event.data?.outcome));
 }

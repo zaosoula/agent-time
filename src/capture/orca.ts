@@ -3,6 +3,7 @@ import {accessSync,constants,statSync} from 'node:fs';
 import {delimiter,join} from 'node:path';
 import { promisify } from 'node:util';
 import { makeEvent, type CaptureEvent, type Issue } from './events.ts';
+import {informativeWorker} from './observation-retention.ts';
 const exec = promisify(execFile);
 import { object, type JsonObject } from './json.ts';
 export { object, type JsonObject };
@@ -50,15 +51,7 @@ export function workerEvent(worker: JsonObject): CaptureEvent {
   });
 }
 const settledOutcomes=new Set(['succeeded','failed','completed','cancelled','abandoned']);
-/**
- * Whether a worker snapshot can affect a summary. A snapshot that is not fresh
- * credits no time; without a host and terminal it cannot link a hook to its
- * dispatch; without a final outcome it closes nothing. Such snapshots were
- * most of the event store (one row per old dispatch every 30 s) and are skipped.
- */
-export function informativeWorker(event:CaptureEvent):boolean{
- return event.data?.fresh===true||Boolean(event.hostId)||settledOutcomes.has(String(event.data?.outcome));
-}
+export {informativeWorker};
 const finishedTerminal=new Set(['released','reclaimable']);
 /**
  * Poll state kept between fleet reads. Run discovery lists every Run, and each
