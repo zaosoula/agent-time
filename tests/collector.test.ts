@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../src/capture/event-database.ts';
 import {test} from 'node:test';import assert from 'node:assert/strict';import {mkdtempSync,rmSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';import {Collector} from '../src/capture/collector.ts';import {makeEvent} from '../src/capture/events.ts';import {storedSettings} from '../src/capture/settings.ts';
 
 test('legacy website preference migrates to individual browsers',()=>{
@@ -218,7 +219,7 @@ test('status avoids history replay and dashboard/menu reuse a summary until an e
   c.status();const first=c.summaryForDate(today);assert.equal(c.summaryForDate(today),first);c.trayStatus();assert.equal(reads,0);
   const e=makeEvent('hook','session_start',{provider:'claude',sessionId:'new',hostId:'local',terminalHandle:'t'});c.store.put(e);assert.notDeepEqual(c.summaryForDate(today),first);c.trayStatus();
   c.store.put(e);const second=c.summaryForDate(today);assert.equal(c.summaryForDate(today),second);
-  const db=new DatabaseSync(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local',terminalHandle:'t2'});db.prepare('INSERT INTO events VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summaryForDate(today).sessions.some(s=>s.sessionId==='external'));
+  const db=openEventDatabase(join(path,'events.sqlite')),other=makeEvent('hook','session_start',{provider:'codex',sessionId:'external',hostId:'local',terminalHandle:'t2'});db.prepare('INSERT INTO events(event_id,observed_at,payload_data) VALUES(?,?,?)').run(other.eventId,other.observedAt,JSON.stringify(other));db.close();assert.ok(c.summaryForDate(today).sessions.some(s=>s.sessionId==='external'));
   assert.equal(reads,0);
   // The dateless whole-history summary is still exact.
   assert.ok(c.summary().sessions.some(s=>s.sessionId==='external'));assert.equal(reads,1);c.summary();assert.equal(reads,1);

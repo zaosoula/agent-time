@@ -1,3 +1,4 @@
+import {openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
 import { DatabaseSync,backup } from 'node:sqlite';
 import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync } from 'node:fs';
 import { dirname,join } from 'node:path';
@@ -29,7 +30,8 @@ export class EventStore {
       mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
       closeSync(openSync(path, 'a', 0o600)); chmodSync(path, 0o600);
     }
-    this.db = new DatabaseSync(path);
+    this.db = openEventDatabase(path);
+    if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='events'").get())createPackedEventSchema(this.db);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS day_review_cache (date TEXT PRIMARY KEY,signature TEXT NOT NULL,snapshot TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
     this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
     // Per-provider hook lookups must not walk every hook row when a provider is quiet.
@@ -47,7 +49,7 @@ export class EventStore {
       if (existing.payload !== payload) throw new Error('event ID conflict');
       return false;
     }
-    this.db.prepare('INSERT INTO events VALUES (?, ?, ?)').run(event.eventId, event.observedAt, payload);
+    insertEventRow(this.db,event.eventId,event.observedAt,payload);
     this.generation++;return true;
   }
   putObservations(events:CaptureEvent[]):number {
@@ -281,7 +283,7 @@ export class EventStore {
     const path=join(folder,`agent-time-${stamp}-${randomUUID()}.sqlite`),temp=path+'.tmp';
     try{
       await backup(this.db,temp);
-      const check=new DatabaseSync(temp,{readOnly:true});
+      const check=openEventDatabase(temp,{readOnly:true});
       let events:number;
       try{if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Export integrity check failed');events=Number(check.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
       finally{check.close();}
@@ -313,7 +315,7 @@ export class EventStore {
     if(!archiveName.test(id))throw new Error('Invalid archive ID');
     const folder=join(output,'exports'),path=join(folder,id);
     if(lstatSync(folder).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())throw new Error('Archive must be a regular file');
-    const check=new DatabaseSync(path,{readOnly:true});
+    const check=openEventDatabase(path,{readOnly:true});
     try{
       if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Archive integrity check failed');
       for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
@@ -343,7 +345,7 @@ export class EventStore {
       }
       this.db.exec('BEGIN IMMEDIATE');
       try{
-        this.db.exec('INSERT OR IGNORE INTO main.events SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid');
+        this.db.exec(`INSERT OR IGNORE INTO main.events(event_id,observed_at,${isPackedEventDatabase(this.db)?'payload_data':'payload'}) SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid`);
         this.db.exec('INSERT OR IGNORE INTO main.observation_signatures SELECT identity,signature FROM archive.observation_signatures');
         this.db.exec('INSERT OR IGNORE INTO main.human_decisions SELECT start_event_id,end_event_id,mode,project_path,decided_at FROM archive.human_decisions');
         if(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get())this.db.exec('INSERT OR IGNORE INTO main.human_splits SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM archive.human_splits');

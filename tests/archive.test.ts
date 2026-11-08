@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../src/capture/event-database.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,statSync,mkdirSync,copyFileSync,symlinkSync,existsSync} from 'node:fs';
@@ -81,8 +82,8 @@ test('restore rejects a structurally valid archive with an invalid event payload
  try{
   store.put(makeEvent('capture','capture_start'));
   const archive=await store.exportArchive(root);
-  const copy=new DatabaseSync(archive.path);
-  copy.prepare('UPDATE events SET payload=?').run(JSON.stringify({eventId:'tampered',source:'capture',observedAt:'bad'}));
+  const copy=openEventDatabase(archive.path);
+  copy.prepare('UPDATE events SET payload_data=?').run(JSON.stringify({eventId:'tampered',source:'capture',observedAt:'bad'}));
   copy.close();
   store.close();
   const fresh=new EventStore(join(root,'fresh.sqlite'));
@@ -98,7 +99,7 @@ test('archive preview refuses conflicting usage records before writing',async()=
  try{
   const archive=await store.exportArchive(root),id=archive.path.split('/').at(-1)!;
   for(const [path,tokens] of [[archive.path,10],[join(root,'events.sqlite'),20]] as const){
-   const db=new DatabaseSync(path);
+   const db=openEventDatabase(path);
    try{db.exec('CREATE TABLE usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');db.prepare('INSERT INTO usage_events VALUES (?,?,?)').run('usage-1',100,JSON.stringify({id:'usage-1',timestamp:100,provider:'claude',input:tokens}));}
    finally{db.close();}
   }

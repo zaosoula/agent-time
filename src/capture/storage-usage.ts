@@ -1,3 +1,4 @@
+import {openEventDatabase,isPackedEventDatabase} from './event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {lstatSync,readdirSync,statfsSync} from 'node:fs';
 import {join} from 'node:path';
@@ -42,12 +43,13 @@ export function storageUsage(root:string,now=Date.now()/1000):StorageUsage{
  let eventCount=0;
  let byDay:StorageUsage['byDay']=[];
  if(database.files){
-  const db=new DatabaseSync(join(root,'events.sqlite'),{readOnly:true});
+  const db=openEventDatabase(join(root,'events.sqlite'),{readOnly:true});
   try{
    eventCount=Number(db.prepare('SELECT count(*) count FROM events').get()?.count||0);
    indexes.bytes=Number(db.prepare("SELECT coalesce(sum(pgsize),0) bytes FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE type='index')").get()?.bytes||0);
    const cutoff=now-30*86400;
-   byDay=db.prepare("SELECT date(observed_at,'unixepoch','localtime') date,json_extract(payload,'$.source') source,count(*) events,sum(length(payload)) payloadBytes FROM events WHERE observed_at>=? AND observed_at<=? GROUP BY 1,2 ORDER BY 1 DESC,2").all(cutoff,now)
+   const payloadSize=isPackedEventDatabase(db)?'payload_bytes':'length(payload)',source=isPackedEventDatabase(db)?'source':"json_extract(payload,'$.source')";
+   byDay=db.prepare(`SELECT date(observed_at,'unixepoch','localtime') date,${source} source,count(*) events,sum(${payloadSize}) payloadBytes FROM events WHERE observed_at>=? AND observed_at<=? GROUP BY 1,2 ORDER BY 1 DESC,2`).all(cutoff,now)
     .map(row=>({date:String(row.date),source:String(row.source),events:Number(row.events),payloadBytes:Number(row.payloadBytes)}));
   }finally{db.close();}
  }

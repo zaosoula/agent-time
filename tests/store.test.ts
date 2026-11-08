@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../src/capture/event-database.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtempSync, statSync, rmSync } from 'node:fs';
@@ -43,7 +44,7 @@ test('lightweight count and revision reflect local inserts, duplicate replay and
  const {DatabaseSync}=await import('node:sqlite');const root=mkdtempSync(join(tmpdir(),'ade-store-revision-')),path=join(root,'events.sqlite');const store=new EventStore(path);
  try{
   const empty=store.revision();assert.equal(store.count(),0);store.put(event);assert.equal(store.count(),1);assert.notEqual(store.revision(),empty);const current=store.revision();store.put(event);assert.equal(store.revision(),current);
-  const external=new DatabaseSync(path);external.prepare('INSERT INTO events VALUES(?,?,?)').run('external',20,JSON.stringify({...event,eventId:'external',observedAt:20}));external.close();assert.equal(store.count(),2);assert.notEqual(store.revision(),current);
+  const external=openEventDatabase(path);external.prepare('INSERT INTO events(event_id,observed_at,payload_data) VALUES(?,?,?)').run('external',20,JSON.stringify({...event,eventId:'external',observedAt:20}));external.close();assert.equal(store.count(),2);assert.notEqual(store.revision(),current);
  }finally{store.close();rmSync(root,{recursive:true});}
 });
 test('recent capture-health reads use the source index and retain row order',async()=>{
@@ -55,7 +56,7 @@ test('recent capture-health reads use the source index and retain row order',asy
   store.put({...event,eventId:'capture-2',source:'capture',observedAt:33});
   assert.deepEqual(store.recent('capture',2).map(item=>item.eventId),['capture-2','capture-1']);
   assert.deepEqual(store.recent('hook',2,'claude').map(item=>item.eventId),['hook-claude']);
-  const db=new DatabaseSync(path,{readOnly:true});
+  const db=openEventDatabase(path,{readOnly:true});
   const plan=String(db.prepare("EXPLAIN QUERY PLAN SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?").all('capture',2)[0]?.detail);
   assert.match(plan,/events_source_recent/);
   const runtimeSql="SELECT json_extract(payload,'$.runtimeId') runtime,observed_at at FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' ORDER BY observed_at DESC LIMIT 20000";

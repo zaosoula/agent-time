@@ -1,3 +1,4 @@
+import {openEventDatabase} from './event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {chmodSync,existsSync,lstatSync,mkdirSync,statSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
@@ -14,7 +15,7 @@ export function compactCaptureCopy(sourceArg:string,targetArg:string,_options:{i
  mkdirSync(dirname(target),{recursive:true,mode:0o700});
  let copy:DatabaseSync|undefined;
  try{
-  const original=new DatabaseSync(source,{readOnly:true});
+  const original=openEventDatabase(source,{readOnly:true});
   let sourceEvents:string,sourceTables:string;
   try{
    configure(original);
@@ -22,7 +23,7 @@ export function compactCaptureCopy(sourceArg:string,targetArg:string,_options:{i
    original.prepare('VACUUM INTO ?').run(target);
   }finally{original.close();}
   chmodSync(target,0o600);
-  copy=new DatabaseSync(target);configure(copy);
+  copy=openEventDatabase(target);configure(copy);
   if(eventsDigest(copy)!==sourceEvents||otherTablesDigest(copy)!==sourceTables)throw new Error('Copy changed stored data; compacted copy was rejected');
   // Disk-backed retention state replaces arrays/sets proportional to payloads
   // and event count. Meaningful workers stay verbatim: their timestamps can

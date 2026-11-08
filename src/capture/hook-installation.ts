@@ -1,3 +1,4 @@
+import {openEventDatabase} from './event-database.ts';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,readdirSync,lstatSync,copyFileSync,renameSync,chmodSync,accessSync,constants,rmSync} from 'node:fs';
 import {homedir} from 'node:os';import {join,dirname,resolve,basename} from 'node:path';import {fileURLToPath} from 'node:url';import {createHash,randomUUID} from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
@@ -168,7 +169,7 @@ export class HookInstallation{
  status():HookInstallationStatus{
   const discovered=this.targets();
   let lastEvents:Map<string,number>=new Map();
-  try{const db=new DatabaseSync(join(this.output,'events.sqlite'),{readOnly:true});try{
+  try{const db=openEventDatabase(join(this.output,'events.sqlite'),{readOnly:true});try{
    const wanted=new Set(discovered.map(target=>`${target.id}/${runtimeVersion}`));
    // The observed-at hook index gives newest delivery first. Stop once every
    // discovered runtime is found, and cap work for dormant installations.

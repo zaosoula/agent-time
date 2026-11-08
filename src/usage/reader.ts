@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';import {homedir} from 'node:os';import {join} from 'node:path';
 import {readdir,stat,realpath} from 'node:fs/promises';import {createReadStream} from 'node:fs';
 import {parseUsage,tokenTotal,type ParserState,type UsageRecord,type Counts} from './parser.ts';
@@ -24,7 +25,7 @@ export class UsageReader{
  constructor(database:string|DatabaseSync,roots?:Array<{provider:string;accountId:string;path:string}>,orca:typeof callOrca=callOrca,pricingUrl?:string,home:string=homedir()){
   this.roots=roots;this.orca=orca;this.home=home;
   this.ownsDatabase=typeof database==='string';
-  this.db=typeof database==='string'?new DatabaseSync(database):database;
+  this.db=typeof database==='string'?openEventDatabase(database):database;
   this.db.exec('PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL); CREATE TABLE IF NOT EXISTS usage_cursors (path TEXT PRIMARY KEY, offset INTEGER NOT NULL, state TEXT NOT NULL);');
   this.pricing=new CatalogStore(this.db,pricingUrl);this.pricing.bindExisting();
  }

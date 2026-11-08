@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../src/capture/event-database.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,existsSync,renameSync,mkdirSync} from 'node:fs';
@@ -64,7 +65,7 @@ test('archive replacement rejects invalid captured event payloads',()=>{
   const invalid=new EventStore(join(root,'exports','agent-time-2026-10-21T00-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite'));
   invalid.put(terminal(1));invalid.close();
   const file=join(root,'exports','agent-time-2026-10-21T00-00-00-000Z-12345678-1234-1234-1234-123456789abc.sqlite');
-  const db=new DatabaseSync(file);db.prepare('UPDATE events SET payload=?').run('{}');db.close();
+  const db=openEventDatabase(file);db.prepare('UPDATE events SET payload_data=?').run('{}');db.close();
   assert.throws(()=>prepareRestore(root,file.split('/').at(-1)!),/Invalid|match|event/i);
   assert.equal(pendingReplacement(root),null);
  }finally{rmSync(root,{recursive:true,force:true});}

@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../src/capture/event-database.ts';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {spawnSync} from 'node:child_process';
@@ -36,7 +37,7 @@ test('compaction streams payloads larger than its JavaScript heap budget',()=>{
  const root=mkdtempSync(join(tmpdir(),'agent-time-compact-memory-')),source=join(root,'source.sqlite'),target=join(root,'target.sqlite');
  try{
   const store=new EventStore(source);store.close();
-  const db=new DatabaseSync(source),put=db.prepare('INSERT INTO events VALUES(?,?,?)');
+  const db=openEventDatabase(source),put=db.prepare('INSERT INTO events(event_id,observed_at,payload_data) VALUES(?,?,?)');
   db.exec('BEGIN');
   for(let i=0;i<30_000;i++){
    const event={eventId:`empty-${i}`,source:'orca',kind:'worker',observedAt:100+i,monotonicAt:i,collectorEpoch:'epoch',dispatchId:'empty-dispatch',data:{state:'unknown',padding:'x'.repeat(4096)}};
@@ -114,7 +115,7 @@ test('compaction rejects a payload ID that disagrees with the SQLite primary key
  const store=new EventStore(source);
  try{
   store.put({eventId:'original',source:'capture',kind:'capture_start',observedAt:1,monotonicAt:1,collectorEpoch:'epoch'});store.close();
-  const db=new DatabaseSync(source);db.exec("UPDATE events SET event_id='different'");db.close();
+  const db=openEventDatabase(source);db.exec("UPDATE events SET event_id='different'");db.close();
   assert.throws(()=>compactCaptureCopy(source,target),/columns do not match/);
   assert.equal(existsSync(target),false);
  }finally{if(store.database.isOpen)store.close();rmSync(root,{recursive:true,force:true});}

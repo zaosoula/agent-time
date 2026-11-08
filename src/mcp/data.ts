@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,unlinkSync,writeFileSync} from 'node:fs';
@@ -33,7 +34,7 @@ export function range(fromDate:string,toDate:string){
 }
 function database(output:string,readOnly=true):DatabaseSync{
  const path=join(output,'events.sqlite');if(!existsSync(path))throw new Error('Agent Time has no captured data yet');
- return new DatabaseSync(path,{readOnly});
+ return openEventDatabase(path,{readOnly});
 }
 function pendingReports(output:string):CaptureEvent[]{
  const events:CaptureEvent[]=[],spool=join(output,'spool');

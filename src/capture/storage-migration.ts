@@ -1,3 +1,4 @@
+import {openEventDatabase} from './event-database.ts';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
@@ -46,7 +47,7 @@ function writePending(root:string,pending:PendingReplacement){
  writeFileSync(marker(root),JSON.stringify(pending),{flag:'wx',mode:0o600});
 }
 function verifyDatabase(path:string){
- regular(path);const db=new DatabaseSync(path,{readOnly:true});
+ regular(path);const db=openEventDatabase(path,{readOnly:true});
  try{
   if(db.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Storage integrity check failed');
   for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
@@ -59,7 +60,7 @@ function verifyDatabase(path:string){
  finally{db.close();}
 }
 function checkpoint(path:string){
- const db=new DatabaseSync(path);
+ const db=openEventDatabase(path);
  try{
   const result=db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
   if(Number(result?.busy)!==0||db.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Storage is busy or damaged');

@@ -1,3 +1,4 @@
+import {openEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {existsSync,readFileSync} from 'node:fs';
 import {spawnSync} from 'node:child_process';
@@ -8,7 +9,7 @@ import {renderClaudeReportedStatus} from './claude-statusline.ts';
 function readInput():Promise<string>{return new Promise(resolve=>{let input='';process.stdin.setEncoding('utf8');process.stdin.on('data',(chunk:string)=>{input+=chunk;if(input.length>65536)process.stdin.destroy();});process.stdin.on('end',()=>resolve(input));process.stdin.on('close',()=>resolve(input));});}
 function reports(output:string,now:number):CaptureEvent[]{
  const path=join(output,'events.sqlite');if(!existsSync(path))return [];
- const db=new DatabaseSync(path,{readOnly:true});
+ const db=openEventDatabase(path,{readOnly:true});
  try{return db.prepare("SELECT payload FROM events WHERE observed_at>=? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at DESC LIMIT 2000").all(now-12*3600).map(row=>JSON.parse(String(row.payload)) as CaptureEvent);}
  finally{db.close();}
 }
