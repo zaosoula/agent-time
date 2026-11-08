@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.34` candidate — 2026-11-08
+## `0.2.0-beta.34` published — 2026-11-08
 
 Read-only post-compaction storage audit sampled 1,273,584 events containing 690,392,212 payload bytes. The largest sources were macOS activity (523,811 rows / 254,741,213 bytes), Orca worker snapshots (394,354 / 203,236,969), and tool starts/ends (270,898 / 187,522,472). 461,805 of 484,011 continuous activity pairs repeated their app/page context. Aggregate-only local evidence: `/private/tmp/agent-time-storage-audit-current.json`.
 
@@ -10,7 +10,11 @@ Fixed two hook-runtime retention defects: the ownership allowlist lacked `json.t
 
 Follow-on format design measurements: 623 blocks of 2,048 original event rows compressed 692,059,081 bytes of JSON-lines into 72,649,795 bytes (89.5% smaller); every block round-tripped to exact original bytes in a 9.29-second read-only experiment under a 64 MB heap. Separately, 130,809 unambiguous completed tool pairs contain about 62,605,609 bytes of duplicated common fields; 1,841 ambiguous groups and unmatched boundaries require preserving raw evidence. Lossless cold blocks and reconciled-call storage are proposed format changes, not features of this release. Local evidence: `/private/tmp/agent-time-compression-audit.json` and `/private/tmp/agent-time-tool-pair-audit.json`.
 
-Validation: 359 JavaScript tests, focused MCP/health/timing parity checks, production typecheck/build, and independent review pass. Publication and native validation are pending.
+Validation: 359 JavaScript tests, focused MCP/health/timing parity checks, production typecheck/build, and independent review pass. [Release run 42503375568](https://github.com/zaosoula/agent-time/actions/runs/42503375568) passed its checks and signed/notarized/published exact commit `56c58811b8bd52e29ff8a3f17f81b43373393c6b`. Public bytes match staged manifest/signature, updater SHA-256 `f9c111aaf69a98df6af8a3fab87446852c999893098374ef6dc9b47c31ba3972`, and DMG SHA-256 `41f1229328cd5d5f89831a6f874b654800204310ced48a153b2f9c394fccb4a0`. Downloaded app/DMG pass stapled-ticket/Gatekeeper checks; nested strict app signing passes. All six changed capture modules match tested source in the packaged and installed app.
+
+The real updater installed beta.34 on the owner's Mac (PID 2386). Read-only proof found 1,275,383 events (223 more than the baseline), the original oldest event, and a latest event 0.12 seconds old. New macOS samples omit idleStatus while retaining permission evidence; new hook events use the installed runtime and omit the false default. Packaged Node v26.13.0 reports runtime `d205cef4aeebad3a` ready and all five configurations installed. The live worker-format probe saw no new worker row, so that path is covered by timing/health regression tests and bundled-file equality rather than a claimed live worker observation. Final GUI automation became unavailable with an AX permission error after startup; backend/file/data checks confirm continued capture. Evidence: `/private/tmp/agent-time-beta34-native-proof.json` and `/private/tmp/agent-time-beta34-artifact/public-verification.json`.
+
+Additional worker audit: 389,327 retained/in-progress/non-fresh snapshots occupy 198,959,896 bytes. A future heartbeat-span representation must preserve each observation point and bounded hook-binding semantics. The current changes preserve all historical records; long-term expiry policy remains undecided.
 
 ## `0.2.0-beta.33` published — 2026-11-08
 
