@@ -8,7 +8,9 @@ Full-database validation exposed a second cause of candidate rejection: the redu
 
 Full-database benchmark on a consistent, disposable copy of the owner's history: 2,800,360 events and 1,873,477,632 bytes became 1,270,807 events and 1,037,189,120 bytes, saving 836,288,512 bytes (44.6%). The operation completed in 98.94 seconds under a 192 MB JavaScript heap limit, with peak resident memory 392,609,792 bytes and no swaps. Every retained payload, insertion order, review/other table, causal evidence ordering, and all 25 host-scope days passed verification. The live database was never compacted or replaced during validation. Local evidence: `/private/tmp/agent-time-compaction-large-result.json` and `/private/tmp/agent-time-compaction-large-time.log`.
 
-Local checks pass: 355 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and independent review with no blocking findings. Publication and native update proof are pending.
+The review-summary cache signature advances from r1 to r2 so old ordering-dependent snapshots are rebuilt without changing stored decisions or reviews. Initial release run [42498969810](https://github.com/zaosoula/agent-time/actions/runs/42498969810) was canceled before publication to include this invalidation; the public feed remained on beta.32.
+
+Local checks pass: 356 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and independent review with no blocking findings. Publication and native update proof are pending.
 
 ## `0.2.0-beta.32` published — 2026-11-08
 
