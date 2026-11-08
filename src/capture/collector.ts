@@ -234,7 +234,7 @@ export class Collector {
   prepareStorageCompaction(){
     if(this.running||this.stopping)throw new Error('Pause capture before preparing storage recovery');
     this.requireOwner();
-    return this.exclusiveStorageTask(()=>prepareCompactionAsync(this.output,this.summaryOptions(),()=>this.store.revision()));
+    return this.exclusiveStorageTask(()=>prepareCompactionAsync(this.output,this.summaryOptions(),()=>this.store.revision(),(source,target)=>runStorageTask({op:'optimize',source,target})));
   }
   prepareStorageRestore(id:string){
     if(this.running||this.stopping)throw new Error('Pause capture before replacing storage');

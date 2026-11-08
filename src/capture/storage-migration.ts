@@ -1,4 +1,4 @@
-import {openEventDatabase} from './event-database.ts';
+import {openEventDatabase,verifyPackedBlocks} from './event-database.ts';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
@@ -49,6 +49,7 @@ function writePending(root:string,pending:PendingReplacement){
 function verifyDatabase(path:string){
  regular(path);const db=openEventDatabase(path,{readOnly:true});
  try{
+  verifyPackedBlocks(db);
   if(db.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Storage integrity check failed');
   for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
    if(!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Storage schema is incomplete');
@@ -71,7 +72,7 @@ function beginCompaction(root:string,revision:()=>string){
  if(existsSync(marker(root)))throw new Error('A storage replacement is already pending');
  const source=join(root,'events.sqlite'),exports=folder(root);regular(source);
  checkpoint(source);
- const capacity=statfsSync(root),free=Number(capacity.bavail)*Number(capacity.bsize),required=statSync(source).size+64*1024*1024;
+ const capacity=statfsSync(root),free=Number(capacity.bavail)*Number(capacity.bsize),required=statSync(source).size*3+1024*1024*1024;
  if(free<required)throw new Error(`Preparing a recoverable copy needs about ${Math.ceil(required/1024/1024)} MB free`);
  const initial=revision(),sourceHash=hash(source),candidate=named(),backup=named();
  return {source,candidate,backup,target:join(exports,candidate),sourceHash,initial};
