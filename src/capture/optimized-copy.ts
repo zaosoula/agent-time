@@ -26,7 +26,7 @@ export function optimizedCaptureCopy(sourceArg:string,targetArg:string):CompactC
     db.exec('BEGIN IMMEDIATE; DELETE FROM events');
     try{const put=db.prepare('INSERT INTO events(rowid,event_id,observed_at,payload) VALUES(?,?,?,?)');for(const row of original.prepare('SELECT rowid,event_id,observed_at,payload FROM events ORDER BY rowid').iterate())put.run(row.rowid!,row.event_id!,row.observed_at!,row.payload!);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
    }
-   upgradeEventSchema(db);
+   upgradeEventSchema(db);db.exec('PRAGMA auto_vacuum=INCREMENTAL');
    while(indexToolBoundaries(db,20480)===20480){/* Bounded batches, complete global identities before pair packing. */}
    while(packEventHistory(db,{now:Date.now()/1000,hotBytes:0,hotDays:0}).packedEvents){/* Each pass commits at most16 MiB. */}
    verifyPackedBlocks(db);

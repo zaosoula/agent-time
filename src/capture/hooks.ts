@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync, unlinkSync, lstatSync } from 'node:fs';
+import { mkdirSync, writeFileSync, renameSync, readdirSync, readFileSync, unlinkSync, lstatSync,existsSync,opendirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
@@ -33,12 +33,24 @@ export function hookContext(): Partial<CaptureEvent> {
     workspaceId: process.env.ORCA_WORKTREE_ID || process.env.ORCA_WORKSPACE_ID,
     hostId: process.env.ORCA_EXECUTION_HOST_ID || 'local' };
 }
+export const MAX_HOOK_BYTES=64*1024;
+export const MAX_PENDING_HOOKS=4096;
+const overflowName='.overflow';
+export function boundedSpoolListing(directory:string,maxEntries=10000):{files:string[];truncated:boolean}{
+ const files:string[]=[],dir=opendirSync(directory);let visited=0,truncated=false;
+ try{let entry;while((entry=dir.readSync())){if(++visited>maxEntries){truncated=true;break;}files.push(entry.name);}}finally{dir.closeSync();}return {files,truncated};
+}
+function markOverflow(directory:string){try{writeFileSync(join(directory,overflowName),'Hook queue limit reached; some observations were not captured.\n',{flag:'wx',mode:0o600});}catch{/* A fixed marker already exists. */}}
+export function acknowledgeSpoolOverflow(directory:string){try{unlinkSync(join(directory,overflowName));}catch{/* No marker. */}}
 export function spoolHook(event: CaptureEvent, directory: string): boolean {
   try {
     mkdirSync(directory,{recursive:true,mode:0o700});
     const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink())return false;
+    if(existsSync(join(directory,'..','storage-paused.json')))return false;
+    const payload=JSON.stringify(event),listing=boundedSpoolListing(directory,MAX_PENDING_HOOKS+16);
+    if(Buffer.byteLength(payload)>MAX_HOOK_BYTES||listing.truncated||listing.files.filter(file=>file.endsWith('.json')||file.endsWith('.tmp')).length>=MAX_PENDING_HOOKS){markOverflow(directory);return false;}
     const path=join(directory,randomUUID());
-    writeFileSync(path+'.tmp',JSON.stringify(event),{mode:0o600,flag:'wx'});renameSync(path+'.tmp',path+'.json'); return true;
+    writeFileSync(path+'.tmp',payload,{mode:0o600,flag:'wx'});renameSync(path+'.tmp',path+'.json'); return true;
   } catch { return false; }
 }
 export interface SpoolStatus {pending:number;temporary:number;invalid:number;oldestAgeSeconds:number|null;truncated:boolean;}
@@ -47,8 +59,8 @@ export function spoolStatus(directory:string,now=Date.now()/1000):SpoolStatus{
  try{const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink()){status.invalid=1;return status;}}
  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return status;throw error;}
  let files:string[];
- try{files=readdirSync(directory);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return status;throw error;}
- for(const file of files.slice(0,100_000)){
+ try{const listing=boundedSpoolListing(directory);files=listing.files;status.truncated=listing.truncated;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return status;throw error;}
+ for(const file of files){
   if(!file.endsWith('.json')&&!file.endsWith('.tmp'))continue;
   let info;
   try{info=lstatSync(join(directory,file));}catch{status.invalid++;continue;}
@@ -58,7 +70,7 @@ export function spoolStatus(directory:string,now=Date.now()/1000):SpoolStatus{
   const age=Math.max(0,Math.floor(now-info.mtimeMs/1000));
   status.oldestAgeSeconds=Math.max(status.oldestAgeSeconds||0,age);
  }
- status.truncated=files.length>100_000;
+
  return status;
 }
 export const spoolImportLimit=2000;
@@ -84,7 +96,9 @@ function removeOrphanTemporaries(directory:string,files:string[],now:number):voi
 export function importSpool(directory: string, store: EventStore, accept:(event:CaptureEvent)=>boolean=()=>true, limit=spoolImportLimit): Issue[] {
   const issues: Issue[]=[];mkdirSync(directory,{recursive:true,mode:0o700});
   const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink())throw new Error('Invalid hook spool directory');
-  const listing=readdirSync(directory);
+  const bounded=boundedSpoolListing(directory);const listing=bounded.files;
+  if(existsSync(join(directory,overflowName)))issues.push({reason:'Hook queue overflow: the size or pending event limit was reached; missing observations are unverified',source:'hook'});
+  if(bounded.truncated)issues.push({reason:'Hook queue listing reached its safety limit; queued events will drain in batches',source:'hook'});
   removeOrphanTemporaries(directory,listing,Date.now()/1000);
   // Bound each tick; a backlog drains over the following ticks.
   const files=listing.filter(f=>f.endsWith('.json')).sort().slice(0,limit);

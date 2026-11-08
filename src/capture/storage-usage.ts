@@ -1,12 +1,13 @@
-import {openEventDatabase,isPackedEventDatabase} from './event-database.ts';
+import {openEventDatabase,isPackedEventDatabase,eventStorageStats} from './event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
-import {lstatSync,readdirSync,statfsSync} from 'node:fs';
+import {lstatSync,opendirSync,statfsSync} from 'node:fs';
 import {join} from 'node:path';
 
 export interface StorageSize {bytes:number;files:number;truncated:boolean;}
 export interface StorageUsage {
  database:StorageSize;wal:StorageSize;sharedMemory:StorageSize;indexes:StorageSize;
  spool:StorageSize;runtimes:StorageSize;exports:StorageSize;
+ history?:ReturnType<typeof eventStorageStats>&{efficient:boolean};storageLimitMB?:number;care?:{at:number|null;error:string|null;paused:boolean};
  totalBytes:number;eventCount:number;freeBytes:number|null;
  byDay:Array<{date:string;source:string;events:number;payloadBytes:number}>;
 }
@@ -19,16 +20,15 @@ function directorySize(path:string,maxEntries=100_000):StorageSize{
  const result=empty(),stack=[path];let visited=0;
  while(stack.length){
   const next=stack.pop()!;
-  let entries;
-  try{entries=readdirSync(next,{withFileTypes:true});}
-  catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
-  for(const entry of entries){
+  let directory;
+  try{directory=opendirSync(next);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')continue;throw error;}
+  try{let entry;while((entry=directory.readSync())){
    if(++visited>maxEntries){result.truncated=true;return result;}
    if(entry.isSymbolicLink())continue;
    const child=join(next,entry.name);
    if(entry.isDirectory())stack.push(child);
    else if(entry.isFile()){const size=fileSize(child);result.bytes+=size.bytes;result.files+=size.files;}
-  }
+  }}finally{directory.closeSync();}
  }
  return result;
 }
@@ -40,11 +40,12 @@ export function storageUsage(root:string,now=Date.now()/1000):StorageUsage{
  const indexes=empty();
  let freeBytes:number|null=null;
  try{const volume=statfsSync(root);freeBytes=Number(volume.bavail)*Number(volume.bsize);}catch{/* Report storage even when filesystem capacity is unavailable. */}
- let eventCount=0;
+ let eventCount=0,history:StorageUsage['history'];
  let byDay:StorageUsage['byDay']=[];
  if(database.files){
   const db=openEventDatabase(join(root,'events.sqlite'),{readOnly:true});
   try{
+   history={...eventStorageStats(db),efficient:isPackedEventDatabase(db)};
    eventCount=Number(db.prepare('SELECT count(*) count FROM events').get()?.count||0);
    indexes.bytes=Number(db.prepare("SELECT coalesce(sum(pgsize),0) bytes FROM dbstat WHERE name IN (SELECT name FROM sqlite_master WHERE type='index')").get()?.bytes||0);
    const cutoff=now-30*86400;
@@ -53,6 +54,6 @@ export function storageUsage(root:string,now=Date.now()/1000):StorageUsage{
     .map(row=>({date:String(row.date),source:String(row.source),events:Number(row.events),payloadBytes:Number(row.payloadBytes)}));
   }finally{db.close();}
  }
- return {database,wal,sharedMemory,indexes,spool,runtimes,exports,eventCount,byDay,freeBytes,
+ return {database,wal,sharedMemory,indexes,spool,runtimes,exports,eventCount,byDay,freeBytes,history,
   totalBytes:database.bytes+wal.bytes+sharedMemory.bytes+spool.bytes+runtimes.bytes+exports.bytes};
 }

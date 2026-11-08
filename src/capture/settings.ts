@@ -2,10 +2,10 @@ import {browsers,browserByBundle,sources} from './sources/registry.ts';
 import type {CaptureSource} from './sources/types.ts';
 export interface CaptureSettings {
   macosActivity:boolean;browserSafari:boolean;browserChrome:boolean;browserBrave:boolean;claudeHooks:boolean; codexHooks:boolean; orcaPolling:boolean;tokenUsage:boolean;claudeTokenUsage:boolean;codexTokenUsage:boolean;
-  humanIdleMinutes:number;agentIdleMinutes:number;countTaskCounters:boolean;
+  storageLimitMB:number;humanIdleMinutes:number;agentIdleMinutes:number;countTaskCounters:boolean;
   [key:string]:boolean|number;
 }
-export function settingsForSources(sources:CaptureSource[]):Record<string,boolean|number>{return {macosActivity:true,tokenUsage:false,countTaskCounters:false,humanIdleMinutes:5,agentIdleMinutes:5,
+export function settingsForSources(sources:CaptureSource[]):Record<string,boolean|number>{return {storageLimitMB:5120,macosActivity:true,tokenUsage:false,countTaskCounters:false,humanIdleMinutes:5,agentIdleMinutes:5,
   ...Object.fromEntries(sources.map(source=>[source.setting,source.defaultEnabled])),
   ...Object.fromEntries(sources.filter(source=>source.kind==='agent').map(source=>[source.usageSetting,true]))};}
 export const defaultSettings=settingsForSources(sources) as unknown as CaptureSettings;
@@ -23,7 +23,8 @@ export function storedSettings(value:Record<string,unknown>):CaptureSettings{
 export function validateSettings(value:unknown,defaults:Record<string,boolean|number>=defaultSettings):Partial<CaptureSettings> {
   if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid capture settings');
   for(const [key,enabled] of Object.entries(value))
-    if(key==='humanIdleMinutes'||key==='agentIdleMinutes'){
+    if(key==='storageLimitMB'){if(!Number.isInteger(enabled)||Number(enabled)<1024||Number(enabled)>1048576)throw new Error('Invalid capture setting: '+key);}
+    else if(key==='humanIdleMinutes'||key==='agentIdleMinutes'){
       if(!Number.isInteger(enabled)||Number(enabled)<1||Number(enabled)>60)throw new Error('Invalid capture setting: '+key);
     }else if(!Object.hasOwn(defaults,key)||typeof enabled!=='boolean')throw new Error('Invalid capture setting: '+key);
   return value as Partial<CaptureSettings>;

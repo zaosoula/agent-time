@@ -1,3 +1,4 @@
+import {estimatedBytes} from './storage-policy.ts';
 import type {EventStore} from './store.ts';
 import type {CaptureEvent,Summary} from './events.ts';
 import {summarize} from './correlate.ts';
@@ -27,11 +28,12 @@ const maxCachedDays=16;
 export class DaySummaries {
  private entries=new Map<string,DayWindow>();
  private seenRowid:number|undefined;
- private version=0;
+ private version=0;private budgetBytes:number;
+ private trim(){while(this.entries.size>1&&(this.entries.size>maxCachedDays||[...this.entries.values()].reduce((n,entry)=>n+estimatedBytes(entry),0)>this.budgetBytes))this.entries.delete(this.entries.keys().next().value!);}
  private store:EventStore;private options:()=>SummaryOptions;
  /** Number of full window computations, for tests and diagnostics. */
  computations=0;
- constructor(store:EventStore,options:()=>SummaryOptions){this.store=store;this.options=options;}
+ constructor(store:EventStore,options:()=>SummaryOptions,budgetBytes=32*1024*1024){this.store=store;this.options=options;this.budgetBytes=budgetBytes;}
  invalidate(){this.entries.clear();this.seenRowid=undefined;}
  window(date:string,maxAgeMs=0):DayWindow{
   const now=Date.now(),cached=this.entries.get(date);
@@ -40,6 +42,7 @@ export class DaySummaries {
   let entry=this.entries.get(date);
   if(!entry)entry=this.compute(date);
   else{this.entries.delete(date);this.entries.set(date,entry);}
+  this.trim();
   entry.checkedAt=now;
   return entry;
  }
@@ -76,7 +79,7 @@ export class DaySummaries {
   }
   const entry:DayWindow={date,from,to,bounds,raw,version:++this.version,lastActivity,maxObservedAt,checkedAt:Date.now()};
   this.entries.set(date,entry);
-  while(this.entries.size>maxCachedDays)this.entries.delete(this.entries.keys().next().value!);
+  this.trim();
   return entry;
  }
 }

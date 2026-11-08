@@ -355,7 +355,8 @@ export class EventStore {
         const payload=JSON.parse(String(row.payload)) as Record<string,unknown>;
         if(payload.id!==row.id||payload.timestamp!==row.timestamp||typeof payload.provider!=='string'||!Number.isFinite(payload.timestamp))throw new Error('Archive usage record is invalid');
       }
-        this.db.exec(`INSERT OR IGNORE INTO main.events(event_id,observed_at,${isPackedEventDatabase(this.db)?'payload_data':'payload'}) SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid`);
+        const writeEvent=this.db.prepare(`INSERT OR IGNORE INTO main.events(event_id,observed_at,${isPackedEventDatabase(this.db)?'payload_data':'payload'}) VALUES(?,?,?)`);
+        for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid').iterate())writeEvent.run(row.event_id!,row.observed_at!,row.payload!);
         this.db.exec('INSERT OR IGNORE INTO main.observation_signatures SELECT identity,signature FROM archive.observation_signatures');
         this.db.exec('INSERT OR IGNORE INTO main.human_decisions SELECT start_event_id,end_event_id,mode,project_path,decided_at FROM archive.human_decisions');
         if(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get())this.db.exec('INSERT OR IGNORE INTO main.human_splits SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM archive.human_splits');
@@ -377,9 +378,10 @@ export class EventStore {
     const hasHistory=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='review_actions'").get());
     const hasSplits=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get());
     const hasDayReviews=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='day_reviews'").get());
+    let eventConflicts=0;for(const row of this.db.prepare('SELECT m.payload current,a.payload archived FROM archive.events a JOIN main.events m ON m.event_id=a.event_id').iterate())if(row.current!==row.archived)eventConflicts++;
     return {id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
       newEvents:count('SELECT count(*) n FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)'),
-      eventConflicts:count('SELECT count(*) n FROM archive.events a JOIN main.events m ON m.event_id=a.event_id WHERE m.payload<>a.payload'),
+      eventConflicts,
       newNotes:count('SELECT count(*) n FROM archive.manual_notes a WHERE NOT EXISTS (SELECT 1 FROM main.manual_notes m WHERE m.id=a.id)'),
       noteConflicts:count('SELECT count(*) n FROM archive.manual_notes a JOIN main.manual_notes m ON m.id=a.id WHERE m.start<>a.start OR m.end<>a.end OR m.project<>a.project OR m.note<>a.note'),
       newDecisions:count('SELECT count(*) n FROM archive.human_decisions a WHERE NOT EXISTS (SELECT 1 FROM main.human_decisions m WHERE m.start_event_id=a.start_event_id AND m.end_event_id=a.end_event_id)'),

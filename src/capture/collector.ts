@@ -1,3 +1,4 @@
+import {storagePolicyDecision,quickStorageUsage,estimatedBytes} from './storage-policy.ts';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync, readdirSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
 import {createHash} from 'node:crypto';
@@ -5,7 +6,7 @@ import { EventStore, MAX_DECISION_PAIRS, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
-import { importSpool,spoolStatus } from './hooks.ts';
+import { importSpool,spoolStatus,acknowledgeSpoolOverflow } from './hooks.ts';
 import {validAgentReport} from '../mcp/report.ts';
 import {creditTaskCounters,reportedWorkForDay} from './reported-work.ts';
 import {applyReportedResources,reportedResources,type ReportedResource} from './reported-resources.ts';
@@ -98,6 +99,23 @@ export class Collector {
   private clockNoticeUntil=0;
   private seenSpoolIssues=new Set<string>();
   private storageTask:Promise<unknown>|undefined;
+  private careTimer:ReturnType<typeof setTimeout>|undefined;
+  private nextStorageCheck=0;private nextArchiveCare=0;
+  private careState:{at:number|null;error:string|null}={at:null,error:null};
+  private scheduleStorageCare(delay=60000){clearTimeout(this.careTimer);if(this.running)this.careTimer=setTimeout(()=>{void this.performStorageCare().finally(()=>this.scheduleStorageCare());},delay).unref();}
+  private async performStorageCare(forceArchives=false){
+    if(!this.lockOwned||this.storageTask||pendingReplacement(this.output))return;
+    try{await this.exclusiveStorageTask(()=>runStorageTask({op:'care',database:join(this.output,'events.sqlite'),output:this.output,now:Date.now()/1000,archives:forceArchives||Date.now()>=this.nextArchiveCare}));if(forceArchives||Date.now()>=this.nextArchiveCare)this.nextArchiveCare=Date.now()+86400000;this.careState={at:Date.now()/1000,error:null};}
+    catch(error){this.careState={at:Date.now()/1000,error:String(error)};}
+  }
+  private async ensureStorageCapacity():Promise<boolean>{
+    let usage=quickStorageUsage(this.output),decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);
+    if(decision!=='ok'&&!this.storageTask&&!pendingReplacement(this.output)){await this.performStorageCare(true);usage=quickStorageUsage(this.output);decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);}
+    const path=join(this.output,'storage-paused.json');
+    if(decision!=='pause'&&!usage.truncated){if(existsSync(path))unlinkSync(path);return true;}
+    const reason=usage.truncated?'Storage measurement reached its safety limit. Clear the hook backlog before resuming.':usage.freeBytes!==null&&usage.freeBytes<1024**3?'Capture paused to keep 1 GB of disk space free. Free disk space, then resume.':'Capture paused at your storage budget. Increase the budget or remove a verified backup, then resume.';
+    const temp=path+'.tmp';writeFileSync(temp,JSON.stringify({reason,at:Date.now()/1000}),{mode:0o600});renameSync(temp,path);this.lastError=reason;return false;
+  }
   /** Problems found while opening the data directory; capture continues with safe defaults. */
   private startupIssues:string[]=[];
   private legacySummaryRelease:ReturnType<typeof setTimeout>|undefined;
@@ -156,7 +174,7 @@ export class Collector {
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
   private currentWorkingAgents(now=Date.now()/1000){return this.running?recentWorkingAgentCount(this.surfaces.orcaPolling?this.store.recent('orca',100):[],this.store.recent('hook',100).filter(event=>agents.some(agent=>agent.id===event.provider&&this.surfaces[agent.setting])),now):0;}
-  status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),workingAgents:this.currentWorkingAgents(),macos:this.macos,output:this.output,startupIssues:[...this.startupIssues]};}
+  status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),workingAgents:this.currentWorkingAgents(),macos:this.macos,output:this.output,storageCare:{...this.careState,paused:existsSync(join(this.output,'storage-paused.json'))},startupIssues:[...this.startupIssues]};}
   trayStatus(){
     const now=new Date(),date=localDate(now.getTime()/1000);
     // Token usage is read only when the user enabled it.
@@ -228,7 +246,7 @@ export class Collector {
     const task=run();this.storageTask=task;
     try{return await task;}finally{this.storageTask=undefined;}
   }
-  storageUsage(){return storageUsage(this.output);}
+  storageUsage(){return {...storageUsage(this.output),storageLimitMB:this.surfaces.storageLimitMB,care:{...this.careState,paused:existsSync(join(this.output,'storage-paused.json'))}};}
   reclaimWal(){this.requireOwner();this.store.checkpointWal();return this.storageUsage();}
   /** The verified copy and VACUUM run in a worker thread; this resolves when the copy is ready. */
   prepareStorageCompaction(){
@@ -442,6 +460,8 @@ export class Collector {
     const path=join(this.output,'settings.json');let existing:Record<string,unknown>={};
     try{if(existsSync(path))existing=JSON.parse(readFileSync(path,'utf8'));}catch{/* Rewrite a damaged file from the current settings. */}
     writeFileSync(path+'.tmp',JSON.stringify({...existing,...next},null,2)+'\n',{mode:0o600});renameSync(path+'.tmp',path);
+    const timingChanged=Object.keys(defaultSettings).some(key=>key!=='storageLimitMB'&&next[key]!==this.surfaces[key]);
+    if(!timingChanged){this.surfaces=next;this.nextStorageCheck=0;return this.status();}
     const change=makeEvent('capture','capture_settings',{data:{previous:{...this.surfaces},surfaces:next}});
     this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;this.invalidateSummaries();
     if(!next.macosActivity||browserChanged){this.activityProbe.stop();this.macos=null;if(!next.macosActivity){this.focusedTabs=[];this.focusedTabsAt=0;}}
@@ -522,7 +542,7 @@ export class Collector {
     if(cached?.key===key)return cached.value;
     const value=applyHumanDecisions(window.raw,review.decisions,review.splits);
     this.decorated.set(date,{key,value});
-    if(this.decorated.size>16)this.decorated.delete(this.decorated.keys().next().value!);
+    while(this.decorated.size>1&&(this.decorated.size>16||[...this.decorated.values()].reduce((n,entry)=>n+estimatedBytes(entry.value,8*1024*1024),0)>8*1024*1024))this.decorated.delete(this.decorated.keys().next().value!);
     return value;
   }
   private reviewData(){
@@ -576,7 +596,7 @@ export class Collector {
     const events=this.store.events();
     const summary=applyHumanDecisions(summarize(events,{...this.summaryOptions(),alreadyUnique:true}),this.store.humanDecisions(),this.store.humanSplits());
     applyTerminalTitles(summary,events);
-    this.summaryCache={revision,at:Date.now(),value:summary};return summary;
+    this.summaryCache=estimatedBytes(summary)<=32*1024*1024?{revision,at:Date.now(),value:summary}:undefined;return summary;
   }
   /**
    * Whole-history summary for the one-time legacy fingerprint check. It is kept
@@ -646,6 +666,8 @@ export class Collector {
     clearStaleLock(lock,{unreadable:'Unreadable collector lock; inspect before removing',live:'Another collector owns this data directory'});
     writeLock(lock);this.lockOwned=true;this.running=true;this.lastError=null;this.failedPoller=null;this.macError=null;
     try{
+      if(!await this.ensureStorageCapacity())throw new Error(this.lastError!);
+      this.nextStorageCheck=Date.now()+10000;this.scheduleStorageCare(30000);
       this.store.put(makeEvent('capture','capture_start'));
       this.activityProbe.start();
       // After an app update, install the new hook runtime without asking. Only
@@ -657,13 +679,14 @@ export class Collector {
       if(durationSeconds!==undefined)this.deadline=setTimeout(()=>{void this.stop();},durationSeconds*1000);
       await this.tick();return this.status();
     }catch(error){
-      this.running=false;this.activityProbe.stop();clearTimeout(this.deadline);
+      this.running=false;this.activityProbe.stop();clearTimeout(this.careTimer);clearTimeout(this.deadline);
       if(ownsLock(lock))unlinkSync(lock);
       this.lockOwned=false;throw error;
     }
   }
   private async tick() {
     if(!this.running)return;
+    if(Date.now()>=this.nextStorageCheck){this.nextStorageCheck=Date.now()+10000;if(!await this.ensureStorageCapacity()){this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));await this.stop();return;}}
     this.inFlight=this.poll().catch(error=>{this.lastError=`Capture poll failed: ${String(error)}`;});
     await this.inFlight;this.inFlight=undefined;
     if(this.running)this.timer=setTimeout(()=>{void this.tick();},this.interval*1000);
@@ -705,7 +728,7 @@ export class Collector {
       }
       const spoolIssues=this.drainHooks(),currentIssues=new Set(spoolIssues.map(issue=>issue.reason));
       for(const issue of spoolIssues)if(!this.seenSpoolIssues.has(issue.reason))this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
-      this.seenSpoolIssues=currentIssues;
+      this.seenSpoolIssues=currentIssues;for(const folder of [join(this.output,'spool'),...this.legacyHookSpools])acknowledgeSpoolOverflow(folder);
       this.lastPoll=Date.now()/1000;this.lastError=pollingError;this.failedPoller=failedPoller;
     }catch(error){this.lastError=String(error);this.failedPoller=null;this.noteCoverage('capture',this.lastError);}
     finally{this.endCoverageTick();}
@@ -716,7 +739,7 @@ export class Collector {
     this.stopping=this.stopOwned().finally(()=>{this.stopping=undefined;});return this.stopping;
   }
   private async stopOwned() {
-    this.running=false;clearTimeout(this.timer);clearTimeout(this.deadline);
+    this.running=false;clearTimeout(this.careTimer);clearTimeout(this.timer);clearTimeout(this.deadline);
     this.focusedTabs=[];this.focusedTabsAt=0;
     // Kill the helper immediately; slow fleet reads cannot orphan it during shutdown.
     this.activityProbe.stop();

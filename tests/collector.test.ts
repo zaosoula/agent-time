@@ -127,6 +127,7 @@ test('disabling Orca during a read discards its late results',async()=>{
  const path=mkdtempSync(join(tmpdir(),'ade-toggle-read-'));let release!:(v:unknown)=>void;
  const pending=new Promise(resolve=>{release=resolve;});let calls=0;
  const c=new Collector(path,undefined,5,undefined,async()=>{calls++;return pending;});c.updateSettings({macosActivity:false});const started=c.start(30);
+ await new Promise<void>(resolve=>setImmediate(resolve));
  c.updateSettings({orcaPolling:false});release({ok:true,result:{runs:[{id:'r1'}],nextCursor:null}});
  try{await started;assert.equal(calls,1);assert.ok(!c.store.events().some(e=>e.source==='orca'));}
  finally{await c.close();rmSync(path,{recursive:true});}

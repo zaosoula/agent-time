@@ -1,3 +1,4 @@
+import {boundedSpoolListing,MAX_PENDING_HOOKS,MAX_HOOK_BYTES} from '../capture/hooks.ts';
 import {openEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
@@ -39,7 +40,7 @@ function database(output:string,readOnly=true):DatabaseSync{
 function pendingReports(output:string):CaptureEvent[]{
  const events:CaptureEvent[]=[],spool=join(output,'spool');
  if(!existsSync(spool))return events;
- for(const name of readdirSync(spool).filter(name=>name.endsWith('.json')).slice(0,2000))try{
+ for(const name of boundedSpoolListing(spool).files.filter(name=>name.endsWith('.json')).slice(0,2000))try{
   const path=join(spool,name),info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink()||info.size>2048)continue;
   const event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;if(validAgentReport(event))events.push(event);
  }catch{/* Ignore incomplete or invalid spool entries. */}
@@ -312,6 +313,7 @@ export function writeReport(output:string,kind:CaptureEvent['kind'],requestId:st
  if(!validAgentReport(event))throw new Error('Invalid agent declaration');
  const directory=join(output,'spool');mkdirSync(directory,{recursive:true,mode:0o700});
  const info=lstatSync(directory);if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Invalid collector spool');
+ const listing=boundedSpoolListing(directory,MAX_PENDING_HOOKS+16);if(existsSync(join(output,'storage-paused.json'))||listing.truncated||listing.files.filter(name=>name.endsWith('.json')||name.endsWith('.tmp')).length>=MAX_PENDING_HOOKS||Buffer.byteLength(JSON.stringify(event))>MAX_HOOK_BYTES)throw new Error('Agent Time storage is paused or its event queue is full; resume capture before reporting more work');
  const temporary=join(directory,`${randomUUID()}.tmp`),final=join(directory,`${requestId}.json`);
  try{
   writeFileSync(temporary,JSON.stringify(event),{mode:0o600,flag:'wx'});

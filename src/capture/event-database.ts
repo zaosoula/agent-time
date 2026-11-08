@@ -75,13 +75,15 @@ export function insertEventRow(db:DatabaseSync,id:string,at:number,payload:strin
 /** Cold verification deliberately bypasses the decoder cache. */
 export function verifyPackedBlocks(db:DatabaseSync):void{
  if(!isPackedEventDatabase(db))return;
+ const counts=new Map<string,number>();
  for(const row of db.prepare('SELECT key,data,original_bytes,event_count FROM at_event_blocks').iterate()){
   const rows=decodeEventBlock(row.data as Uint8Array,String(row.key));
+  if(counts.size>=1024)counts.delete(counts.keys().next().value!);counts.set(String(row.key),rows.length);
   if(rows.length!==row.event_count||rows.reduce((n,p)=>n+Buffer.byteLength(p),0)!==row.original_bytes)throw new Error('Corrupt packed event metadata');
  }
  for(const row of db.prepare("SELECT payload_data FROM events WHERE typeof(payload_data)='blob'").iterate()){
-  const {key,slot}=locator(row.payload_data),block=db.prepare('SELECT event_count FROM at_event_blocks WHERE key=?').get(key);
-  if(!block||slot>=Number(block.event_count))throw new Error('Missing packed event block or invalid slot');
+  const {key,slot}=locator(row.payload_data);let count=counts.get(key);if(count===undefined){const block=db.prepare('SELECT event_count FROM at_event_blocks WHERE key=?').get(key);if(block){count=Number(block.event_count);if(counts.size>=1024)counts.delete(counts.keys().next().value!);counts.set(key,count);}}
+  if(count===undefined||slot>=count)throw new Error('Missing packed event block or invalid slot');
  }
  resetCache.get(db)?.();
 }
