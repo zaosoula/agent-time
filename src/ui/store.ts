@@ -814,6 +814,7 @@ function createStore() {
     runningCount,
     runs,
     timelineProjects,
+    humanBySession,
     issues,
     dayCaptureIssues,
     dayCaptureReasons,

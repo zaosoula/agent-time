@@ -2412,3 +2412,53 @@ tbody tr:hover {
   width: 24px;
   height: 24px;
 }
+
+/* Narrow windows: the sidebar becomes a compact bar of pages and projects above the content. */
+@media (max-width: 700px) {
+  .app-shell {
+    flex-direction: column;
+  }
+  .sidebar {
+    width: 100%;
+    min-width: 0;
+    max-height: none;
+    padding: 6px 10px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .sidebar .titlebar-space,
+  .sidebar .brand,
+  .sidebar .section-label,
+  .sidebar .sidebar-footer,
+  .sidebar .sidebar-empty {
+    display: none;
+  }
+  .sidebar .sidebar-section,
+  .sidebar .project-list {
+    display: flex;
+    flex-direction: row;
+    gap: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .sidebar .nav-row,
+  .sidebar .project-row {
+    flex: 0 0 auto;
+    width: auto;
+    white-space: nowrap;
+  }
+  .sidebar > .project-row {
+    display: none;
+  }
+  .main-pane {
+    min-height: 0;
+    flex: 1;
+  }
+}
+@media (max-width: 700px) {
+  .day-heading {
+    flex-wrap: wrap;
+    gap: 10px;
+  }
+}

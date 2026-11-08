@@ -6,7 +6,7 @@ import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
 import DayOverview from './DayOverview.vue';
 import DayPicker from './DayPicker.vue';
-import DayTimeline from './DayTimeline.vue';
+import ProjectExplorer from './ProjectExplorer.vue';
 import InfoPopover from './InfoPopover.vue';
 import SessionsTable from './SessionsTable.vue';
 import SetupVerification from './SetupVerification.vue';
@@ -18,6 +18,15 @@ import { projectLabel, workspaceProject, unassignedProject } from './project-ide
 const props = defineProps<{ busy: boolean }>();
 const emit = defineEmits<{ start: [] }>();
 const store = reactive(useStore());
+/** Project the main chart and figures are focused on, from the explorer; empty for the whole view. */
+const chartFocus = ref('');
+const focusedGroup = computed(() =>
+  chartFocus.value ? store.timelineProjects.find((group) => group.name === chartFocus.value) || null : null,
+);
+watch(
+  () => [store.selectedDate, store.project],
+  () => (chartFocus.value = ''),
+);
 const timerBusy = ref('');
 /** Timers started on an earlier day and still open: almost always left behind by an agent. */
 const leftoverTimers = computed(() => store.runningTimers.filter((timer) => timer.start < store.dayStart));
@@ -202,7 +211,7 @@ const websites = computed(() => {
       @start="emit('start')"
     />
 
-    <DayOverview v-if="store.page === 'today'" />
+    <DayOverview v-if="store.page === 'today'" :focus="focusedGroup" @clear-focus="chartFocus = ''" />
 
     <div class="day-status-row">
       <button
@@ -261,15 +270,15 @@ const websites = computed(() => {
     <TabsRoot v-model="view" class="activity-panel">
       <div class="panel-toolbar">
         <TabsList class="segmented" aria-label="Day view">
-          <TabsTrigger value="timeline"><CalendarDays :size="14" />Timeline</TabsTrigger>
+          <TabsTrigger value="timeline"><CalendarDays :size="14" />Projects</TabsTrigger>
           <TabsTrigger value="sessions"><Layers3 :size="14" />Sessions</TabsTrigger>
         </TabsList>
-        <div class="search-field">
+        <div v-if="view === 'sessions'" class="search-field">
           <Search :size="14" />
           <input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions…" />
         </div>
       </div>
-      <TabsContent value="timeline"><DayTimeline @start="emit('start')" /></TabsContent>
+      <TabsContent value="timeline"><ProjectExplorer v-model:focus="chartFocus" /></TabsContent>
       <TabsContent value="sessions"><SessionsTable /></TabsContent>
     </TabsRoot>
 
