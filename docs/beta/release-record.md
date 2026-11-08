@@ -1,6 +1,14 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.31` candidate — 2026-11-08
+## `0.2.0-beta.32` candidate — 2026-11-08
+
+Repairs beta.31's native launch crash: Icon Composer exported the main app PNG as 16-bit RGBA, but Tauri's default-window-icon decoder passed twice the expected pixel data to the runtime. The icon integration now renders the Apple output into 8-bit RGBA before storing `src-tauri/icons/icon.png`. A new native test exercises the exact `app_context()` used by startup and checks the decoded buffer has four bytes per pixel; it failed on beta.31 (8,388,608 vs 4,194,304 bytes) and passes after normalization. The design and capture behavior are otherwise retained. See [updater notes](0.2.0-beta.32-notes.md).
+
+Local validation: 349 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and production dependency audit all pass (zero vulnerabilities). Independent repair review found no blocking issues. Publication and packaged native launch validation are pending.
+
+## `0.2.0-beta.31` withdrawn — 2026-11-08
+
+[Initial release run 42480748241](https://github.com/zaosoula/agent-time/actions/runs/42480748241) failed its app-ticket validation on macOS 15; nothing was uploaded. Commit `8fc7b9a` switched release builds to macOS 26. [Replacement run 42481534286](https://github.com/zaosoula/agent-time/actions/runs/42481534286) signed, notarized, and published exact commit `8fc7b9ade6f75e35d83663ae6cb926ea0920d3a4`. Independent public downloads matched staged SHA-256 `879acc226d06b32072187870edb81fa64133420fa0d12a13f142c6f816f7b182` (updater) and `1ab26104a152c9c3801d8111dfc66667be94ccd6c3d5a0756248fcd1d7430ab6` (DMG); the mounted app passed stapler, strict nested signing, and Gatekeeper. Those checks did not prove native GUI startup: the real in-app update then aborted at setup because the generated icon PNG contained 16-bit channels. A direct launch with stderr confirmed the invalid icon pixel-buffer length. [Emergency withdrawal run 42482510773](https://github.com/zaosoula/agent-time/actions/runs/42482510773) removed the updater manifest and public installer; independently verified HTTP 204 for the feed and 404 for the beta.31 installer. The verified beta.30 archive was restored on the owner's Mac while preparing beta.32. No captured history was replaced.
 
 Slate-blue/orange visual refresh, a recreated editable branching-clock icon for the sidebar/favicon and macOS app/menu bar, six overview figures, visible timeline zoom controls, responsive time labels, and duration-weighted active parallelism. Inactivity shading now follows genuine gaps between recorded activity, including brief agent bursts and human activity. Session details distinguish observed window, active elapsed time, and cumulative execution. Mobile previews five executions and opens the complete list and details in a keyboard-accessible sheet; desktop execution lists remain bounded. See [updater notes](0.2.0-beta.31-notes.md).
 

@@ -31,8 +31,10 @@ writeFileSync(resolve(icons, 'tray.rgba'), PNG.sync.read(trayPng).data)
 
 // Apple supplies the rounded platform mask; never bundle the square source PNG.
 const applePath = resolve(delivery, 'apple/macOS/Default.png')
-copyFileSync(applePath, resolve(icons, 'icon.png'))
 const nativeSvg = `<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024"><image width="1024" height="1024" href="data:image/png;base64,${readFileSync(applePath).toString('base64')}"/></svg>`
+// Icon Composer exports 16-bit channels. Tauri's default-window-icon decoder
+// requires an 8-bit RGBA buffer, so normalize through the renderer first.
+writeFileSync(resolve(icons, 'icon.png'), render(nativeSvg, 1024))
 const iconset = resolve(scratch, 'AgentTime.iconset')
 mkdirSync(iconset, { recursive: true })
 for (const size of [16, 32, 128, 256, 512]) {

@@ -405,6 +405,8 @@ async fn resume_after_failed_update(bridge:State<'_,Arc<Bridge>>)->Result<(),Str
  let bridge=bridge.inner().clone();
  tauri::async_runtime::spawn_blocking(move||bridge.recover_from_update()).await.map_err(|error|error.to_string())?
 }
+fn app_context()->tauri::Context<tauri::Wry>{tauri::generate_context!()}
+
 pub fn run(){
   tauri::Builder::default().plugin(tauri_plugin_deep_link::init()).plugin(tauri_plugin_dialog::init()).plugin(tauri_plugin_notification::init()).plugin(tauri_plugin_process::init()).setup(|app|{
   let deep_handle=app.handle().clone();
@@ -447,7 +449,7 @@ pub fn run(){
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
  .on_window_event(|window,event|{if let tauri::WindowEvent::CloseRequested{api,..}=event{api.prevent_close();let _=window.hide();}})
- .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update,resume_after_failed_update,updates::beta_update_check,updates::beta_update_install]).build(tauri::generate_context!()).expect("Agent Time could not start")
+ .invoke_handler(tauri::generate_handler![capture_request,stage_archive,save_support_bundle,open_accessibility_settings,open_linear_oauth_settings,startup_item,prepare_update,resume_after_failed_update,updates::beta_update_check,updates::beta_update_install]).build(app_context()).expect("Agent Time could not start")
  .run(|app,event|{match event{tauri::RunEvent::Exit=>{
   // Close the bridge first so nothing respawns the collector while exiting.
   if let Some(tray)=app.try_state::<Arc<tray::TrayState>>(){tray.stopped.store(true,Ordering::Release);}
@@ -621,6 +623,17 @@ mod browser_settings_tests {
   assert!(validate_method("settings",&json!({"browserChrome":true,"browserBrave":false})).is_ok());
   assert!(validate_method("settings",&json!({"browserTracking":true})).is_err());
   assert!(validate_method("settings",&json!({"browserSafari":"false"})).is_err());
+ }
+}
+
+#[cfg(test)]
+mod app_icon_tests {
+ #[test]
+ fn bundled_window_icon_has_eight_bit_rgba_pixels() {
+  let context=super::app_context();
+  let icon=context.default_window_icon().expect("the app must have a window icon");
+  assert_eq!(icon.rgba().len(),icon.width() as usize*icon.height() as usize*4,
+   "Tauri window icons require exactly four 8-bit channels per pixel");
  }
 }
 
