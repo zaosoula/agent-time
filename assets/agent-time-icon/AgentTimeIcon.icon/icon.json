@@ -1,7 +1,7 @@
 {
   "color-space-for-untagged-svg-colors": "display-p3",
   "fill": {
-    "solid": "extended-srgb:0.08627,0.10588,0.18824,1.00000"
+    "solid": "extended-srgb:0.07843,0.13725,0.20392,1.00000"
   },
   "groups": [
     {
@@ -9,8 +9,8 @@
       "hidden": false,
       "layers": [
         {
-          "image-name": "03-agent-time-hand.svg",
-          "name": "agent time hand",
+          "image-name": "05-clock-hands.svg",
+          "name": "clock hands",
           "position": {
             "scale": 1,
             "translation-in-points": [
@@ -20,8 +20,8 @@
           }
         },
         {
-          "image-name": "02-human-time-hand.svg",
-          "name": "human time hand",
+          "image-name": "04-dial-markers.svg",
+          "name": "dial markers",
           "position": {
             "scale": 1,
             "translation-in-points": [
@@ -31,8 +31,30 @@
           }
         },
         {
-          "image-name": "01-clock-ring.svg",
-          "name": "clock ring",
+          "image-name": "03-human-branch.svg",
+          "name": "human branch",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "02-agent-branches.svg",
+          "name": "agent branches",
+          "position": {
+            "scale": 1,
+            "translation-in-points": [
+              0,
+              0
+            ]
+          }
+        },
+        {
+          "image-name": "01-open-dial.svg",
+          "name": "open dial",
           "position": {
             "scale": 1,
             "translation-in-points": [

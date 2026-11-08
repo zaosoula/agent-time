@@ -37,14 +37,10 @@ fn duration(seconds:f64)->String {
  if seconds<60{format!("{seconds}s")}else if seconds<3600{format!("{}m",seconds/60)}else{format!("{}h {}m",seconds/3600,(seconds%3600)/60)}
 }
 fn clock_icon()->tauri::image::Image<'static>{
- let mut pixels=vec![0u8;36*36*4];
- for y in 0..36 {for x in 0..36 {
-  let dx=x as f64-17.5;let dy=y as f64-17.5;let radius=(dx*dx+dy*dy).sqrt();
-  let ring=(1.5-(radius-13.0).abs()).clamp(0.0,1.0);
-  let hands=if (x>=16&&x<=18&&y>=9&&y<=18)||(x>=17&&x<=25&&y>=16&&y<=18){1.0}else{0.0};
-  pixels[(y*36+x)*4+3]=(ring.max(hands)*255.0) as u8;
- }}
- tauri::image::Image::new_owned(pixels,36,36)
+ // Generated from the same editable branching-clock mark as the app icon.
+ // Raw RGBA keeps template loading infallible without a runtime PNG decoder.
+ const PIXELS:&[u8;36*36*4]=include_bytes!("../icons/tray.rgba");
+ tauri::image::Image::new(PIXELS,36,36)
 }
 impl TrayState {
  fn refresh(&self,bridge:&Bridge,app:&tauri::AppHandle){

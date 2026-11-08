@@ -1,6 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, ref, watch } from 'vue';
-import { Bot, ChevronRight, Flag, Timer } from '@lucide/vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ArrowLeft, Bot, ChevronRight, Flag, Timer, X } from '@lucide/vue';
+import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui';
+import AgentExecutionDetails from './AgentExecutionDetails.vue';
+import InfoPopover from './InfoPopover.vue';
 import type { ExplorerSession, AgentExecution } from './project-explorer.ts';
 import { clock, duration } from './format.ts';
 
@@ -12,9 +15,59 @@ const selected = computed(() => props.sessions.find((item) => item.key === selec
 const execution = computed<AgentExecution | undefined>(() =>
   selected.value?.executions.find((item) => item.key === executionKey.value),
 );
+const narrow = ref(false);
+const sheetOpen = ref(false);
+const sheetExecutionKey = ref('');
+const sheetExecution = computed(() => selected.value?.executions.find((item) => item.key === sheetExecutionKey.value));
+const visibleExecutions = computed(() => narrow.value ? selected.value?.executions.slice(0, 5) || [] : selected.value?.executions || []);
+let narrowQuery: MediaQueryList | undefined;
+let returnFocus: HTMLElement | null = null;
+function updateNarrow() {
+  narrow.value = narrowQuery?.matches || false;
+  if (!narrow.value) sheetOpen.value = false;
+}
+onMounted(() => {
+  narrowQuery = window.matchMedia('(max-width: 760px)');
+  updateNarrow();
+  narrowQuery.addEventListener('change', updateNarrow);
+});
+onUnmounted(() => narrowQuery?.removeEventListener('change', updateNarrow));
+async function inspectExecution(item: AgentExecution, event: MouseEvent) {
+  if (narrow.value) {
+    const alreadyOpen = sheetOpen.value;
+    if (!sheetOpen.value) returnFocus = event.currentTarget as HTMLElement;
+    sheetExecutionKey.value = item.key;
+    sheetOpen.value = true;
+    if (alreadyOpen) {
+      await nextTick();
+      document.querySelector<HTMLElement>('.execution-sheet [aria-label="Back to executions"]')?.focus();
+    }
+  } else executionKey.value = executionKey.value === item.key ? '' : item.key;
+}
+async function backToExecutions() {
+  const key = sheetExecutionKey.value;
+  sheetExecutionKey.value = '';
+  await nextTick();
+  const target = Array.from(document.querySelectorAll<HTMLElement>('.sheet-executions [data-execution-key]'))
+    .find((element) => element.dataset.executionKey === key);
+  target?.focus();
+}
+function openExecutions(event: MouseEvent) {
+  returnFocus = event.currentTarget as HTMLElement;
+  sheetExecutionKey.value = '';
+  sheetOpen.value = true;
+}
+function restoreFocus(event: Event) {
+  event.preventDefault();
+  if (returnFocus?.isConnected) returnFocus.focus();
+}
 watch(
   () => selected.value?.key,
-  () => (executionKey.value = ''),
+  () => {
+    executionKey.value = '';
+    sheetExecutionKey.value = '';
+    sheetOpen.value = false;
+  },
 );
 
 const windowLabel = (start: number | null, end: number | null) =>
@@ -106,17 +159,24 @@ const contextItems = computed(() => {
     </div>
 
     <div v-if="selected" class="session-inspector" aria-live="polite">
-      <span class="eyebrow">Session {{ sessionLabel(sessions.indexOf(selected)) }}</span>
+      <div class="inspector-heading"><span class="session-caption">Session {{ sessionLabel(sessions.indexOf(selected)) }}</span>
+        <span class="provider">{{ selected.session.provider || 'Agent' }}</span></div>
       <h3 :title="selected.title">{{ selected.title }}</h3>
       <p class="muted">
-        {{ selected.session.provider || 'Agent' }} · Execution window {{ windowLabel(selected.start, selected.end) }}
+        Observed window {{ windowLabel(selected.start, selected.end) }} · includes inactive gaps
       </p>
       <div class="chips">
-        <span class="chip"><b>{{ duration(selected.agentSeconds) }}</b> agent time</span>
-        <span class="chip"><b>{{ duration(selected.wallSeconds) }}</b> elapsed</span>
+        <span class="chip"><b>{{ duration(selected.agentSeconds) }}</b> cumulative agent time</span>
+        <span class="chip"><b>{{ duration(selected.wallSeconds) }}</b> active elapsed</span>
         <span class="chip"><b>{{ selected.subagents }}</b> subagents</span>
         <span class="chip"><b>{{ selected.peak }}</b> peak</span>
         <span v-if="selected.humanSeconds !== null" class="chip human"><b>{{ duration(selected.humanSeconds) }}</b> you</span>
+        <InfoPopover label="Session time measurements">
+          <h3>Three different measurements</h3>
+          <p><strong>Observed window</strong> runs from the first recorded activity to the last, including gaps.</p>
+          <p><strong>Active elapsed</strong> counts time when at least one agent in this session was working. Overlapping executions count once.</p>
+          <p><strong>Cumulative agent time</strong> adds measured time for the main agent and each subagent, including time worked in parallel.</p>
+        </InfoPopover>
       </div>
 
       <div class="section-head">
@@ -136,11 +196,12 @@ const contextItems = computed(() => {
         <strong>Agent executions</strong><small>{{ selected.executions.length }} recorded</small>
       </div>
       <ul class="executions">
-        <li v-for="item in selected.executions" :key="item.key">
+        <li v-for="item in visibleExecutions" :key="item.key">
           <button
             :class="['execution', { selected: execution?.key === item.key }]"
-            :aria-expanded="execution?.key === item.key"
-            @click="executionKey = executionKey === item.key ? '' : item.key"
+            :aria-expanded="narrow ? undefined : execution?.key === item.key"
+            :aria-haspopup="narrow ? 'dialog' : undefined"
+            @click="inspectExecution(item, $event)"
           >
             <span class="execution-icon"><Bot :size="14" /></span>
             <span class="execution-text">
@@ -154,24 +215,12 @@ const contextItems = computed(() => {
             <b>{{ duration(item.seconds) }}</b>
             <ChevronRight :size="14" :class="{ open: execution?.key === item.key }" />
           </button>
-          <dl v-if="execution?.key === item.key" class="execution-detail">
-            <dt>Agent</dt>
-            <dd>{{ item.session.provider || 'Unknown' }}{{ item.session.agentId ? ` · ${item.session.agentId}` : '' }}</dd>
-            <dt>Measured time</dt>
-            <dd>{{ duration(item.seconds) }} · tool time {{ duration(item.session.observedSeconds) }}</dd>
-            <dt>Window</dt>
-            <dd>{{ windowLabel(item.start, item.end) }}</dd>
-            <dt>State</dt>
-            <dd>{{ item.session.state }} · evidence {{ item.session.proof }}</dd>
-            <template v-if="item.session.runId || item.session.taskId">
-              <dt>Orchestration</dt>
-              <dd>{{ item.session.runId || 'No run' }} · {{ item.session.taskId || 'No task' }}</dd>
-            </template>
-            <dt>Provider session</dt>
-            <dd class="mono">{{ item.session.sessionId || 'Not linked' }}</dd>
-          </dl>
+          <AgentExecutionDetails v-if="!narrow && execution?.key === item.key" :execution="item" />
         </li>
       </ul>
+      <button v-if="narrow && selected.executions.length > 5" class="view-executions" @click="openExecutions">
+        View all {{ selected.executions.length }} executions<ChevronRight :size="14" />
+      </button>
 
       <div v-if="selected.reported.length" class="task-context">
         <strong>Task context</strong>
@@ -192,6 +241,36 @@ const contextItems = computed(() => {
         </button>
       </div>
     </div>
+    <DialogRoot v-model:open="sheetOpen">
+      <DialogPortal>
+        <DialogOverlay class="execution-overlay" />
+        <DialogContent class="execution-sheet" @close-auto-focus="restoreFocus">
+          <div class="sheet-heading">
+            <button v-if="sheetExecution" class="icon-button" aria-label="Back to executions" @click="backToExecutions"><ArrowLeft :size="18" /></button>
+            <div>
+              <DialogTitle>{{ sheetExecution ? 'Execution details' : 'Agent executions' }}</DialogTitle>
+              <DialogDescription>{{ selected?.title }} · {{ selected?.executions.length }} recorded</DialogDescription>
+            </div>
+            <DialogClose class="icon-button" aria-label="Close execution panel"><X :size="18" /></DialogClose>
+          </div>
+          <div class="sheet-content">
+            <template v-if="sheetExecution">
+              <h3>{{ executionLabel(sheetExecution) }}</h3>
+              <AgentExecutionDetails :execution="sheetExecution" />
+            </template>
+            <ul v-else class="executions sheet-executions">
+              <li v-for="item in selected?.executions || []" :key="item.key">
+                <button class="execution" :data-execution-key="item.key" @click="inspectExecution(item, $event)">
+                  <span class="execution-icon"><Bot :size="14" /></span>
+                  <span class="execution-text"><strong>{{ executionLabel(item) }}</strong><small>{{ windowLabel(item.start, item.end) }}</small></span>
+                  <b>{{ duration(item.seconds) }}</b><ChevronRight :size="14" />
+                </button>
+              </li>
+            </ul>
+          </div>
+        </DialogContent>
+      </DialogPortal>
+    </DialogRoot>
   </div>
 </template>
 
@@ -200,6 +279,7 @@ const contextItems = computed(() => {
   display: grid;
   grid-template-columns: minmax(240px, 0.9fr) minmax(0, 1.6fr);
   gap: var(--space-4);
+  align-items: start;
 }
 .session-list,
 .session-inspector {
@@ -212,7 +292,7 @@ const contextItems = computed(() => {
   display: flex;
   flex-direction: column;
   padding-bottom: 6px;
-  max-height: 640px;
+  max-height: 540px;
   overflow: auto;
 }
 .panel-title {
@@ -254,7 +334,7 @@ small {
 }
 .session-item.selected .session-tag {
   background: var(--agent);
-  color: white;
+  color: var(--accent-contrast);
 }
 .session-text,
 .session-figures {
@@ -280,13 +360,13 @@ small {
 .session-inspector {
   padding: 14px 16px;
 }
-.eyebrow {
+.session-caption {
   font-size: var(--text-xs);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: var(--muted);
+  color: var(--agent);
 }
+.inspector-heading { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.provider { padding: 3px 7px; border-radius: 5px; background: var(--agent-soft); color: var(--agent); font-size: var(--text-xs); }
 .session-inspector h3 {
   margin: 4px 0 2px;
   font-size: 18px;
@@ -338,7 +418,10 @@ small {
   height: 90px;
 }
 .area {
-  fill: color-mix(in srgb, var(--agent) 70%, transparent);
+  fill: color-mix(in srgb, var(--agent-chart) 65%, transparent);
+  stroke: var(--agent-chart);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
 }
 .session-axis {
   display: flex;
@@ -349,7 +432,8 @@ small {
   font-variant-numeric: tabular-nums;
 }
 .executions {
-  max-height: 420px;
+  max-height: 440px;
+  overscroll-behavior: contain;
   overflow: auto;
   padding-right: 2px !important;
   list-style: none;
@@ -373,6 +457,7 @@ small {
   border-color: var(--agent);
   background: color-mix(in srgb, var(--agent) 12%, transparent);
 }
+.execution:hover { background: var(--hover); }
 .execution-icon {
   display: grid;
   place-items: center;
@@ -402,23 +487,6 @@ small {
 }
 .execution svg.open {
   transform: rotate(90deg);
-}
-.execution-detail {
-  display: grid;
-  grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 12px;
-  margin: 6px 0 4px 36px;
-  font-size: var(--text-xs);
-}
-.execution-detail dt {
-  color: var(--muted);
-}
-.execution-detail dd {
-  margin: 0;
-  overflow-wrap: anywhere;
-}
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 .task-context {
   margin-top: 12px;
@@ -460,7 +528,23 @@ small {
     grid-template-columns: 1fr;
   }
   .session-list {
-    max-height: 320px;
+    max-height: 230px;
   }
+  .executions { max-height: none; overflow: visible; }
+  .session-inspector { padding: 14px 12px; }
+  .section-head { gap: 8px; flex-wrap: wrap; }
+  .execution { gap: 7px; }
+  .session-inspector h3 { white-space: normal; overflow-wrap: anywhere; font-size: 17px; }
 }
+.view-executions { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; padding: 12px; margin-top: 8px; border: 1px solid var(--border-strong); border-radius: 9px; color: var(--agent); font-size: var(--text-sm); font-weight: 550; }
+.view-executions:hover { background: var(--hover); }
+.execution-overlay { position: fixed; inset: 0; z-index: 80; background: rgb(4 12 22 / 0.6); backdrop-filter: blur(3px); }
+.execution-sheet { position: fixed; z-index: 81; bottom: 0; left: 50%; transform: translateX(-50%); width: min(100%, 640px); max-height: 86dvh; display: flex; flex-direction: column; border: 1px solid var(--border-strong); border-bottom: 0; border-radius: 20px 20px 0 0; background: var(--panel-raised); box-shadow: var(--shadow-popover); padding-bottom: env(safe-area-inset-bottom); }
+.sheet-heading { display: flex; align-items: center; gap: 10px; padding: 20px; border-bottom: 1px solid var(--border); }
+.sheet-heading > div { flex: 1; min-width: 0; }
+.sheet-heading h2 { margin: 0 0 5px; font-size: 18px; }
+.sheet-heading p { margin: 0; font-size: var(--text-sm); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sheet-content { padding: 16px 20px 24px; overflow-y: auto; overscroll-behavior: contain; }
+.sheet-content h3 { font-size: 16px; margin: 0; overflow-wrap: anywhere; }
+.sheet-executions { max-height: none; overflow: visible; }
 </style>

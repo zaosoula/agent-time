@@ -8,7 +8,6 @@ import {
   CalendarDays,
   CircleHelp,
   ClipboardCheck,
-  Clock3,
   Download,
   Folder,
   GitCommitHorizontal,
@@ -36,6 +35,7 @@ import TodayPage from './TodayPage.vue';
 import UsagePage from './UsagePage.vue';
 import WeeklyReview from './WeeklyReview.vue';
 import WorkOutcomes from './WorkOutcomes.vue';
+import appIcon from './icon.svg';
 
 const betaUpdatesEnabled = import.meta.env.VITE_BETA_UPDATES === '1';
 const store = reactive(useStore());
@@ -214,7 +214,7 @@ onUnmounted(() => {
       <aside class="sidebar">
         <div class="titlebar-space" data-tauri-drag-region></div>
         <div class="brand">
-          <div class="brand-mark"><Clock3 :size="19" /></div>
+          <div class="brand-mark"><img :src="appIcon" alt="" /></div>
           <span>Agent Time</span><span class="version">Preview</span>
         </div>
         <nav class="sidebar-section" aria-label="Pages">

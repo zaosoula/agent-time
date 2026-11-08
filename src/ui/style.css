@@ -5,22 +5,26 @@
   color-scheme: light dark;
 
   /* Surfaces and text */
-  --bg: #fafafa;
-  --sidebar: #eeeef2;
+  --bg: #f3f6fa;
+  --sidebar: #eaf0f6;
   --panel: #fff;
   --panel-raised: #fff;
-  --text: #25262b;
-  --muted: #5f636e; /* >= 4.5:1 on panel, bg and sidebar */
+  --text: #142334;
+  --muted: #536579;
   --subtle: #8a8f9a; /* decorative only: rules, icons, never body text */
-  --border: #e3e4e8;
-  --border-strong: #d2d4db;
-  --hover: #f1f2f5;
-  --selected: #dfe3ef;
-  --selected-text: #344979;
+  --border: #dce5ef;
+  --border-strong: #bfcfe0;
+  --hover: #edf3f9;
+  --selected: #dbe9f6;
+  --selected-text: #244c73;
 
   /* Accent and status */
-  --accent: #007aff;
-  --accent-text: #0062cc;
+  --accent: #376a9b;
+  --accent-text: #285b89;
+  --accent-contrast: #fff;
+  --slate: #7caad6;
+  --slate-light: #d3e6f8;
+  --navy: #142334;
   --accent-soft: color-mix(in srgb, var(--accent) 10%, transparent);
   --blue: var(--accent);
   --status-good: #23845f;
@@ -32,8 +36,10 @@
   --status-info: var(--accent);
 
   /* Data series */
-  --human: #e49b3d;
-  --agent: #7958d9;
+  --human: #ac570d;
+  --human-chart: #ff963d;
+  --agent: #376a9b;
+  --agent-chart: #7caad6;
   --agent-soft: color-mix(in srgb, var(--agent) 14%, transparent);
   --now: #e5534b;
 
@@ -72,26 +78,27 @@
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #202125;
-    --sidebar: #292a30;
-    --panel: #25262c;
-    --panel-raised: #2c2d34;
-    --text: #e2e3e8;
-    --muted: #aeb3c0;
-    --subtle: #7d8290;
-    --border: #383a43;
-    --border-strong: #4a4d58;
-    --hover: #34363f;
-    --selected: #3b4256;
-    --selected-text: #beccec;
-    --accent: #3d9bff;
-    --accent-text: #6cb2ff;
+    --bg: #0e1825;
+    --sidebar: #101d2c;
+    --panel: #142334;
+    --panel-raised: #1b2e43;
+    --text: #e5eef7;
+    --muted: #a5b7ca;
+    --subtle: #71869c;
+    --border: #293e54;
+    --border-strong: #425f7a;
+    --hover: #1b3046;
+    --selected: #253f59;
+    --selected-text: #d3e6f8;
+    --accent: #7caad6;
+    --accent-text: #a9cdee;
+    --accent-contrast: #102033;
     --status-good: #4cc795;
     --status-warning: #e6a957;
     --status-warning-soft: color-mix(in srgb, #e6a957 14%, transparent);
     --status-danger: #f07a70;
-    --human: #e9a54d;
-    --agent: #9b7ff0;
+    --human: #ffad66;
+    --agent: #9fc5e9;
     --now: #f06a62;
     --shadow-popover: 0 10px 30px #00000066, 0 1px 3px #0000004d;
   }
@@ -120,7 +127,7 @@
 .btn-primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 .btn-primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, #000);
@@ -304,24 +311,28 @@ input {
   font-size: 16px;
   letter-spacing: -0.3px;
 }
+.brand > span:first-of-type {
+  white-space: nowrap;
+}
 .brand-mark {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  background: #fff;
-  border: 1px solid #dedee4;
-  border-radius: 9px;
-  box-shadow: 0 1px 2px #00000008;
-  color: #59616e;
+  width: 36px;
+  height: 36px;
+  flex: none;
+}
+.brand-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
 }
 .version {
   font-weight: 400;
   font-size: var(--text-xs);
   color: var(--muted);
   padding: 2px 4px;
-  border: 1px solid #d7d8de;
+  border: 1px solid var(--border-strong);
   border-radius: 4px;
   margin-left: auto;
   letter-spacing: 0;
@@ -876,7 +887,7 @@ h1 {
 }
 .primary-button {
   background: var(--accent);
-  color: white;
+  color: var(--accent-contrast);
   border-radius: 6px;
   padding: 7px 13px;
   font-size: 12px;
@@ -1139,6 +1150,7 @@ tbody tr:hover {
   color: var(--accent);
 }
 @media (max-width: 1120px) {
+  .brand .version { display: none; }
   .sidebar {
     width: 190px;
     min-width: 190px;
@@ -1167,25 +1179,23 @@ tbody tr:hover {
 }
 @media (prefers-color-scheme: dark) {
   .brand-mark {
-    background: #343740;
-    border-color: #434752;
-    color: var(--muted);
+    background: transparent;
   }
   .nav-row.active {
-    background: #3b4256;
-    color: #beccec;
+    background: var(--selected);
+    color: var(--selected-text);
   }
   .project-row.selected {
-    background: #373942;
-    color: #d3d6e0;
+    background: var(--selected);
+    color: var(--selected-text);
   }
   .version,
   .sidebar-footer {
-    border-color: #454754;
+    border-color: var(--border);
   }
   .nav-count,
   .segmented {
-    background: #373942;
+    background: var(--hover);
   }
   .estimate {
     background: #373941;
@@ -1193,7 +1203,7 @@ tbody tr:hover {
   .timeline-header,
   .statusbar,
   th {
-    background: #27282f;
+    background: var(--panel);
   }
   .timeline-row,
   td {
@@ -2156,7 +2166,7 @@ tbody tr:hover {
 }
 .export-review button:last-child {
   background: var(--blue);
-  color: #fff;
+  color: var(--accent-contrast);
 }
 .review-priority small {
   font-size: var(--text-xs);
@@ -2405,7 +2415,7 @@ tbody tr:hover {
 /* Navigation badges */
 .nav-count.attention {
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   font-weight: 600;
 }
 .banner .icon-button {

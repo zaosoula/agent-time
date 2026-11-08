@@ -396,7 +396,7 @@ const websites = computed(() => {
   padding: 0 6px;
   border-radius: var(--radius-pill);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-contrast);
   font-size: var(--text-xs);
 }
 .day-confidence-inline {

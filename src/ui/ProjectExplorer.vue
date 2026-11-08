@@ -61,8 +61,8 @@ const reportedCounts = computed(() => {
   <section class="explorer" aria-label="Projects">
     <div class="explorer-head">
       <div>
-        <h2>Projects</h2>
-        <p>Expand a project, choose a session, then inspect its agents.</p>
+        <h2>Project activity <span class="project-count">{{ groups.length }}</span></h2>
+        <p>Explore the sessions and agents behind your day.</p>
       </div>
       <label class="search-field">
         <Search :size="14" />
@@ -71,7 +71,7 @@ const reportedCounts = computed(() => {
     </div>
 
     <div class="columns" aria-hidden="true">
-      <span>Project</span><span>Activity</span><span>Agent time</span><span>You</span><span>Peak</span>
+      <span>Project</span><span>Across the day</span><span>Agent time</span><span>Your time</span><span>Peak</span>
     </div>
 
     <div
@@ -100,14 +100,14 @@ const reportedCounts = computed(() => {
         <span class="preview" aria-hidden="true">
           <i v-for="(value, index) in preview(group)" :key="index" :style="{ height: `${Math.max(value ? 12 : 0, value * 100)}%` }"></i>
         </span>
-        <b class="agent">{{ group.agentSeconds ? duration(group.agentSeconds) : '—' }}</b>
-        <b class="human">{{ group.humanSeconds ? duration(group.humanSeconds) : '—' }}</b>
+        <b class="agent"><small class="mobile-label">Agents</small>{{ group.agentSeconds ? duration(group.agentSeconds) : '—' }}</b>
+        <b class="human"><small class="mobile-label">You</small>{{ group.humanSeconds ? duration(group.humanSeconds) : '—' }}</b>
         <b class="agent">{{ group.peakConcurrent || '—' }}</b>
       </button>
 
       <div v-if="expanded[group.name]" class="project-body">
         <div class="body-head">
-          <span class="eyebrow">{{ projectDisplay(group.name, store.projects) }} / Session explorer</span>
+          <span class="explorer-caption">Sessions in {{ projectDisplay(group.name, store.projects) }}</span>
           <div class="body-actions">
             <button
               v-if="focus !== group.name"
@@ -168,8 +168,13 @@ const reportedCounts = computed(() => {
 }
 .explorer-head h2 {
   margin: 0;
-  font-size: 20px;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 19px;
+  letter-spacing: -0.4px;
 }
+.project-count { display: inline-grid; place-items: center; min-width: 24px; height: 24px; padding: 0 6px; border-radius: 7px; font-size: var(--text-sm); font-weight: 550; background: var(--agent-soft); color: var(--agent); letter-spacing: 0; }
 .explorer-head p {
   margin: 4px 0 0;
   color: var(--muted);
@@ -250,7 +255,7 @@ const reportedCounts = computed(() => {
 }
 .preview i {
   flex: 1;
-  background: var(--agent);
+  background: var(--agent-chart);
   border-radius: 1px 1px 0 0;
   opacity: 0.85;
 }
@@ -279,13 +284,12 @@ b.human {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.eyebrow {
+.explorer-caption {
   font-size: var(--text-xs);
   font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
   color: var(--muted);
 }
+.mobile-label { display: none; }
 .body-actions {
   display: flex;
   gap: 8px;
@@ -346,5 +350,13 @@ b.human {
   .explorer-row b:last-of-type {
     display: none;
   }
+  .mobile-label { display: block; margin-bottom: 3px; font-size: 10px; font-weight: 400; color: var(--muted); }
+  .explorer-row { padding: 12px; gap: 10px; }
+  .name { gap: 6px; }
+  .folder { display: none; }
+  .project-body { padding: 12px; }
+  .body-actions { flex-wrap: wrap; }
+  .explorer-head .search-field { width: 100%; }
+  .explorer-head .search-field input { width: 100%; min-width: 0; }
 }
 </style>

@@ -4,99 +4,157 @@
     "macOS"
   ],
   "deliverable_type": "icon-composer-package",
-  "source_reference": "Project-owned Agent Time clock icon at src/ui/icon.svg; redesign keeps its clock silhouette.",
-  "brief": "A clear, calm macOS icon for tracking developer and coding-agent time. Preserve the recognisable clock; use two hand colors for human and agent activity.",
+  "source_reference": "agent-time-icon.origin.png, selected generated slate-blue icon concept; original violet branching clock inspected for structural intent. The source is a presentation board, not a production asset.",
+  "brief": "An editable slate-blue branching clock. Open C dial, three flowing branches with circular terminals, orange human branch, blue agent branches, white hands and pivot on deep navy. Follow concept identity and palette with clean base geometry; defer generated glow and bevel material.",
   "semantic_review": {
-    "status": "exact-enough",
+    "status": "accepted-approximation",
     "identity_risk": "low",
-    "basis": "The project-owned clock is a simple low-risk mark. An independent visual review accepted the recognizable ring and hand geometry at 64 px and in the macOS render.",
-    "route": "semantic-svg",
-    "notes": "Intentional palette and geometry refresh, not pixel reproduction."
+    "basis": "Independent parent-agent visual review accepted whole-icon silhouette, balanced placement and spacing, three distinct node terminals, color roles and 64px recognition. This is a clean editable semantic interpretation, not strict pixel reproduction of the generated illustration.",
+    "route": "accepted-approximation",
+    "notes": "Semantic paths and simple arcs/circles remain editable. All strokes are outlined as clean filled geometry."
   },
   "source_analysis": {
-    "fidelity_target": "Preserve a simple clock ring and two hands while improving contrast and small-size clarity.",
+    "fidelity_target": "Preserve the open C-shaped clock and three smooth right-hand branches, blue outside and orange middle.",
     "identity_risk": "low",
-    "route": "semantic-svg",
+    "route": "accepted-approximation",
     "must_preserve": [
-      "clock ring",
-      "hands meeting at the central pivot",
-      "simple silhouette visible at small sizes"
+      "open C dial",
+      "white central pivot and two clock hands",
+      "three smooth branches ending in circles",
+      "top and bottom blue branches and orange middle branch",
+      "small-size readable silhouette"
     ],
     "must_not_add": [
       "text",
-      "glow",
-      "shadow",
+      "baked glow",
       "bevel",
-      "small hour ticks",
-      "rasterized reference"
+      "rim highlights",
+      "raster board imports"
     ],
     "components": [
       {
-        "id": "clock-ring",
-        "layer": "clock ring",
+        "id": "open-dial",
+        "layer": "open dial",
         "format": "svg",
+        "source_provenance": "generated-in-task",
+        "alignment_basis": "semantic recreation from selected concept; no production raster available",
         "spec_constraints": [
-          "one filled donut",
-          "no stroke or effects"
+          "smooth editable base shapes",
+          "no bitmap imports",
+          "no fake material"
         ]
       },
       {
-        "id": "human-hand",
-        "layer": "human time hand",
+        "id": "agent-branches",
+        "layer": "agent branches",
         "format": "svg",
+        "source_provenance": "generated-in-task",
+        "alignment_basis": "semantic recreation from selected concept; no production raster available",
         "spec_constraints": [
-          "one opaque rounded vertical bar"
+          "smooth editable base shapes",
+          "no bitmap imports",
+          "no fake material"
         ]
       },
       {
-        "id": "agent-hand",
-        "layer": "agent time hand",
+        "id": "human-branch",
+        "layer": "human branch",
         "format": "svg",
+        "source_provenance": "generated-in-task",
+        "alignment_basis": "semantic recreation from selected concept; no production raster available",
         "spec_constraints": [
-          "one opaque rounded diagonal bar"
+          "smooth editable base shapes",
+          "no bitmap imports",
+          "no fake material"
+        ]
+      },
+      {
+        "id": "dial-markers",
+        "layer": "dial markers",
+        "format": "svg",
+        "source_provenance": "generated-in-task",
+        "alignment_basis": "semantic recreation from selected concept; no production raster available",
+        "spec_constraints": [
+          "smooth editable base shapes",
+          "no bitmap imports",
+          "no fake material"
+        ]
+      },
+      {
+        "id": "clock-hands",
+        "layer": "clock hands",
+        "format": "svg",
+        "source_provenance": "generated-in-task",
+        "alignment_basis": "semantic recreation from selected concept; no production raster available",
+        "spec_constraints": [
+          "smooth editable base shapes",
+          "no bitmap imports",
+          "no fake material"
         ]
       }
     ],
     "acceptance_checks": [
-      "recognisable clock at 64px",
-      "foreground remains editable SVG",
-      "no background duplication in Icon Composer assets"
+      "recognizable at 64px",
+      "source and Apple assets contain editable SVG geometry",
+      "exactly three terminal nodes",
+      "Apple background uses canvas fill"
     ]
   },
   "fill": {
-    "solid": "extended-srgb:0.08627,0.10588,0.18824,1.00000"
+    "solid": "extended-srgb:0.07843,0.13725,0.20392,1.00000"
   },
   "layers": [
     {
       "name": "background",
-      "svg": "<rect width=\"1024\" height=\"1024\" fill=\"#161B30\"/>",
+      "svg": "<rect width=\"1024\" height=\"1024\" fill=\"#142334\"/>",
       "composer": {
         "include": false
       }
     },
     {
-      "name": "clock ring",
-      "svg": "<path d=\"M512 190 A322 322 0 1 1 511.999 190 Z M512 270 A242 242 0 1 0 512.001 270 Z\" fill=\"#91A4F7\" fill-rule=\"evenodd\"/>",
+      "name": "open dial",
+      "svg": "<path d=\"M659.10 282.90 A324 324 0 1 0 659.10 741.10 L613.85 695.85 A260 260 0 1 1 613.85 328.15 Z\" fill=\"#7CAAD6\"/>",
       "composer": {
         "format": "svg",
-        "reason": "clean filled clock ring remains editable"
+        "reason": "editable semantic base geometry, no baked material"
       }
     },
     {
-      "name": "human time hand",
-      "svg": "<rect x=\"483\" y=\"296\" width=\"58\" height=\"237\" rx=\"29\" fill=\"#F6F7FF\"/>",
+      "name": "agent branches",
+      "svg": "<g fill=\"#7CAAD6\"><path d=\"M430 486 H530 C585 486 601 445 626 398 C666 322 702 284 785 284 H830 V336 H785 C734 336 716 358 672 422 C646 471 614 538 530 538 H430 Z\"/><path d=\"M442 489 C525 535 586 558 646 600 C704 658 715 686 785 686 H830 V738 H785 C686 738 664 682 610 640 C559 601 503 580 418 535 Z\"/><circle cx=\"830\" cy=\"310\" r=\"46\"/><circle cx=\"830\" cy=\"712\" r=\"46\"/></g>",
       "composer": {
         "format": "svg",
-        "reason": "clean filled clock hand remains editable"
+        "reason": "editable semantic base geometry, no baked material"
       }
     },
     {
-      "name": "agent time hand",
-      "svg": "<rect x=\"497\" y=\"486\" width=\"237\" height=\"58\" rx=\"29\" transform=\"rotate(32 512 515)\" fill=\"#67E3D3\"/><circle cx=\"512\" cy=\"515\" r=\"32\" fill=\"#67E3D3\"/>",
+      "name": "human branch",
+      "svg": "<path d=\"M441 489 C516 527 562 533 624 506 C698 475 744 486 830 486 V538 C744 538 711 527 645 554 C562 591 505 578 419 535 Z\" fill=\"#FF963D\"/><circle cx=\"830\" cy=\"512\" r=\"46\" fill=\"#FF963D\"/>",
       "composer": {
         "format": "svg",
-        "reason": "clean filled second hand and pivot remain editable"
+        "reason": "editable semantic base geometry, no baked material"
+      }
+    },
+    {
+      "name": "dial markers",
+      "svg": "<g fill=\"#D3E6F8\"><rect x=\"417\" y=\"280\" width=\"26\" height=\"57\" rx=\"13\"/><rect x=\"188\" y=\"499\" width=\"57\" height=\"26\" rx=\"13\"/><rect x=\"417\" y=\"687\" width=\"26\" height=\"57\" rx=\"13\"/></g>",
+      "composer": {
+        "format": "svg",
+        "reason": "editable semantic base geometry, no baked material"
+      }
+    },
+    {
+      "name": "clock hands",
+      "svg": "<g fill=\"#FFFFFF\"><rect x=\"412\" y=\"372\" width=\"36\" height=\"158\" rx=\"18\"/><path d=\"M320.68 434.13 L417.68 525.13 A18 18 0 0 0 442.32 498.87 L345.32 407.87 A18 18 0 0 0 320.68 434.13 Z\"/><circle cx=\"430\" cy=\"512\" r=\"34\"/></g>",
+      "composer": {
+        "format": "svg",
+        "reason": "editable semantic base geometry, no baked material"
       }
     }
-  ]
+  ],
+  "acceptance": {
+    "accepted_by": "independent_visual_review",
+    "evidence": "Parent /root independently inspected rounded full-size preview, 64px preview and all six macOS variants in macos-appearances.png; accepted clock identity, proportions, spacing, branch color roles and small-size readability.",
+    "scope": "Whole-icon likeness, silhouette, proportions, placement, mass, spacing and identity accepted as a semantic approximation. Clean flat SVG geometry intentionally defers illustrated bevel/glow/material and uses requested slate-blue palette; strict pixel target is deferred, including a comparison mean above 15."
+  }
 }
