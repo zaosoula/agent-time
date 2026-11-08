@@ -1,0 +1,29 @@
+name: Withdraw broken Agent Time beta
+on:
+  workflow_dispatch:
+    inputs:
+      expected_version:
+        description: Exact public version to withdraw
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: agent-time-beta-release
+  cancel-in-progress: false
+jobs:
+  withdraw:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: beta-publication
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+      - name: Withdraw only the expected public version
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+          FEED_UPLOAD_TOKEN: ${{ secrets.FEED_UPLOAD_TOKEN }}
+        run: node beta-feed/withdraw.mjs
