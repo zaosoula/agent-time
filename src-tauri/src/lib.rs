@@ -69,7 +69,7 @@ fn kill_owned(child:&mut Child){
 struct Bridge {
  child: Mutex<Child>, input: Mutex<ChildStdin>, pending: Pending, counter: AtomicU64, launch:LaunchSpec,
  reader:Mutex<Option<std::thread::JoinHandle<()>>>, restart:Mutex<RestartState>, restart_done:Condvar,
- desired_running:AtomicBool, long_inflight:AtomicUsize,
+ desired_running:AtomicBool, long_inflight:AtomicUsize, storage_startup:Arc<AtomicBool>,
 }
 impl Bridge {
  fn start(app: &tauri::App) -> Result<Self, String> {
@@ -87,22 +87,24 @@ impl Bridge {
  }
  fn from_launch(launch:LaunchSpec)->Result<Self,String>{
   let desired_running=pause_deadline(&launch.output.join("pause-until")).is_none();
+  let storage_startup=Arc::new(AtomicBool::new(launch.output.join("pending-storage-replacement.json").exists()));
   let (child,input,output)=launch.spawn()?;
   let pending:Pending=Arc::new(Mutex::new(HashMap::new()));
-  let reader=Self::read_replies(output,pending.clone());
+  let reader=Self::read_replies(output,pending.clone(),storage_startup.clone());
   Ok(Self{
    child:Mutex::new(child),input:Mutex::new(input),pending,counter:AtomicU64::new(0),launch,
    reader:Mutex::new(Some(reader)),
    restart:Mutex::new(RestartState{attempts:0,window:Instant::now(),closed:false,restarting:false}),
    restart_done:Condvar::new(),
-   desired_running:AtomicBool::new(desired_running),long_inflight:AtomicUsize::new(0),
+   desired_running:AtomicBool::new(desired_running),long_inflight:AtomicUsize::new(0),storage_startup,
   })
  }
- fn read_replies(output:ChildStdout,readers:Pending)->std::thread::JoinHandle<()> {
+ fn read_replies(output:ChildStdout,readers:Pending,storage_startup:Arc<AtomicBool>)->std::thread::JoinHandle<()> {
   std::thread::spawn(move || {
    for line in BufReader::new(output).lines() {
     if let Ok(line)=line { if let Ok(reply)=serde_json::from_str::<Value>(&line) {
      if let Some(id)=reply["id"].as_str() { if let Some(tx)=readers.lock().unwrap().remove(id) {
+      storage_startup.store(false,Ordering::Release);
       let result=if reply.get("error").is_some(){Err(reply["error"].as_str().unwrap_or("sidecar error").to_string())}else{Ok(reply["result"].clone())};let _=tx.send(result);
      }}
     }}
@@ -144,10 +146,11 @@ impl Bridge {
   // The previous collector is dead (or was killed with its group), so its
   // stdout reaches EOF and the reader thread ends promptly.
   if let Some(reader)=self.reader.lock().map_err(|e|e.to_string())?.take(){let _=reader.join();}
+  self.storage_startup.store(self.launch.output.join("pending-storage-replacement.json").exists(),Ordering::Release);
   let (child,input,output)=self.launch.spawn()?;
   *self.child.lock().map_err(|e|e.to_string())?=child;
   *self.input.lock().map_err(|e|e.to_string())?=input;
-  *self.reader.lock().map_err(|e|e.to_string())?=Some(Self::read_replies(output,self.pending.clone()));
+  *self.reader.lock().map_err(|e|e.to_string())?=Some(Self::read_replies(output,self.pending.clone(),self.storage_startup.clone()));
   // Shutdown may have run while we were spawning; never leave a collector
   // behind once the bridge is closed.
   if self.is_closed(){
@@ -160,7 +163,13 @@ impl Bridge {
   Ok(())
  }
  fn send(&self, method:&str, params:Value, timeout:Duration)->Result<Value,String>{
-  let long=is_long_request(method);
+  // A verified replacement runs before the CLI reads its first request. It
+  // can outlast an interactive deadline; keep that startup allowance until
+  // the first real reply, including after the marker is removed mid-apply.
+  // Exit remains interruptible under its separate short stop deadline.
+  let startup=self.storage_startup.load(Ordering::Acquire)&&timeout!=SHUTDOWN_STOP_TIMEOUT;
+  let timeout=if startup{timeout.max(LONG_REQUEST_TIMEOUT)}else{timeout};
+  let long=is_long_request(method)||startup;
   if long{self.long_inflight.fetch_add(1,Ordering::AcqRel);}
   let result=self.send_inner(method,params,timeout,long);
   if long{self.long_inflight.fetch_sub(1,Ordering::AcqRel);}
@@ -537,6 +546,24 @@ mod process_tests {
 #[cfg(test)]
 mod restart_tests {
  use super::*;
+ #[test] fn pending_storage_startup_waits_for_first_reply_and_then_uses_normal_deadlines() {
+  let directory=std::env::temp_dir().join(format!("agent-time-storage-startup-{}",std::process::id()));
+  let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
+  std::fs::write(directory.join("pending-storage-replacement.json"),"{}").unwrap();
+  let script=directory.join("collector.cjs");
+  std::fs::write(&script,r#"
+const fs=require('fs'),readline=require('readline'),root=process.argv[process.argv.indexOf('--output')+1];let first=true;
+readline.createInterface({input:process.stdin}).on('line',line=>{const request=JSON.parse(line);const reply=()=>process.stdout.write(JSON.stringify({id:request.id,result:{ready:true}})+'\n');if(first){first=false;fs.unlinkSync(root+'/pending-storage-replacement.json');setTimeout(reply,200);}else reply();});
+"#).unwrap();
+  let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let bridge=Bridge::from_launch(launch).unwrap();
+  let result=bridge.send("status",json!({}),Duration::from_millis(50));
+  assert!(!bridge.storage_startup.load(Ordering::Acquire));
+  assert_eq!(bridge.long_inflight.load(Ordering::Acquire),0);
+  bridge.shutdown();let _=std::fs::remove_dir_all(directory);
+  assert_eq!(result.unwrap()["ready"],true,"startup must survive its ordinary reply deadline, even after the replacement marker disappears");
+ }
  #[test] fn failed_update_reopens_the_collector_and_restores_capture() {
   let directory=std::env::temp_dir().join(format!("agent-time-update-recovery-{}",std::process::id()));
   let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
