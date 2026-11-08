@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.33` candidate — 2026-11-08
+## `0.2.0-beta.33` published — 2026-11-08
 
 Repairs excessive memory use while preparing storage compaction. The old path materialized multiple full arrays of payloads, parsed events, summaries, and serialized summaries; a 130 MB fixture reproducibly exhausted a 64 MB JavaScript heap. The replacement streams payloads, uses disk-backed retention state and bounded SQLite caches, and stores compact numeric ordering metadata instead of full event objects. The same fixture now succeeds under the 64 MB limit. Retained rows, insertion order, all non-event tables (including reviews), scope days, and global causal evidence order are independently verified after vacuum. Meaningful workers are retained; only provably inert, unbound empty-worker groups and redundant terminal/static-scope observations are pruned. Clock-envelope anchors are kept when later evidence depends on them.
 
@@ -10,7 +10,9 @@ Full-database benchmark on a consistent, disposable copy of the owner's history:
 
 The review-summary cache signature advances from r1 to r2 so old ordering-dependent snapshots are rebuilt without changing stored decisions or reviews. Initial release run [42498969810](https://github.com/zaosoula/agent-time/actions/runs/42498969810) was canceled before publication to include this invalidation; the public feed remained on beta.32.
 
-Local checks pass: 356 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and independent review with no blocking findings. Publication and native update proof are pending.
+Local checks pass: 356 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and independent review with no blocking findings. [Release run 42499365300](https://github.com/zaosoula/agent-time/actions/runs/42499365300) repeated the checks, built on macOS 26, signed/notarized, and published exact source `31be6418b7c3e61409d9fe29b51b5413e505f50f`. Independent public downloads match the staged manifest, signature, updater SHA-256 `a47ed7ec93b75572d2ab4514e09074e783241570f9d4e1e7d5a3c40f1819ddc9`, and DMG SHA-256 `ddbffca1dc0a03ac1c8bcfa3d151349c1c416c53a9a62399e21e99b6559852a5`. The public DMG and extracted app pass stapled-ticket and Gatekeeper checks; strict nested app signing passes.
+
+The owner's beta.32 displayed beta.33 in the in-app updater, then restarted into installed beta.33 (PID 10926). The populated Home shows the original projects/history and Receiving activity. Installed signing, ticket, Gatekeeper, and byte equality of all four changed capture modules were verified. Read-only storage proof found 2,802,440 events (334 more than the pre-update baseline), the exact original oldest event, and fresh macOS/Orca/hook observations; the latest event was 1.6 seconds old. No live compaction/replacement was performed. Evidence: `/private/tmp/agent-time-beta33-native-proof.json`, `/private/tmp/agent-time-beta33-native.png`, and `/private/tmp/agent-time-beta33-artifact/public-verification.json`. The large disposable benchmark databases were removed after verification; benchmark JSON/timing evidence remains.
 
 ## `0.2.0-beta.32` published — 2026-11-08
 
