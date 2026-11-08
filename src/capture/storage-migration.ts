@@ -1,3 +1,5 @@
+import {archiveName,withReadableArchive,recordArchive} from './archive-storage.ts';
+import {copyFileSync} from 'node:fs';
 import {openEventDatabase,verifyPackedBlocks} from './event-database.ts';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
@@ -13,7 +15,7 @@ const namePattern=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]
 const digestPattern=/^[a-f0-9]{64}$/;
 const markerName='pending-storage-replacement.json';
 const resultName='last-storage-replacement.json';
-interface PendingReplacement {candidate:string;backup:string;sourceHash:string;candidateHash:string;kind:'compaction'|'restore';}
+interface PendingReplacement {candidate:string;backup:string;sourceHash:string;candidateHash:string;kind:'compaction'|'restore';ownedCandidate?:boolean;}
 export interface ReplacementResult {status:'applied'|'stale';kind:'compaction'|'restore';backup:string;at:string;}
 export interface PreparedCompaction extends CompactCopyResult {candidate:string;backup:string;savingsBytes:number;}
 function hash(path:string){
@@ -27,6 +29,7 @@ function regular(path:string){const item=lstatSync(path);if(!item.isFile()||item
 function folder(root:string){const path=join(root,'exports');if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('Archive folder must not be a symlink');mkdirSync(path,{recursive:true,mode:0o700});return path;}
 function marker(root:string){return join(root,markerName);}
 function writeResult(root:string,pending:PendingReplacement,status:ReplacementResult['status']){
+ if(status==='applied')recordArchive(root,pending.backup,'rollback');
  const path=join(root,resultName),temp=path+'.'+randomUUID()+'.tmp';
  try{writeFileSync(temp,JSON.stringify({status,kind:pending.kind,backup:pending.backup,at:new Date().toISOString()}),{flag:'wx',mode:0o600});renameSync(temp,path);}
  catch(error){rmSync(temp,{force:true});throw error;}
@@ -104,10 +107,19 @@ export function prepareRestore(root:string,candidate:string):{candidate:string;b
  writePending(root,{candidate,backup,sourceHash:hash(source),candidateHash:hash(archive),kind:'restore'});
  return {candidate,backup,bytes:statSync(archive).size};
 }
+export async function prepareRestoreAsync(root:string,id:string):Promise<{candidate:string;backup:string;bytes:number}>{
+ if(!archiveName.test(id))throw new Error('Invalid archive name');
+ if(!id.endsWith('.gz'))return prepareRestore(root,id);
+ if(readPending(root))throw new Error('A storage replacement is already pending');
+ return withReadableArchive(join(folder(root),id),plain=>{
+  const candidate=named(),path=join(folder(root),candidate);copyFileSync(plain,path);chmodSync(path,0o600);
+  try{const result=prepareRestore(root,candidate),pending=readPending(root)!;rmSync(marker(root));writePending(root,{...pending,ownedCandidate:true});return result;}catch(error){rmSync(path,{force:true});throw error;}
+ });
+}
 export function cancelPendingReplacement(root:string):boolean{
  const pending=readPending(root);if(!pending)return false;
  rmSync(marker(root));
- if(pending.kind==='compaction')rmSync(join(folder(root),pending.candidate),{force:true});
+ if(pending.kind==='compaction'||pending.ownedCandidate)rmSync(join(folder(root),pending.candidate),{force:true});
  return true;
 }
 export function pendingReplacement(root:string):PendingReplacement|null{return readPending(root);}

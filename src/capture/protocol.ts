@@ -132,7 +132,7 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     }
     if(request.method==='storage_restore_prepare'){
       if(Object.keys(params).length!==2||typeof params.id!=='string'||params.confirmed!==true||!controller.prepareStorageRestore)throw new Error('Storage replacement requires confirmation');
-      return {id,result:controller.prepareStorageRestore(params.id)};
+      return {id,result:await controller.prepareStorageRestore(params.id)};
     }
     if(Object.keys(params).length)throw new Error('Unsupported parameter');
     if(request.method==='tracking_cleanup_preview'&&controller.cleanupPreview)return {id,result:controller.cleanupPreview()};

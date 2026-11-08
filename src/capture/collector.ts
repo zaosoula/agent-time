@@ -209,10 +209,10 @@ export class Collector {
     const recovery=recoveryNotices({databaseHealthy,freeBytes,sources:health.sources,spool:health.spool,running:this.running,clockShiftSeconds:this.clockShiftSeconds});
     return {...diagnosticSummary({status:this.status(),health,hooks:this.freshHookStatus(),databaseBytes:bytes,databaseHealthy,now:wall,recovery}),nodeVersion:process.version,platform:process.platform,architecture:process.arch,osVersion:osRelease()};
   }
-  exportArchive(){return this.store.exportArchive(this.output);}
+  exportArchive(){return this.exclusiveStorageTask(()=>runStorageTask<{path:string;bytes:number;events:number}>({op:'export',database:join(this.output,'events.sqlite'),output:this.output}));}
   listArchives(){return this.store.listArchives(this.output);}
   deleteArchive(id:string){this.requireOwner();if(pendingReplacement(this.output)?.candidate===id)throw new Error('Cancel the pending replacement before deleting its archive');return this.store.deleteArchive(this.output,id);}
-  previewArchive(id:string){return this.store.previewArchive(this.output,id);}
+  previewArchive(id:string){return this.exclusiveStorageTask(()=>runStorageTask({op:'preview',database:join(this.output,'events.sqlite'),output:this.output,id}));}
   /** Runs off the request thread so other requests are answered while a large archive imports. */
   async importArchive(id:string){
     this.requireOwner();
@@ -239,7 +239,7 @@ export class Collector {
   prepareStorageRestore(id:string){
     if(this.running||this.stopping)throw new Error('Pause capture before replacing storage');
     if(this.storageTask)throw new Error('Another storage operation is still running');
-    this.requireOwner();return prepareRestore(this.output,id);
+    this.requireOwner();return this.exclusiveStorageTask(()=>runStorageTask({op:'restore',database:join(this.output,'events.sqlite'),output:this.output,id}));
   }
   cancelStorageReplacement(){this.requireOwner();return cancelPendingReplacement(this.output);}
   storageReplacementStatus(){const pending=pendingReplacement(this.output);return pending?{candidate:pending.candidate,backup:pending.backup,kind:pending.kind}:null;}

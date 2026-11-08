@@ -6,6 +6,8 @@ export type StorageTask=
  {op:'compact';source:string;target:string;options:{idleThreshold?:number;agentIdleThreshold?:number}}|
  {op:'optimize';source:string;target:string}|
  {op:'maintain';database:string;now:number}|
+ {op:'export'|'preview'|'restore';database:string;output:string;id?:string}|
+ {op:'archives';output:string}|
  {op:'import';database:string;output:string;id:string};
 
 export function runStorageTask<T>(task:StorageTask):Promise<T>{
@@ -22,9 +24,11 @@ async function perform(task:StorageTask):Promise<unknown>{
  if(task.op==='compact'){const {compactCaptureCopy}=await import('./compact-copy.ts');return compactCaptureCopy(task.source,task.target,task.options);}
  if(task.op==='optimize'){const {optimizedCaptureCopy}=await import('./optimized-copy.ts');return optimizedCaptureCopy(task.source,task.target);}
  if(task.op==='maintain'){const {openEventDatabase}=await import('./event-database.ts');const {packEventHistory}=await import('./packed-maintenance.ts');const db=openEventDatabase(task.database);try{return packEventHistory(db,{now:task.now});}finally{db.close();}}
+ if(task.op==='archives'){const {maintainArchives}=await import('./archive-storage.ts');return maintainArchives(task.output);}
+ if(task.op==='restore'){const {prepareRestoreAsync}=await import('./storage-migration.ts');return prepareRestoreAsync(task.output,task.id!);}
  const {EventStore}=await import('./store.ts');
  const store=new EventStore(task.database);
- try{return store.importArchive(task.output,task.id);}finally{store.close();}
+ try{if(task.op==='export')return await store.exportArchiveCompressed(task.output);if(task.op==='preview')return await store.previewArchiveAsync(task.output,task.id!);return await store.importArchiveAsync(task.output,task.id!);}finally{store.close();}
 }
 
 if(!isMainThread&&parentPort&&workerData&&typeof workerData==='object'&&'op' in workerData){

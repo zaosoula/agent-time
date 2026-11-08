@@ -1,3 +1,4 @@
+import {archiveName,compressArchive,withReadableArchive,recordArchive} from './archive-storage.ts';
 import {openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
 import { DatabaseSync,backup } from 'node:sqlite';
 import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync } from 'node:fs';
@@ -11,7 +12,6 @@ import {readWindowEvents} from './summary-window.ts';
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
 export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;canUndo:boolean;eventIds:string[];}
 export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;}
-const archiveName=/^agent-time-[0-9TZ-]+-[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}\.sqlite$/;
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid manual note');
  const item=value as Record<string,unknown>;
@@ -288,6 +288,7 @@ export class EventStore {
       try{if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Export integrity check failed');events=Number(check.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
       finally{check.close();}
       chmodSync(temp,0o600);renameSync(temp,path);
+      recordArchive(output,path.split('/').at(-1)!,'manual');
       return {path,bytes:statSync(path).size,events};
     }catch(error){if(existsSync(temp))rmSync(temp);throw error;}
   }
@@ -311,10 +312,16 @@ export class EventStore {
     unlinkSync(path);
     return true;
   }
-  private withArchive<T>(output:string,id:string,run:(hasUsage:boolean)=>T):T{
+  async exportArchiveCompressed(output:string){const archive=await this.exportArchive(output);const compressed=await compressArchive(archive.path);return {path:compressed.path,bytes:compressed.bytes,events:archive.events};}
+  private archivePath(output:string,id:string):string{
     if(!archiveName.test(id))throw new Error('Invalid archive ID');
     const folder=join(output,'exports'),path=join(folder,id);
-    if(lstatSync(folder).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())throw new Error('Archive must be a regular file');
+    if(lstatSync(folder).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())throw new Error('Archive must be a regular file');return path;
+  }
+  async previewArchiveAsync(output:string,id:string):Promise<ArchivePreview>{return withReadableArchive(this.archivePath(output,id),path=>this.withArchivePath(path,hasUsage=>this.previewAttachedArchive(id,hasUsage)));}
+  async importArchiveAsync(output:string,id:string){return withReadableArchive(this.archivePath(output,id),path=>this.importArchivePath(path,id));}
+  private withArchive<T>(output:string,id:string,run:(hasUsage:boolean)=>T):T{return this.withArchivePath(this.archivePath(output,id),run);}
+  private withArchivePath<T>(path:string,run:(hasUsage:boolean)=>T):T{
     const check=openEventDatabase(path,{readOnly:true});
     try{
       if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Archive integrity check failed');
@@ -331,7 +338,12 @@ export class EventStore {
     return this.withArchive(output,id,hasUsage=>this.previewAttachedArchive(id,hasUsage));
   }
   importArchive(output:string,id:string):{addedEvents:number;addedNotes:number;addedDecisions:number}{
-    return this.withArchive(output,id,hasUsage=>{
+    return this.importArchivePath(this.archivePath(output,id),id);
+  }
+  private importArchivePath(path:string,id:string):{addedEvents:number;addedNotes:number;addedDecisions:number}{
+    return this.withArchivePath(path,hasUsage=>{
+      this.db.exec('BEGIN IMMEDIATE');
+      try{
       const preview=this.previewAttachedArchive(id,hasUsage);
       if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.splitConflicts||preview.reviewActionConflicts||preview.dayReviewConflicts||preview.usageConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
       for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)').iterate()){
@@ -343,8 +355,6 @@ export class EventStore {
         const payload=JSON.parse(String(row.payload)) as Record<string,unknown>;
         if(payload.id!==row.id||payload.timestamp!==row.timestamp||typeof payload.provider!=='string'||!Number.isFinite(payload.timestamp))throw new Error('Archive usage record is invalid');
       }
-      this.db.exec('BEGIN IMMEDIATE');
-      try{
         this.db.exec(`INSERT OR IGNORE INTO main.events(event_id,observed_at,${isPackedEventDatabase(this.db)?'payload_data':'payload'}) SELECT event_id,observed_at,payload FROM archive.events ORDER BY rowid`);
         this.db.exec('INSERT OR IGNORE INTO main.observation_signatures SELECT identity,signature FROM archive.observation_signatures');
         this.db.exec('INSERT OR IGNORE INTO main.human_decisions SELECT start_event_id,end_event_id,mode,project_path,decided_at FROM archive.human_decisions');
@@ -357,8 +367,8 @@ export class EventStore {
           this.db.exec('INSERT OR IGNORE INTO main.usage_events SELECT id,timestamp,payload FROM archive.usage_events');
         }
         this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
-      }catch(error){this.db.exec('ROLLBACK');throw error;}
       return {addedEvents:preview.newEvents,addedNotes:preview.newNotes,addedDecisions:preview.newDecisions};
+      }catch(error){if(this.db.isTransaction)this.db.exec('ROLLBACK');throw error;}
     });
   }
   private previewAttachedArchive(id:string,hasUsage:boolean):ArchivePreview{
