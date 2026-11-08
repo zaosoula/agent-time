@@ -36,3 +36,18 @@ test('stopping during storage preflight cancels the pending start before any cap
  let release!:(ok:boolean)=>void;const pending=new Promise<boolean>(resolve=>{release=resolve;});(collector as any).ensureStorageCapacity=()=>pending;const starting=collector.start(30);const rejected=assert.rejects(starting,/cancelled/);assert.equal(collector.status().running,false);await collector.stop();release(true);await rejected;assert.equal(collector.status().running,false);assert.equal(collector.store.events().some(event=>event.kind==='capture_start'),false);
  }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
 });
+test('overflow arriving after a drain stays pending until its gap is saved',async()=>{
+ const {existsSync}=await import('node:fs');const root=mkdtempSync(join(tmpdir(),'at-overflow-race-')),collector=new Collector(root);try{
+  collector.updateSettings({macosActivity:false,orcaPolling:false,tokenUsage:false});const drain=(collector as any).drainHooks.bind(collector),folder=join(root,'spool');let once=true;
+  (collector as any).drainHooks=()=>{const issues=drain();if(once){once=false;assert.equal(spoolHook(makeEvent('hook','tool_start',{data:{extra:'x'.repeat(MAX_HOOK_BYTES)}}),folder),false);}return issues;};
+  await (collector as any).poll();assert.ok(existsSync(join(folder,'.overflow'))||collector.store.events().some(event=>event.kind==='coverage'&&String(event.data?.reason).includes('overflow')));
+  await (collector as any).poll();assert.ok(collector.store.events().some(event=>event.kind==='coverage'&&String(event.data?.reason).includes('overflow')));assert.equal(existsSync(join(folder,'.overflow')),false);
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});
+test('a claimed overflow survives a failed coverage write and a new producer marker',async()=>{
+ const {existsSync}=await import('node:fs');const {claimSpoolOverflow,acknowledgeSpoolOverflow}=await import('../src/capture/hooks.ts');const root=mkdtempSync(join(tmpdir(),'at-overflow-retry-')),collector=new Collector(root),folder=join(root,'spool');try{
+  collector.updateSettings({macosActivity:false,orcaPolling:false,tokenUsage:false});const reject=()=>spoolHook(makeEvent('hook','tool_start',{data:{extra:'x'.repeat(MAX_HOOK_BYTES)}}),folder);assert.equal(reject(),false);assert.equal(claimSpoolOverflow(folder),true);assert.equal(reject(),false);acknowledgeSpoolOverflow(folder);assert.equal(existsSync(join(folder,'.overflow')),true);
+  const put=collector.store.put.bind(collector.store);collector.store.put=()=>{throw new Error('coverage write failed');};await (collector as any).poll();assert.equal(existsSync(join(folder,'.overflow-pending')),true);collector.store.put=put;
+  await (collector as any).poll();assert.equal(existsSync(join(folder,'.overflow-pending')),false);assert.ok(collector.store.events().some(event=>event.kind==='coverage'&&String(event.data?.reason).includes('overflow')));
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});

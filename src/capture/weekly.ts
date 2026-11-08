@@ -6,7 +6,7 @@ export interface ReviewedEntry {date:string;start:number;end:number;project:stri
 export interface WeeklyReview {startDate:string;endDate:string;projects:WeeklyProject[];totals:Omit<WeeklyProject,'project'>;days:Array<{date:string;humanSeconds:number;agentWallSeconds:number;agentSeconds:number;elapsedSeconds:number}>;reviewedEntries:ReviewedEntry[];}
 const dateString=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const project=(interval:Interval)=>interval.workspaceId?.split('::').at(-1)||'Unassigned';
-export function weeklyReview(summary:Summary,startDate:string,acceptedDays:ReadonlySet<string>=new Set()):WeeklyReview{
+export function weeklyReview(input:Summary|((date:string)=>Summary),startDate:string,acceptedDays:ReadonlySet<string>=new Set()):WeeklyReview{
  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate))throw new Error('Invalid week start');
  const start=new Date(`${startDate}T00:00:00`);
  if(Number.isNaN(start.getTime())||dateString(start)!==startDate)throw new Error('Invalid week start');
@@ -14,6 +14,7 @@ export function weeklyReview(summary:Summary,startDate:string,acceptedDays:Reado
  const rows=new Map<string,WeeklyProject>(),reviewedEntries:ReviewedEntry[]=[],days:WeeklyReview['days']=[];
  const totals={humanSeconds:0,agentSeconds:0,agentWallSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
  for(let day=new Date(start);day<end;day.setDate(day.getDate()+1)){
+  const summary=typeof input==='function'?input(dateString(day)):input;
   const next=new Date(day);next.setDate(next.getDate()+1);
   const from=day.getTime()/1000,to=next.getTime()/1000;
   const byProject=new Map<string,Interval[]>(),accepted=acceptedDays.has(dateString(day));

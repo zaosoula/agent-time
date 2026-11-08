@@ -34,3 +34,10 @@ test('accepting a day includes captured project matches in reviewed time without
  assert.equal(accepted.reviewedEntries.length,1);
  assert.equal(accepted.projects.find(row=>row.project==='Unassigned')?.reviewedSeconds,0);
 });
+test('weekly review consumes one day at a time with identical totals and ordering',async()=>{
+ const {summaryForDate}=await import('../src/capture/daily.ts');const start=new Date('2026-10-19T23:59:30').getTime()/1000;
+ const summary:Summary={intervals:[{start,end:start+120,state:'human',workspaceId:'observed::/a',userAttribution:'assigned',hostId:'local',proof:'observed',sourceEventIds:['a','b']},{start,end:start+86460,state:'grouped',workspaceId:'observed::/b',sessionId:'s',hostId:'local',proof:'observed',sourceEventIds:['c','d']}],sessions:[],coverage:[],unresolved:[],humanSeconds:0,agentSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
+ const dates=Array.from({length:7},(_,i)=>`2026-10-${19+i}`),days=dates.map(date=>summaryForDate(summary,date)),joined={...summary,intervals:days.flatMap(day=>day.intervals)},accepted=new Set(['2026-10-20']);const calls:string[]=[];
+ const result=weeklyReview((date:string)=>{calls.push(date);return days[dates.indexOf(date)]!;},'2026-10-19',accepted);
+ assert.deepEqual(result,weeklyReview(joined,'2026-10-19',accepted));assert.deepEqual(calls,dates);
+});

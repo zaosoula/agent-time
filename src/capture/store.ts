@@ -337,6 +337,28 @@ export class EventStore {
     return resolveArchivePath(output,id);
   }
   async previewArchiveAsync(output:string,id:string):Promise<ArchivePreview>{return withReadableArchive(this.archivePath(output,id),path=>this.withArchivePath(path,hasUsage=>this.previewAttachedArchive(id,hasUsage)));}
+  /** Conservative deletion proof, stricter than the user-facing import preview.
+   * Rebuildable caches are excluded; unknown user tables must also be covered. */
+  async archiveFullyCovered(output:string,id:string):Promise<boolean>{
+    return withReadableArchive(this.archivePath(output,id),path=>this.withArchivePath(path,()=>{
+      const quote=(name:string)=>'"'+name.replaceAll('"','""')+'"';
+      this.db.exec('BEGIN');
+      try{
+        for(const row of this.db.prepare('SELECT a.rowid archived_rowid,m.rowid current_rowid,a.observed_at archived_at,m.observed_at current_at,a.payload archived,m.payload current FROM archive.events a LEFT JOIN main.events m ON m.event_id=a.event_id ORDER BY a.rowid').iterate())
+          if(row.archived_rowid!==row.current_rowid||row.archived_at!==row.current_at||row.archived!==row.current)return false;
+        const derived=new Set(['events','at_event_blocks','at_tool_keys','at_pack_state','day_review_cache','observation_signatures']);
+        for(const row of this.db.prepare("SELECT name,sql FROM archive.sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").iterate()){
+          const name=String(row.name);if(derived.has(name))continue;
+          if(this.db.prepare("SELECT sql FROM main.sqlite_master WHERE type='table' AND name=?").get(name)?.sql!==row.sql)return false;
+          const columns=this.db.prepare(`PRAGMA archive.table_info(${quote(name)})`).all(),current=this.db.prepare(`PRAGMA main.table_info(${quote(name)})`).all();
+          if(JSON.stringify(columns)!==JSON.stringify(current)||!columns.some(column=>Number(column.pk)>0))return false;
+          const matches=columns.map(column=>{const key=quote(String(column.name));return `typeof(m.${key})=typeof(a.${key}) AND m.${key} IS a.${key} COLLATE BINARY`;}).join(' AND ');
+          if(this.db.prepare(`SELECT 1 FROM archive.${quote(name)} a WHERE NOT EXISTS(SELECT 1 FROM main.${quote(name)} m WHERE ${matches}) LIMIT 1`).get())return false;
+        }
+        return true;
+      }finally{this.db.exec('ROLLBACK');}
+    }));
+  }
   async importArchiveAsync(output:string,id:string){return withReadableArchive(this.archivePath(output,id),path=>this.importArchivePath(path,id));}
   private withArchive<T>(output:string,id:string,run:(hasUsage:boolean)=>T):T{return this.withArchivePath(this.archivePath(output,id),run);}
   private withArchivePath<T>(path:string,run:(hasUsage:boolean)=>T):T{

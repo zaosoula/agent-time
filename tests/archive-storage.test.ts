@@ -30,3 +30,30 @@ test('compression stops at its temporary-space budget and keeps the original',as
 test('archive identifiers remain usable after automatic compression changes the extension',async()=>{
  const root=mkdtempSync(join(tmpdir(),'at-archive-id-')),store=new EventStore(join(root,'events.sqlite'));try{const archive=await store.exportArchive(root),id=basename(archive.path);await compressArchive(archive.path);assert.equal((await store.previewArchiveAsync(root,id)).archiveEvents,0);assert.equal((await store.importArchiveAsync(root,id)).addedEvents,0);store.close();const pending=await prepareRestoreAsync(root,id);assert.ok(existsSync(join(root,'exports',pending.candidate)));cancelPendingReplacement(root);assert.equal(existsSync(archive.path+'.gz'),true);assert.equal(store.deleteArchive(root,id),true);}finally{try{store.close();}catch{}rmSync(root,{recursive:true,force:true});}
 });
+test('automatic cleanup preserves rollback order and every stored review column',async()=>{
+ for(const change of ['event-order','review-at','review-mode','review-project','note-created','decision-at']){
+  const root=mkdtempSync(join(tmpdir(),'at-care-detail-')),store=new EventStore(join(root,'events.sqlite'));
+  try{
+   for(const [id,at] of [['a',1],['b',2]] as const)store.put({eventId:id,source:'capture',kind:'capture_start',observedAt:at,monotonicAt:at,collectorEpoch:'e'});
+   store.database.exec("INSERT INTO review_actions VALUES('review',1,'assigned','/project','{}','{}',NULL); INSERT INTO manual_notes VALUES('note',1,2,'/project','text',1); INSERT INTO human_decisions VALUES('a','b','assigned','/project',1)");
+   const first=await store.exportArchive(root);recordArchive(root,basename(first.path),'rollback');
+   const sql={
+    'event-order':"UPDATE events SET rowid=-1 WHERE event_id='a'; UPDATE events SET rowid=1 WHERE event_id='b'; UPDATE events SET rowid=2 WHERE event_id='a'",
+    'review-at':"UPDATE review_actions SET at=2",'review-mode':"UPDATE review_actions SET mode='unassigned'",'review-project':"UPDATE review_actions SET project_path='/other'",'note-created':"UPDATE manual_notes SET created_at=2",'decision-at':"UPDATE human_decisions SET decided_at=2",
+   }[change]!;store.database.exec(sql);
+   const second=await store.exportArchive(root);recordArchive(root,basename(second.path),'rollback');
+   const result=await maintainArchives(root,{maxAutomatic:1,maxAutomaticBytes:1});assert.equal(result.removed.length,0,change);assert.ok(existsSync(first.path+'.gz'),change);
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+ }
+});
+test('automatic cleanup removes exact redundant rollback rows and protects unknown unique tables',async()=>{
+ for(const unique of [false,true]){
+  const root=mkdtempSync(join(tmpdir(),'at-care-proof-')),store=new EventStore(join(root,'events.sqlite'));try{
+   store.database.exec("CREATE TABLE custom_history(id TEXT PRIMARY KEY,value TEXT); INSERT INTO custom_history VALUES('a','original')");
+   const first=await store.exportArchive(root);recordArchive(root,basename(first.path),'rollback');
+   if(unique)store.database.exec("UPDATE custom_history SET value='changed'");
+   const second=await store.exportArchive(root);recordArchive(root,basename(second.path),'rollback');
+   const result=await maintainArchives(root,{maxAutomatic:1,maxAutomaticBytes:1});assert.equal(result.removed.length,unique?0:1);assert.equal(existsSync(first.path+'.gz'),unique);
+  }finally{store.close();rmSync(root,{recursive:true,force:true});}
+ }
+});

@@ -41,7 +41,18 @@ export function boundedSpoolListing(directory:string,maxEntries=10000):{files:st
  try{let entry;while((entry=dir.readSync())){if(++visited>maxEntries){truncated=true;break;}files.push(entry.name);}}finally{dir.closeSync();}return {files,truncated};
 }
 function markOverflow(directory:string){try{writeFileSync(join(directory,overflowName),'Hook queue limit reached; some observations were not captured.\n',{flag:'wx',mode:0o600});}catch{/* A fixed marker already exists. */}}
-export function acknowledgeSpoolOverflow(directory:string){try{unlinkSync(join(directory,overflowName));}catch{/* No marker. */}}
+const claimedOverflowName='.overflow-pending';
+export const spoolOverflowReason='Hook queue overflow: the size or pending event limit was reached; missing observations are unverified';
+/** Only the collector claims markers. Producers can create a new marker as soon
+ * as the old one moves; a crash leaves the fixed claim for the next poll. */
+export function claimSpoolOverflow(directory:string):boolean{
+ try{
+  const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink())return false;
+  if(existsSync(join(directory,claimedOverflowName)))return true;
+  renameSync(join(directory,overflowName),join(directory,claimedOverflowName));return true;
+ }catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
+}
+export function acknowledgeSpoolOverflow(directory:string){try{unlinkSync(join(directory,claimedOverflowName));}catch(error){if((error as NodeJS.ErrnoException).code!=='ENOENT')throw error;}}
 export function spoolHook(event: CaptureEvent, directory: string): boolean {
   try {
     mkdirSync(directory,{recursive:true,mode:0o700});
@@ -97,7 +108,7 @@ export function importSpool(directory: string, store: EventStore, accept:(event:
   const issues: Issue[]=[];mkdirSync(directory,{recursive:true,mode:0o700});
   const folder=lstatSync(directory);if(!folder.isDirectory()||folder.isSymbolicLink())throw new Error('Invalid hook spool directory');
   const bounded=boundedSpoolListing(directory);const listing=bounded.files;
-  if(existsSync(join(directory,overflowName)))issues.push({reason:'Hook queue overflow: the size or pending event limit was reached; missing observations are unverified',source:'hook'});
+  if(existsSync(join(directory,overflowName))||existsSync(join(directory,claimedOverflowName)))issues.push({reason:spoolOverflowReason,source:'hook'});
   if(bounded.truncated)issues.push({reason:'Hook queue listing reached its safety limit; queued events will drain in batches',source:'hook'});
   removeOrphanTemporaries(directory,listing,Date.now()/1000);
   // Bound each tick; a backlog drains over the following ticks.

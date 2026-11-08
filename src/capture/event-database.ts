@@ -1,3 +1,4 @@
+import {registerPayloadReader} from './payload-reader.ts';
 import {DatabaseSync,type StatementSync} from 'node:sqlite';
 import {decodeEventBlock,MAX_BLOCK_EVENTS,MAX_COMPRESSED_BYTES} from './packed-codec.ts';
 
@@ -36,7 +37,7 @@ export function openEventDatabase(path:string,options:{readOnly?:boolean}={}):Da
   }
   throw new Error('Missing packed event block');
  };
- db.function('at_event_payload',{deterministic:true},value=>{
+ const decode=(value:unknown):string=>{
   if(typeof value==='string'&&!/^[a-f0-9]{72}$/i.test(value))return value;
   const {key,slot}=locator(typeof value==='string'?Buffer.from(value,'hex'):value);let hit=cache.get(key);
   if(hit){cache.delete(key);cache.set(key,hit);}else{
@@ -45,8 +46,9 @@ export function openEventDatabase(path:string,options:{readOnly?:boolean}={}):Da
    if(bytes<=DECODE_CACHE_BYTES){cache.set(key,hit);cachedBytes+=bytes;}
   }
   if(slot>=hit.rows.length)throw new Error('Corrupt packed event slot');return hit.rows[slot]!;
- });
- const close=db.close.bind(db);db.close=()=>{cache.clear();schemaReads.clear();databaseList=undefined;close();};
+ };
+ db.function('at_event_payload',{deterministic:true},decode);registerPayloadReader(db,decode);
+ const close=db.close.bind(db);db.close=()=>{registerPayloadReader(db,undefined);cache.clear();schemaReads.clear();databaseList=undefined;close();};
  try{
   const version=Number(db.prepare('PRAGMA user_version').get()?.user_version);
   if(version>EVENT_FORMAT)throw new Error('This database needs a newer Agent Time reader');

@@ -61,13 +61,14 @@ export async function maintainArchives(root:string,options:{maxAutomatic?:number
  const maxCount=Math.max(1,options.maxAutomatic??2),maxBytes=options.maxAutomaticBytes??512*1024*1024;
  let store:import('./store.ts').EventStore|undefined;
  try{
-  const covered=options.covered??(async(id:string)=>{store??=new (await import('./store.ts')).EventStore(join(root,'events.sqlite'));const preview=await store.previewArchiveAsync(root,id);return Object.entries(preview).every(([key,value])=>key==='id'||key==='archiveEvents'||value===0);});
+  const covered=options.covered??(async(id:string)=>{store??=new (await import('./store.ts')).EventStore(join(root,'events.sqlite'));return store.archiveFullyCovered(root,id);});
   // The newest rollback remains even when it alone exceeds the target.
   for(const id of automatic.slice(1).reverse()){
    if(remaining<=maxCount&&total<=maxBytes)break;
-   let safe=false;try{safe=await covered(id);}catch{/* Unverified copies are protected. */}
+   const path=join(folder,id),before=regular(path);
+   let safe=false;try{safe=await covered(id)&&same(before,regular(path));}catch{/* Unverified or changed copies are protected. */}
    if(!safe){result.protected.push(id);continue;}
-   const path=join(folder,id),size=regular(path).size;rmSync(path);result.removed.push(id);result.savedBytes+=size;remaining--;total-=size;
+   const size=before.size;rmSync(path);result.removed.push(id);result.savedBytes+=size;remaining--;total-=size;
   }
  }finally{store?.close();}
  return result;

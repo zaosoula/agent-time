@@ -7,7 +7,7 @@ import { EventStore, MAX_DECISION_PAIRS, type ManualNote } from './store.ts';
 import { makeEvent, type Summary, type CaptureEvent } from './events.ts';
 import { defaultSettings, validateSettings, storedSettings, browserEnabled, type CaptureSettings } from './settings.ts';
 import { callOrca,orcaCliAvailable } from './orca.ts';
-import { importSpool,spoolStatus,acknowledgeSpoolOverflow } from './hooks.ts';
+import { importSpool,spoolStatus,acknowledgeSpoolOverflow,claimSpoolOverflow,spoolOverflowReason } from './hooks.ts';
 import {validAgentReport} from '../mcp/report.ts';
 import {creditTaskCounters,reportedWorkForDay} from './reported-work.ts';
 import {applyReportedResources,reportedResources,type ReportedResource} from './reported-resources.ts';
@@ -647,13 +647,14 @@ export class Collector {
   }
   weeklyReview(startDate:string){
     try{localDayBounds(startDate);}catch{throw new Error('Invalid week start');}
-    const summary=this.rangeSummary(startDate,7,15000),accepted=new Set<string>();
-    for(let offset=0;offset<7;offset++){
-      const date=addDays(startDate,offset);
-      const snapshot=this.dayReviewSnapshot(date);
+    const accepted=new Set<string>();
+    // Consume and review each day while its window is still cached. Retaining
+    // all seven days and then revisiting evicted windows doubled large reads.
+    return weeklyReview(date=>{
+      const day=this.daySummary(date,15000),snapshot=this.dayReviewSnapshot(date);
       if(snapshot.completedAt&&!snapshot.stale&&!snapshot.pendingGroups)accepted.add(date);
-    }
-    return weeklyReview(summary,startDate,accepted);
+      return day;
+    },startDate,accepted);
   }
   workOutcomes(date:string){localDayBounds(date);return localWorkOutcomes(this.windowSummary(date,15000),date);}
   manualNotes(date:string){return this.store.manualNotes(date);}
@@ -733,9 +734,10 @@ export class Collector {
         const error=await source.poll({reader:this.reader,runId:this.runId,valid,store:this.store,memory,terminals:()=>this.readTerminals(),coverage:reason=>this.noteCoverage(source.id,reason)});
         if(valid()&&error&&!pollingError){pollingError=error;failedPoller=source.id;}
       }
+      const claimed=[join(this.output,'spool'),...this.legacyHookSpools].filter(claimSpoolOverflow);
       const spoolIssues=this.drainHooks(),currentIssues=new Set(spoolIssues.map(issue=>issue.reason));
-      for(const issue of spoolIssues)if(!this.seenSpoolIssues.has(issue.reason))this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
-      this.seenSpoolIssues=currentIssues;for(const folder of [join(this.output,'spool'),...this.legacyHookSpools])acknowledgeSpoolOverflow(folder);
+      for(const issue of spoolIssues)if(!this.seenSpoolIssues.has(issue.reason)||issue.reason===spoolOverflowReason&&claimed.length>0)this.store.put(makeEvent('hook','coverage',{data:{reason:issue.reason}}));
+      this.seenSpoolIssues=currentIssues;for(const folder of claimed)acknowledgeSpoolOverflow(folder);
       this.lastPoll=Date.now()/1000;this.lastError=pollingError;this.failedPoller=failedPoller;
     }catch(error){this.lastError=String(error);this.failedPoller=null;this.noteCoverage('capture',this.lastError);}
     finally{this.endCoverageTick();}

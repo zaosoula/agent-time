@@ -10,11 +10,11 @@ A private consistent snapshot contained 1,284,388 events. Its verified copy reta
 | --- | ---: | ---: |
 | Database bytes | 1,061,752,832 | 435,736,576 |
 | Event payload bytes | 695,470,339 raw | 69,894,722 compressed |
-| Retained JavaScript heap after replay | 179,117,608 | 46,399,888 |
+| Retained JavaScript heap after replay | 179,117,608 | 46,495,824 |
 
 The copy completed in 170 seconds with `--max-old-space-size=128`; measured peak RSS was 330,000 KiB. The codec produced 628 blocks, including 97,796 shared tool-call records, 41,511 activity records and 2,413 worker records. A separate regression reads 120 MB of logical payload with a 64 MiB JavaScript heap.
 
-**Memory limit:** this proves lower retained JavaScript heap and bounded compaction, not lower total memory for every read workload. The full seven-day/weekly/MCP replay peaked at 951,648 KiB RSS versus 719,088 KiB for the previous reader. Native allocations and the requested result window remain material. This RSS regression must remain visible when assessing rollout; do not advertise universally lower application RAM.
+**Memory verification:** independent review blocked an initial 951,648 KiB replay RSS regression. Direct decoding avoids SQLite/V8 payload copies, and weekly review now consumes each day once instead of retaining seven days then replaying evicted windows. The same full fixed-clock hash/daily/weekly/MCP workload now peaks at 684,976 KiB versus 719,088 KiB for the previous reader (4.7% lower); final RSS is 491,470,848 versus 598,966,272 bytes (18% lower). Retained JavaScript heap is 74% lower. Native allocations and requested result windows remain material; this is a measured workload, not a universal memory guarantee.
 
 ## Default limits and recovery
 
@@ -36,6 +36,13 @@ Existing databases upgrade through a verified replacement on next launch, keepin
 - Archive care runs daily and under quota pressure; packing runs each minute. Cost: existing plain exports can wait a day for compression. New exports compress immediately.
 - Import, comparisons and logical checks stream rows; prepared decoder statements are reused. Metadata-only indexes avoid payload decoding during counts, coverage and runtime probes. Cost: additional stored metadata/index space and per-row calls.
 - Structural SQLite checking temporarily skips the virtual payload on its private synchronous connection, with a guaranteed reset. A separate bounded pass checks every payload and stored metadata. Cost: another streaming verification pass.
+- Weekly aggregation consumes and reviews one day at a time with the same interval/totals algorithm. Cost: no whole-week summary retained for reuse; requested export rows still take proportional memory.
+- Automatic rollback deletion uses its own conservative proof, including exact event row IDs/order and every column/schema of user tables. Only rebuildable observation signatures and day-review caches are excluded. Unknown tables without a verifiable primary key protect the archive. Cost: conservative retention can exceed the target and eventually pause capture.
+- Overflow markers are atomically claimed and survive failed writes/restarts; only a claim with saved coverage is acknowledged. Cost: a crash after commit can produce a duplicate gap notice.
 - The virtual column passes its 36-byte locator as hex to avoid per-callback SQLite ArrayBuffer allocations. On-disk references remain 36 bytes; both decoder argument forms are accepted.
 
 The UI host was unavailable during this run; compilation and API tests verify the storage controls, but a visual native screenshot is not claimed. Private databases and raw replay results are excluded from the repository.
+
+## Review and validation
+
+A fresh independent whole-branch review at `faf0ea3` blocked rollout for incomplete backup-deletion coverage, an overflow-acknowledgement race, and excessive replay RSS. The single fix pass reproduced each defect, fixed it, and passed all 402 JavaScript tests. Focused recovery cases verify reordered events, every previously omitted review field, unknown unique tables, exact redundant deletion, failed coverage writes and newly arriving overflow markers. Production build/typecheck and the locked native suite are release gates. No review minors were deferred.

@@ -1,3 +1,4 @@
+import {readStoredPayload} from './payload-reader.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import type {CaptureEvent} from './events.ts';
 
@@ -56,8 +57,8 @@ export function readWindowEvents(db:DatabaseSync,from:number,to:number,agentIdle
   // Filter/sort only metadata first. Decoding inside a timestamp-index scan or
   // SQLite sorter would defeat the bounded cache on interleaved event clocks.
   const rows=db.prepare('SELECT rowid FROM events WHERE observed_at>=? AND observed_at<? AND (observed_at>=? AND observed_at<? OR activity_sample=0) ORDER BY rowid');
-  const read=db.prepare('SELECT payload FROM events WHERE rowid=?');
-  for(const row of rows.iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo))events.push(parse(String(read.get(row.rowid!)!.payload)));
+  const read=db.prepare("SELECT CASE WHEN typeof(payload_data)='text' THEN payload_data ELSE hex(payload_data) END stored,typeof(payload_data)='blob' packed FROM events WHERE rowid=?");
+  for(const row of rows.iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo)){const value=read.get(row.rowid!)!;events.push(parse(value.packed?readStoredPayload(db,value.stored):String(value.stored)));}
  }else for(const row of db.prepare(windowQuery).iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo))events.push(parse(String(row.payload)));
  return {events,bounds};
 }

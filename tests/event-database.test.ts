@@ -52,3 +52,10 @@ test('decoder reuses native read statements after cache eviction and releases at
  const main=openEventDatabase(':memory:');try{for(let i=0;i<2;i++){main.prepare('ATTACH DATABASE ? AS archive').run(path);assert.equal(main.prepare('SELECT payload FROM archive.events').get()?.payload,raw);main.exec('DETACH DATABASE archive');}}finally{main.close();}
  }finally{db.close();rmSync(root,{recursive:true,force:true});}
 });
+test('window reads decode stored blocks directly without virtual-column callback copies',async()=>{
+ const {readStoredPayload}=await import('../src/capture/payload-reader.ts');const {EventStore}=await import('../src/capture/store.ts');const {packEventHistory}=await import('../src/capture/packed-maintenance.ts');const {readWindowEvents}=await import('../src/capture/summary-window.ts');
+ const store=new EventStore(':memory:');try{
+  const event={eventId:'direct',source:'macos',kind:'activity',observedAt:1,monotonicAt:1,collectorEpoch:'one',data:{idleSeconds:0,foregroundName:'Éditeur'}};store.put(event);packEventHistory(store.database,{now:1e8});
+  const stored=store.database.prepare('SELECT hex(payload_data) value FROM events').get()!;assert.equal(readStoredPayload(store.database,stored.value),JSON.stringify(event));assert.deepEqual(readWindowEvents(store.database,0,10,300).events,[event]);
+ }finally{store.close();}
+});
