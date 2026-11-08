@@ -1,69 +1,84 @@
 import {DatabaseSync} from 'node:sqlite';
 import {chmodSync,existsSync,lstatSync,mkdirSync,statSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
-import {summarize} from './correlate.ts';
-import {retainedObservationRows,staticOrcaScopeReason} from './observation-retention.ts';
-import type {CaptureEvent,Summary} from './events.ts';
+import {observationKey,observationSignature,staticOrcaScopeReason} from './observation-retention.ts';
+import {causalEvidenceDigest,emptyWorker,eventsDigest,otherTablesDigest,parsedRow,rowDigest,workerGroup} from './compact-verification.ts';
 
 export interface CompactCopyResult {source:string;output:string;beforeRows:number;afterRows:number;beforeBytes:number;afterBytes:number;timeAndOtherCoverageIdentical:true;hostScopeDaysPreserved:number;}
-export function compactCaptureCopy(sourceArg:string,targetArg:string,options:{idleThreshold?:number;agentIdleThreshold?:number}={}):CompactCopyResult {
-const source=resolve(sourceArg),target=resolve(targetArg);
-const targetExists=(()=>{try{lstatSync(target);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}})();
-if(source===target||!existsSync(source)||targetExists)throw new Error('Source must exist and output must be a new, different path');
-mkdirSync(dirname(target),{recursive:true,mode:0o700});
-// Dispatch sessions known only from dropped empty snapshots (no time, no host) are not compared.
-const comparable=(summary:Summary)=>JSON.stringify({...summary,coverage:summary.coverage.filter(issue=>issue.reason!==staticOrcaScopeReason),
- sessions:summary.sessions.filter(session=>session.seconds>0||session.observedSeconds>0||session.hostId||session.state!=='unknown')});
-const scopeDays=(events:CaptureEvent[])=>[...new Set(events.filter(event=>event.source==='orca'&&event.kind==='coverage'&&event.data?.reason===staticOrcaScopeReason).map(event=>new Date(event.observedAt*1000).toISOString().slice(0,10)))].sort();
-
-let copy;
-try{
- const original=new DatabaseSync(source,{readOnly:true});
- let sourceIds,sourceSummary,sourceScopeDays,sourceDecisions,sourceNotes,sourceReviewActions,sourceSplits,sourceDayReviews;
+const configure=(db:DatabaseSync)=>db.exec('PRAGMA cache_size=-8192; PRAGMA mmap_size=0; PRAGMA temp_store=FILE; PRAGMA temp.cache_size=-8192');
+export function compactCaptureCopy(sourceArg:string,targetArg:string,_options:{idleThreshold?:number;agentIdleThreshold?:number}={}):CompactCopyResult {
+ for(const threshold of [_options.idleThreshold??300,_options.agentIdleThreshold??300])if(!Number.isFinite(threshold)||threshold<=0)throw new Error('invalid idle threshold');
+ const source=resolve(sourceArg),target=resolve(targetArg);
+ const targetExists=(()=>{try{lstatSync(target);return true;}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}})();
+ if(source===target||!existsSync(source)||targetExists)throw new Error('Source must exist and output must be a new, different path');
+ mkdirSync(dirname(target),{recursive:true,mode:0o700});
+ let copy:DatabaseSync|undefined;
  try{
-  const hasTable=(name:string)=>Boolean(original.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?").get(name));
-  const sourceEvents=original.prepare('SELECT event_id,payload FROM events ORDER BY rowid').all();
-  sourceIds=sourceEvents.map(row=>String(row.event_id));
-  const parsed=sourceEvents.map(row=>JSON.parse(String(row.payload)));
-  sourceSummary=summarize(parsed,options);sourceScopeDays=scopeDays(parsed);
-  sourceDecisions=hasTable('human_decisions')?original.prepare('SELECT * FROM human_decisions ORDER BY start_event_id,end_event_id').all():null;
-  sourceNotes=hasTable('manual_notes')?original.prepare('SELECT * FROM manual_notes ORDER BY id').all():null;
-  sourceReviewActions=hasTable('review_actions')?original.prepare('SELECT * FROM review_actions ORDER BY rowid').all():null;
-  sourceSplits=hasTable('human_splits')?original.prepare('SELECT * FROM human_splits ORDER BY start_event_id,end_event_id').all():null;
-  sourceDayReviews=hasTable('day_reviews')?original.prepare('SELECT * FROM day_reviews ORDER BY date').all():null;
-  original.prepare('VACUUM INTO ?').run(target);
- }finally{original.close();}
- chmodSync(target,0o600);
- copy=new DatabaseSync(target);
- const rows=copy.prepare('SELECT rowid,payload FROM events ORDER BY rowid').all().map(r=>({rowid:Number(r.rowid),event:JSON.parse(String(r.payload))}));
- if(rows.length!==sourceIds.length||rows.some((row,index)=>row.event.eventId!==sourceIds[index]))throw new Error('Copy changed event insertion order; compacted copy was rejected');
- const before=summarize(rows.map(r=>r.event),options);
- if(comparable(before)!==comparable(sourceSummary)||JSON.stringify(scopeDays(rows.map(row=>row.event)))!==JSON.stringify(sourceScopeDays))throw new Error('Copy changed capture summary; compacted copy was rejected');
- const keep=retainedObservationRows(rows),remove=copy.prepare('DELETE FROM events WHERE rowid=?');
- copy.exec('BEGIN IMMEDIATE');
- try{
-  for(const row of rows)if(!keep.has(row.rowid))remove.run(row.rowid);
-  copy.exec('COMMIT');
- }catch(error){copy.exec('ROLLBACK');throw error;}
- const afterRows=copy.prepare('SELECT payload FROM events ORDER BY rowid').all().map(r=>JSON.parse(String(r.payload)));
- const after=summarize(afterRows,options);
- if(comparable(before)!==comparable(after)||JSON.stringify(scopeDays(afterRows))!==JSON.stringify(sourceScopeDays))throw new Error('Capture summary changed; compacted copy was rejected');
- if(copy.prepare('PRAGMA integrity_check').get()?.integrity_check!=='ok')throw new Error('Compacted copy failed SQLite integrity check');
- copy.exec('VACUUM');
- const finalRows=copy.prepare('SELECT event_id,payload FROM events ORDER BY rowid').all();
- const finalIds=finalRows.map(row=>String(row.event_id));
- const retainedIds=rows.filter(row=>keep.has(row.rowid)).map(row=>row.event.eventId);
- if(finalIds.length!==retainedIds.length||finalIds.some((id,index)=>id!==retainedIds[index]))throw new Error('Final vacuum changed event insertion order; compacted copy was rejected');
- const finalEvents=finalRows.map(row=>JSON.parse(String(row.payload)));
- if(comparable(summarize(finalEvents,options))!==comparable(before)||JSON.stringify(scopeDays(finalEvents))!==JSON.stringify(sourceScopeDays))throw new Error('Final vacuum changed capture summary; compacted copy was rejected');
- if(sourceDecisions&&JSON.stringify(copy.prepare('SELECT * FROM human_decisions ORDER BY start_event_id,end_event_id').all())!==JSON.stringify(sourceDecisions)||sourceNotes&&JSON.stringify(copy.prepare('SELECT * FROM manual_notes ORDER BY id').all())!==JSON.stringify(sourceNotes)||sourceReviewActions&&JSON.stringify(copy.prepare('SELECT * FROM review_actions ORDER BY rowid').all())!==JSON.stringify(sourceReviewActions)||sourceSplits&&JSON.stringify(copy.prepare('SELECT * FROM human_splits ORDER BY start_event_id,end_event_id').all())!==JSON.stringify(sourceSplits)||sourceDayReviews&&JSON.stringify(copy.prepare('SELECT * FROM day_reviews ORDER BY date').all())!==JSON.stringify(sourceDayReviews))throw new Error('Review data changed; compacted copy was rejected');
- if(copy.prepare('PRAGMA integrity_check').get()?.integrity_check!=='ok')throw new Error('Final compacted copy failed SQLite integrity check');
- const result={source,output:target,beforeRows:rows.length,afterRows:afterRows.length,beforeBytes:statSync(source).size,afterBytes:statSync(target).size,timeAndOtherCoverageIdentical:true as const,hostScopeDaysPreserved:sourceScopeDays.length};
- copy.close();copy=undefined;
- return result;
-}catch(error){
- copy?.close();
- for(const suffix of ['','-wal','-shm'])if(existsSync(target+suffix))unlinkSync(target+suffix);
- throw error;
-}
+  const original=new DatabaseSync(source,{readOnly:true});
+  let sourceEvents:string,sourceTables:string;
+  try{
+   configure(original);
+   sourceEvents=eventsDigest(original);sourceTables=otherTablesDigest(original);
+   original.prepare('VACUUM INTO ?').run(target);
+  }finally{original.close();}
+  chmodSync(target,0o600);
+  copy=new DatabaseSync(target);configure(copy);
+  if(eventsDigest(copy)!==sourceEvents||otherTablesDigest(copy)!==sourceTables)throw new Error('Copy changed stored data; compacted copy was rejected');
+  // Disk-backed retention state replaces arrays/sets proportional to payloads
+  // and event count. Meaningful workers stay verbatim: their timestamps can
+  // affect bounded hook binding even when their state appears unchanged.
+  copy.exec(`CREATE TEMP TABLE compact_remove (rowid INTEGER PRIMARY KEY);
+   CREATE TEMP TABLE compact_latest (identity TEXT PRIMARY KEY,rowid INTEGER,signature TEXT,middle INTEGER);
+   CREATE TEMP TABLE compact_empty (rowid INTEGER PRIMARY KEY,identity TEXT);
+   CREATE TEMP TABLE compact_blocked (identity TEXT PRIMARY KEY);
+   CREATE TEMP TABLE compact_scope_days (day TEXT PRIMARY KEY)`);
+  const latest=copy.prepare('SELECT rowid,signature,middle FROM compact_latest WHERE identity=?');
+  const remember=copy.prepare('INSERT OR REPLACE INTO compact_latest VALUES(?,?,?,?)');
+  const remove=copy.prepare('INSERT OR IGNORE INTO compact_remove VALUES(?)');
+  const empty=copy.prepare('INSERT INTO compact_empty VALUES(?,?)'),block=copy.prepare('INSERT OR IGNORE INTO compact_blocked VALUES(?)');
+  const scope=copy.prepare('INSERT OR IGNORE INTO compact_scope_days VALUES(?)');
+  let beforeRows=0;
+  copy.exec('BEGIN');
+  try{
+   for(const row of copy.prepare('SELECT rowid,event_id,observed_at,payload FROM events ORDER BY rowid').iterate()){
+    const event=parsedRow(row),rowid=Number(row.rowid);beforeRows++;
+    if(event.kind==='worker'){
+     if(emptyWorker(event))empty.run(rowid,workerGroup(event));
+     else block.run(workerGroup(event));
+    }else if(event.source==='hook'&&event.dispatchId)block.run(workerGroup(event));
+    const staticScope=event.source==='orca'&&event.kind==='coverage'&&event.data?.reason===staticOrcaScopeReason;
+    if(staticScope)scope.run(new Date(event.observedAt*1000).toISOString().slice(0,10));
+    if(event.source!=='orca'||event.kind!=='terminal'&&!staticScope)continue;
+    const key=observationKey(event);if(!key)continue;
+    const signature=observationSignature(event),previous=latest.get(key),same=previous?.signature===signature;
+    if(same&&previous.middle)remove.run(previous.rowid!);
+    remember.run(key,rowid,signature,same?1:0);
+   }
+   copy.exec('INSERT OR IGNORE INTO compact_remove SELECT rowid FROM compact_empty e WHERE NOT EXISTS (SELECT 1 FROM compact_blocked b WHERE b.identity=e.identity); COMMIT');
+  }catch(error){copy.exec('ROLLBACK');throw error;}
+  const blocked=copy.prepare('SELECT 1 FROM compact_blocked WHERE identity=?');
+  const isEmptyGroup=(key:string)=>!blocked.get(key);
+  const beforeEvidence=causalEvidenceDigest(copy,isEmptyGroup,true);
+  const retainedEvents=eventsDigest(copy,'WHERE rowid NOT IN (SELECT rowid FROM compact_remove)');
+  const scopeDays=()=>rowDigest(copy!.prepare(`SELECT DISTINCT strftime('%Y-%m-%d',observed_at,'unixepoch') day FROM events
+   WHERE json_extract(payload,'$.source')='orca' AND json_extract(payload,'$.kind')='coverage' AND json_extract(payload,'$.data.reason')=? ORDER BY day`).iterate(staticOrcaScopeReason));
+  const beforeDays=scopeDays();
+  const hostScopeDaysPreserved=Number(copy.prepare('SELECT count(*) n FROM compact_scope_days').get()!.n);
+  copy.exec('BEGIN IMMEDIATE');
+  try{copy.exec('DELETE FROM events WHERE rowid IN (SELECT rowid FROM compact_remove); COMMIT');}
+  catch(error){copy.exec('ROLLBACK');throw error;}
+  copy.exec('VACUUM');
+  if(eventsDigest(copy)!==retainedEvents||otherTablesDigest(copy)!==sourceTables)throw new Error('Compaction changed retained data or insertion order; compacted copy was rejected');
+  if(causalEvidenceDigest(copy,isEmptyGroup)!==beforeEvidence)throw new Error('Compaction changed causal evidence; compacted copy was rejected');
+  if(scopeDays()!==beforeDays)throw new Error('Compaction changed coverage days; compacted copy was rejected');
+  if(copy.prepare('PRAGMA integrity_check').get()?.integrity_check!=='ok')throw new Error('Compacted copy failed SQLite integrity check');
+  const afterRows=Number(copy.prepare('SELECT count(*) n FROM events').get()!.n);
+  const result={source,output:target,beforeRows,afterRows,beforeBytes:statSync(source).size,afterBytes:statSync(target).size,timeAndOtherCoverageIdentical:true as const,hostScopeDaysPreserved};
+  copy.close();copy=undefined;
+  return result;
+ }catch(error){
+  copy?.close();
+  for(const suffix of ['','-wal','-shm'])if(existsSync(target+suffix))unlinkSync(target+suffix);
+  throw error;
+ }
 }

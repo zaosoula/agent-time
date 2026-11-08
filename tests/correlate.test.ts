@@ -1,6 +1,14 @@
 import { test } from 'node:test';import assert from 'node:assert/strict';
 import { unionSeconds, summarize } from '../src/capture/correlate.ts';
 import type { CaptureEvent } from '../src/capture/events.ts';
+test('simultaneous cross-epoch evidence has a transitive order independent of insertion layout',()=>{
+ const rows:CaptureEvent[]=[
+  {eventId:'z',source:'capture',kind:'coverage',observedAt:100,monotonicAt:1,collectorEpoch:'a'},
+  {eventId:'a',source:'capture',kind:'coverage',observedAt:100,monotonicAt:2,collectorEpoch:'a'},
+  {eventId:'m',source:'capture',kind:'coverage',observedAt:100,monotonicAt:0,collectorEpoch:'b'},
+ ];
+ for(const input of [rows,[rows[2]!,rows[0]!,rows[1]!]])assert.deepEqual(summarize(input).coverage.map(issue=>issue.eventId),['z','a','m']);
+});
 const e=(id:string,time:number,kind:string,fields:Partial<CaptureEvent>={}):CaptureEvent=>({eventId:id,source:'hook',kind,observedAt:time,monotonicAt:time,collectorEpoch:'a',...fields});
 const worker=(id:string,time:number,dispatchId='d1',runId='r1',state='working',outcome='in_progress')=>e(id,time,'worker',{source:'orca',hostId:'local',terminalHandle:'t1',workspaceId:'ws',dispatchId,runId,taskId:'task-'+dispatchId,data:{state,outcome,fresh:true}});
 test('capture caveats retain the observation time for daily review',()=>{

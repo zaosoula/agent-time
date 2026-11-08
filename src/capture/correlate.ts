@@ -44,6 +44,13 @@ export function groupIntervals(intervals:Array<[number,number]>,maxGap=60,blocke
  return grouped;
 }
 const settled=(e:CaptureEvent)=>['succeeded','failed','completed','cancelled','abandoned'].includes(String(e.data?.outcome));
+/** A total order for equal normalized wall times. Comparing monotonic time only
+ * within an epoch and event IDs across epochs formed comparator cycles, making
+ * the result depend on unrelated rows removed by compaction. Shared with its
+ * lightweight global-order verifier. */
+export function compareCausalPosition(aEpoch:string,aMonotonic:number,bEpoch:string,bMonotonic:number):number{
+ return aEpoch.localeCompare(bEpoch)||aMonotonic-bMonotonic;
+}
 export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;agentIdleThreshold?:number;maxGap?:number;alreadyUnique?:boolean}={}):Summary {
  const maxGap=options.maxGap??15,idle=options.idleThreshold??300,agentIdle=options.agentIdleThreshold??300;
  if(!Number.isFinite(idle)||idle<=0||!Number.isFinite(agentIdle)||agentIdle<=0)throw new Error('invalid idle threshold');
@@ -63,7 +70,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  for(const e of unique){const group=epochGroups.get(e.collectorEpoch)||[];group.push(e);epochGroups.set(e.collectorEpoch,group);}
  const sortTime=new Map<string,number>();
  for(const group of epochGroups.values()){let time=-Infinity;for(const e of group.sort((a,b)=>a.monotonicAt-b.monotonicAt||a.eventId.localeCompare(b.eventId))){time=Math.max(time,e.observedAt);sortTime.set(e.eventId,time);}}
- const events=unique.sort((a,b)=>sortTime.get(a.eventId)!-sortTime.get(b.eventId)!||(a.collectorEpoch===b.collectorEpoch?a.monotonicAt-b.monotonicAt:0)||a.eventId.localeCompare(b.eventId));
+ const events=unique.sort((a,b)=>sortTime.get(a.eventId)!-sortTime.get(b.eventId)!||compareCausalPosition(a.collectorEpoch,a.monotonicAt,b.collectorEpoch,b.monotonicAt)||a.eventId.localeCompare(b.eventId));
  const intervals:Interval[]=[],unresolved:Issue[]=[],coverage:Issue[]=[],sessions=new Map<string,Session>();
  const globalFences:number[]=[],sessionFences=new Map<string,number[]>(),standaloneIntervals=new Map<string,Interval[]>();
  const workerPrevious=new Map<string,CaptureEvent>(),childLifecycle=new Map<string,CaptureEvent>();
