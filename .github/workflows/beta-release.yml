@@ -17,13 +17,13 @@ on:
         default: false
         type: boolean
       runner:
-        description: macOS runner image (macos-15 is usually available at once; macos-26 as a fallback)
+        description: macOS runner image (macos-15 fails to staple the app ticket)
         required: true
-        default: macos-15
+        default: macos-26
         type: choice
         options:
-          - macos-15
           - macos-26
+          - macos-15
 
 permissions:
   contents: read
