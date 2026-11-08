@@ -1,10 +1,14 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.32` candidate — 2026-11-08
+## `0.2.0-beta.32` published — 2026-11-08
 
 Repairs beta.31's native launch crash: Icon Composer exported the main app PNG as 16-bit RGBA, but Tauri's default-window-icon decoder passed twice the expected pixel data to the runtime. The icon integration now renders the Apple output into 8-bit RGBA before storing `src-tauri/icons/icon.png`. A new native test exercises the exact `app_context()` used by startup and checks the decoded buffer has four bytes per pixel; it failed on beta.31 (8,388,608 vs 4,194,304 bytes) and passes after normalization. The design and capture behavior are otherwise retained. See [updater notes](0.2.0-beta.32-notes.md).
 
-Local validation: 349 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and production dependency audit all pass (zero vulnerabilities). Independent repair review found no blocking issues. Publication and packaged native launch validation are pending.
+Local validation: 349 JavaScript tests, 27 Rust tests, production typecheck/build, release-version consistency, and production dependency audit all pass (zero vulnerabilities). Independent repair review found no blocking issues. [Release run 42483302778](https://github.com/zaosoula/agent-time/actions/runs/42483302778) repeated these checks, signed and notarized the macOS 26 build, and published exact source commit `f3940257df3be4722932eac30f313b44d5694465`.
+
+Independent public-download verification matched the staged manifest, updater signature, updater SHA-256 `3974bb5613288d31071520992a717219b4bf8d02e853d77bfa0b89619d7beb09`, and DMG SHA-256 `ce2f09d4a3307508c6934b197bb6c0ba7d5fe9f6a9762885a9e6dea9287c1e41`. The landing page offers beta.32. The downloaded DMG and extracted app pass stapled-ticket validation and Gatekeeper; the app passes strict nested signature verification and is arm64.
+
+The real in-app updater on the owner's Mac upgraded restored beta.30 to beta.32 and automatically restarted into a populated native interface (PID 78485). Installed version, strict nested signature, stapled ticket, and Gatekeeper were rechecked. The slate design, branching-clock sidebar mark, six metrics, timeline controls, existing projects, and Receiving activity status render correctly. Read-only history verification found 2,793,011 events, 657 more than the pre-update baseline, with the original oldest event ID and timestamp retained exactly. New macOS, Orca, and hook events were observed after restart; the latest event was 1.9 seconds old. Local evidence: `/private/tmp/agent-time-beta32-native-proof.json`, `/private/tmp/agent-time-beta32-native.png`, and `/private/tmp/agent-time-beta32-artifact/public-verification.json`. This verifies the owner's existing-install update path; a fresh quarantined install on a separate clean Mac was not repeated for this repair.
 
 ## `0.2.0-beta.31` withdrawn — 2026-11-08
 
