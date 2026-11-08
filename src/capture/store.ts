@@ -1,7 +1,7 @@
-import {archiveName,compressArchive,withReadableArchive,recordArchive} from './archive-storage.ts';
-import {openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
+import {archiveName,compressArchive,withReadableArchive,recordArchive,resolveArchivePath} from './archive-storage.ts';
+import {checkEventDatabase,openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
 import { DatabaseSync,backup } from 'node:sqlite';
-import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync } from 'node:fs';
+import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync,statfsSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
 import type {HumanDecision,HumanSplit} from './human-review.ts';
@@ -34,6 +34,7 @@ export class EventStore {
     if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='events'").get())createPackedEventSchema(this.db);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS day_review_cache (date TEXT PRIMARY KEY,signature TEXT NOT NULL,snapshot TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
     this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
+    this.db.exec("CREATE INDEX IF NOT EXISTS events_session_ends_at ON events(observed_at) WHERE json_extract(payload,'$.kind')='session_end'; CREATE INDEX IF NOT EXISTS events_resources_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'; CREATE INDEX IF NOT EXISTS events_coverage_at ON events(observed_at) WHERE json_extract(payload,'$.kind')='coverage'");
     // Per-provider hook lookups must not walk every hook row when a provider is quiet.
     this.db.exec("CREATE INDEX IF NOT EXISTS events_hook_provider ON events(json_extract(payload,'$.provider')) WHERE json_extract(payload,'$.source')='hook'");
     // Terminal observations are stored only on change; find the newest per handle directly.
@@ -83,7 +84,7 @@ export class EventStore {
     catch(error){if(this.db.isTransaction)this.db.exec('ROLLBACK');this.generation=before;throw error;}
   }
   count():number{return Number(this.db.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
-  quickCheck():boolean{try{return this.db.prepare('PRAGMA quick_check(1)').get()?.quick_check==='ok';}catch{return false;}}
+  quickCheck():boolean{try{return checkEventDatabase(this.db,false);}catch{return false;}}
   checkpointWal():void{
     const result=this.db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
     if(Number(result?.busy)!==0)throw new Error('Storage is busy; try again after capture settles');
@@ -124,6 +125,22 @@ export class EventStore {
   }
   /** Workspace identities seen in hook and Orca terminal evidence since `since`. */
   workspaceObservations(since:number):Array<{workspaceId:string|null;cwd:string|null}>{
+    if(isPackedEventDatabase(this.db)){
+      type Seen={workspaceId:unknown;cwd:unknown;handle:unknown;at:number;rowid:number};
+      const read=this.db.prepare("SELECT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd,json_extract(payload,'$.terminalHandle') handle FROM events WHERE rowid=?");
+      const textOrder=(a:unknown,b:unknown)=>typeof a==='number'?(typeof b==='number'?a-b:-1):typeof b==='number'?1:Buffer.compare(Buffer.from(String(a)),Buffer.from(String(b)));
+      const scan=(sql:string,terminal:boolean,args:number[]=[])=>{
+        const compare=(a:Seen,b:Seen)=>(terminal?textOrder(a.handle,b.handle):a.at-b.at)||a.rowid-b.rowid,unique=new Map<string,Seen>();
+        for(const row of this.db.prepare(sql).iterate(...args)){
+          const value=read.get(row.rowid!)!,item:Seen={workspaceId:value.workspaceId,cwd:value.cwd,handle:value.handle,at:Number(row.observed_at),rowid:Number(row.rowid)},key=JSON.stringify([item.workspaceId,item.cwd]),previous=unique.get(key);
+          if(!previous||compare(item,previous)<0)unique.set(key,item);
+        }
+        return [...unique.values()].sort(compare).map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null}));
+      };
+      const hooks=scan("SELECT rowid,observed_at FROM events INDEXED BY events_source_recent WHERE json_extract(payload,'$.source')='hook' AND observed_at>=? ORDER BY rowid",false,[since]);
+      const terminals=scan("SELECT rowid,observed_at FROM events INDEXED BY events_terminal_handle WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL ORDER BY rowid",true);
+      return [...hooks,...terminals];
+    }
     const hooks=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' AND observed_at>=?").all(since);
     const terminals=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL").all();
     return [...hooks,...terminals].map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null}));
@@ -136,14 +153,15 @@ export class EventStore {
   /** When each agent session ended, as `provider:sessionId` → time, from session-end hooks in [start,end). */
   sessionEnds(start:number,end:number):Map<string,number>{
     const ends=new Map<string,number>();
-    for(const row of this.db.prepare("SELECT json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') session,observed_at at FROM events INDEXED BY events_hooks WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at").iterate(start,end)){
+    for(const row of this.db.prepare("SELECT json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') session,observed_at at FROM events INDEXED BY events_session_ends_at WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at").iterate(start,end)){
       if(row.session)ends.set(`${row.provider||''}:${row.session}`,Number(row.at));
     }
     return ends;
   }
   agentReports(start:number,end:number):CaptureEvent[]{
-    return this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").all(start,end)
-      .map(row=>JSON.parse(String(row.payload)) as CaptureEvent);
+    const result:CaptureEvent[]=[];
+    for(const row of this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").iterate(start,end))result.push(JSON.parse(String(row.payload)) as CaptureEvent);
+    return result;
   }
   lastEventRowid():number{return Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) rowid FROM events').get()?.rowid||0);}
   eventsAfterRowid(rowid:number):Array<{rowid:number;event:CaptureEvent}>{
@@ -154,8 +172,11 @@ export class EventStore {
   settingsEvents():CaptureEvent[]{
     // Startup only needs setting boundaries; reading every captured observation
     // here made a large archive cost hundreds of MB before the first summary.
-    return this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')='capture' ORDER BY rowid").all()
-      .map(row=>JSON.parse(String(row.payload)) as CaptureEvent).filter(event=>event.kind==='capture_settings');
+    const settings:CaptureEvent[]=[];
+    for(const row of this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')='capture' ORDER BY rowid").iterate()){
+      const event=JSON.parse(String(row.payload)) as CaptureEvent;if(event.kind==='capture_settings')settings.push(event);
+    }
+    return settings;
   }
   humanDecisions():HumanDecision[]{
     return this.db.prepare('SELECT start_event_id, end_event_id, mode, project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode as HumanDecision['mode'],projectPath:row.project_path===null?null:String(row.project_path)}));
@@ -246,7 +267,7 @@ export class EventStore {
     const events=this.db.prepare('SELECT count(*) c,ifnull(max(rowid),0) m FROM events WHERE observed_at>=? AND observed_at<?').get(readFrom,readTo)!;
     const review=this.db.prepare('SELECT (SELECT count(*)||\':\'||ifnull(max(decided_at),0) FROM human_decisions) d,(SELECT count(*) FROM human_splits) s,(SELECT ifnull(max(at),0)||\':\'||ifnull(max(undone_at),0) FROM review_actions) a').get()!;
     const notes=this.manualNotes(date).map(note=>note.id).join(',');
-    const resources=this.db.prepare("SELECT count(*) c,ifnull(max(rowid),0) m FROM events INDEXED BY events_reports_at WHERE observed_at>0 AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'").get()!;
+    const resources=this.db.prepare("SELECT count(*) c,ifnull(max(rowid),0) m FROM events INDEXED BY events_resources_at WHERE observed_at>0 AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'").get()!;
     return [events.c,events.m,review.d,review.s,review.a,notes,resources.c,resources.m].join('|');
   }
   cachedDayReview(date:string,signature:string):unknown{
@@ -282,10 +303,12 @@ export class EventStore {
     const stamp=new Date().toISOString().replaceAll(/[:.]/g,'-');
     const path=join(folder,`agent-time-${stamp}-${randomUUID()}.sqlite`),temp=path+'.tmp';
     try{
+      const volume=statfsSync(output),available=Number(volume.bavail)*Number(volume.bsize),pages=Number(this.db.prepare('PRAGMA page_count').get()?.page_count||0),pageSize=Number(this.db.prepare('PRAGMA page_size').get()?.page_size||4096);
+      if(available<pages*pageSize*1.1+1024**3)throw new Error('Not enough free space to create a verified archive while keeping 1 GB free');
       await backup(this.db,temp);
       const check=openEventDatabase(temp,{readOnly:true});
       let events:number;
-      try{if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Export integrity check failed');events=Number(check.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
+      try{if(!checkEventDatabase(check))throw new Error('Export integrity check failed');events=Number(check.prepare('SELECT COUNT(*) count FROM events').get()?.count||0);}
       finally{check.close();}
       chmodSync(temp,0o600);renameSync(temp,path);
       recordArchive(output,path.split('/').at(-1)!,'manual');
@@ -305,18 +328,13 @@ export class EventStore {
     if(!archiveName.test(id))throw new Error('Invalid archive ID');
     const folder=join(output,'exports');
     if(!existsSync(folder)||lstatSync(folder).isSymbolicLink())throw new Error('Archive folder is unavailable');
-    const path=join(folder,id);
-    if(!existsSync(path))return false;
-    const info=lstatSync(path);
-    if(!info.isFile()||info.isSymbolicLink())throw new Error('Archive must be a regular file');
+    let path:string;try{path=resolveArchivePath(output,id);}catch(error){if((error as NodeJS.ErrnoException).code==='ENOENT')return false;throw error;}
     unlinkSync(path);
     return true;
   }
   async exportArchiveCompressed(output:string){const archive=await this.exportArchive(output);const compressed=await compressArchive(archive.path);return {path:compressed.path,bytes:compressed.bytes,events:archive.events};}
   private archivePath(output:string,id:string):string{
-    if(!archiveName.test(id))throw new Error('Invalid archive ID');
-    const folder=join(output,'exports'),path=join(folder,id);
-    if(lstatSync(folder).isSymbolicLink()||!lstatSync(path).isFile()||lstatSync(path).isSymbolicLink())throw new Error('Archive must be a regular file');return path;
+    return resolveArchivePath(output,id);
   }
   async previewArchiveAsync(output:string,id:string):Promise<ArchivePreview>{return withReadableArchive(this.archivePath(output,id),path=>this.withArchivePath(path,hasUsage=>this.previewAttachedArchive(id,hasUsage)));}
   async importArchiveAsync(output:string,id:string){return withReadableArchive(this.archivePath(output,id),path=>this.importArchivePath(path,id));}
@@ -324,7 +342,7 @@ export class EventStore {
   private withArchivePath<T>(path:string,run:(hasUsage:boolean)=>T):T{
     const check=openEventDatabase(path,{readOnly:true});
     try{
-      if(check.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Archive integrity check failed');
+      if(!checkEventDatabase(check))throw new Error('Archive integrity check failed');
       for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
         if(!check.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Archive schema is incomplete');
     }finally{check.close();}
@@ -399,11 +417,11 @@ export class EventStore {
     if(!Number.isInteger(limit)||limit<1||limit>100)throw new Error('Invalid recent event limit');
     // Hook lookups name the source literally so SQLite can use the partial provider index.
     const rows=provider&&source==='hook'
-      ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").all(provider,limit)
+      ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").iterate(provider,limit)
       : provider
-        ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").all(source,provider,limit)
-        : this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?").all(source,limit);
-    return rows.map(r=>JSON.parse(String(r.payload)) as CaptureEvent);
+        ? this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? AND json_extract(payload,'$.provider')=? ORDER BY rowid DESC LIMIT ?").iterate(source,provider,limit)
+        : this.db.prepare("SELECT payload FROM events WHERE json_extract(payload,'$.source')=? ORDER BY rowid DESC LIMIT ?").iterate(source,limit);
+    return Array.from(rows,r=>JSON.parse(String(r.payload)) as CaptureEvent);
   }
   close(): void { this.db.close(); }
 }

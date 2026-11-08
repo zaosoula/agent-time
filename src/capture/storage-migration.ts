@@ -1,6 +1,5 @@
-import {archiveName,withReadableArchive,recordArchive} from './archive-storage.ts';
-import {copyFileSync} from 'node:fs';
-import {openEventDatabase,verifyPackedBlocks} from './event-database.ts';
+import {archiveName,withReadableArchive,recordArchive,resolveArchivePath} from './archive-storage.ts';
+import {checkEventDatabase,openEventDatabase,verifyPackedBlocks,isPackedEventDatabase} from './event-database.ts';
 import {createHash,randomUUID} from 'node:crypto';
 import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
@@ -53,7 +52,7 @@ function verifyDatabase(path:string){
  regular(path);const db=openEventDatabase(path,{readOnly:true});
  try{
   verifyPackedBlocks(db);
-  if(db.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Storage integrity check failed');
+  if(!checkEventDatabase(db))throw new Error('Storage integrity check failed');
   for(const table of ['events','human_decisions','manual_notes','observation_signatures'])
    if(!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table))throw new Error('Storage schema is incomplete');
   for(const row of db.prepare('SELECT event_id,observed_at,payload FROM events ORDER BY rowid').iterate()){
@@ -67,7 +66,7 @@ function checkpoint(path:string){
  const db=openEventDatabase(path);
  try{
   const result=db.prepare('PRAGMA wal_checkpoint(TRUNCATE)').get();
-  if(Number(result?.busy)!==0||db.prepare('PRAGMA quick_check(1)').get()?.quick_check!=='ok')throw new Error('Storage is busy or damaged');
+  if(Number(result?.busy)!==0||!checkEventDatabase(db,false))throw new Error('Storage is busy or damaged');
  }finally{db.close();}
  if(existsSync(path+'-wal')&&statSync(path+'-wal').size>0)throw new Error('Storage still has an open write-ahead log');
 }
@@ -75,7 +74,7 @@ function beginCompaction(root:string,revision:()=>string){
  if(existsSync(marker(root)))throw new Error('A storage replacement is already pending');
  const source=join(root,'events.sqlite'),exports=folder(root);regular(source);
  checkpoint(source);
- const capacity=statfsSync(root),free=Number(capacity.bavail)*Number(capacity.bsize),required=statSync(source).size*3+1024*1024*1024;
+ const capacity=statfsSync(root),free=Number(capacity.bavail)*Number(capacity.bsize),required=(()=>{const db=openEventDatabase(source,{readOnly:true});try{const payload=isPackedEventDatabase(db)?Number(db.prepare('SELECT coalesce(sum(payload_bytes),0) n FROM events').get()!.n):0;return Math.max(payload,statSync(source).size)*3+1024**3;}finally{db.close();}})();
  if(free<required)throw new Error(`Preparing a recoverable copy needs about ${Math.ceil(required/1024/1024)} MB free`);
  const initial=revision(),sourceHash=hash(source),candidate=named(),backup=named();
  return {source,candidate,backup,target:join(exports,candidate),sourceHash,initial};
@@ -90,13 +89,13 @@ function finishCompaction(root:string,plan:ReturnType<typeof beginCompaction>,re
 export function prepareCompaction(root:string,options:{idleThreshold:number;agentIdleThreshold:number},revision:()=>string):PreparedCompaction{
  const plan=beginCompaction(root,revision);
  try{return finishCompaction(root,plan,compactCaptureCopy(plan.source,plan.target,options),revision());}
- catch(error){rmSync(plan.target,{force:true});throw error;}
+ catch(error){for(const suffix of ['','-journal','-wal','-shm'])rmSync(plan.target+suffix,{force:true});throw error;}
 }
 /** As prepareCompaction, but the copy and its verification run off this thread. */
 export async function prepareCompactionAsync(root:string,options:{idleThreshold:number;agentIdleThreshold:number},revision:()=>string,compact:(source:string,target:string,options:{idleThreshold:number;agentIdleThreshold:number})=>Promise<CompactCopyResult>=(source,target,options)=>runStorageTask({op:'compact',source,target,options})):Promise<PreparedCompaction>{
  const plan=beginCompaction(root,revision);
  try{return finishCompaction(root,plan,await compact(plan.source,plan.target,options),revision());}
- catch(error){rmSync(plan.target,{force:true});throw error;}
+ catch(error){for(const suffix of ['','-journal','-wal','-shm'])rmSync(plan.target+suffix,{force:true});throw error;}
 }
 export function prepareRestore(root:string,candidate:string):{candidate:string;backup:string;bytes:number}{
  if(existsSync(marker(root)))throw new Error('A storage replacement is already pending');
@@ -109,10 +108,11 @@ export function prepareRestore(root:string,candidate:string):{candidate:string;b
 }
 export async function prepareRestoreAsync(root:string,id:string):Promise<{candidate:string;backup:string;bytes:number}>{
  if(!archiveName.test(id))throw new Error('Invalid archive name');
- if(!id.endsWith('.gz'))return prepareRestore(root,id);
+ const archive=resolveArchivePath(root,id);
+ if(!archive.endsWith('.gz'))return prepareRestore(root,id);
  if(readPending(root))throw new Error('A storage replacement is already pending');
- return withReadableArchive(join(folder(root),id),plain=>{
-  const candidate=named(),path=join(folder(root),candidate);copyFileSync(plain,path);chmodSync(path,0o600);
+ return withReadableArchive(archive,plain=>{
+  const candidate=named(),path=join(folder(root),candidate);renameSync(plain,path);chmodSync(path,0o600);
   try{const result=prepareRestore(root,candidate),pending=readPending(root)!;rmSync(marker(root));writePending(root,{...pending,ownedCandidate:true});return result;}catch(error){rmSync(path,{force:true});throw error;}
  });
 }

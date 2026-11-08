@@ -1,4 +1,5 @@
-import {openEventDatabase} from './event-database.ts';
+import {collectUnusedPackedBlocks} from './packed-maintenance.ts';
+import {openEventDatabase,checkEventDatabase} from './event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {chmodSync,existsSync,lstatSync,mkdirSync,statSync,unlinkSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
@@ -68,11 +69,11 @@ export function compactCaptureCopy(sourceArg:string,targetArg:string,_options:{i
   copy.exec('BEGIN IMMEDIATE');
   try{copy.exec('DELETE FROM events WHERE rowid IN (SELECT rowid FROM compact_remove); COMMIT');}
   catch(error){copy.exec('ROLLBACK');throw error;}
-  copy.exec('VACUUM');
+  collectUnusedPackedBlocks(copy);copy.exec('VACUUM');
   if(eventsDigest(copy)!==retainedEvents||otherTablesDigest(copy)!==sourceTables)throw new Error('Compaction changed retained data or insertion order; compacted copy was rejected');
   if(causalEvidenceDigest(copy,isEmptyGroup)!==beforeEvidence)throw new Error('Compaction changed causal evidence; compacted copy was rejected');
   if(scopeDays()!==beforeDays)throw new Error('Compaction changed coverage days; compacted copy was rejected');
-  if(copy.prepare('PRAGMA integrity_check').get()?.integrity_check!=='ok')throw new Error('Compacted copy failed SQLite integrity check');
+  if(!checkEventDatabase(copy))throw new Error('Compacted copy failed SQLite integrity check');
   const afterRows=Number(copy.prepare('SELECT count(*) n FROM events').get()!.n);
   const result={source,output:target,beforeRows,afterRows,beforeBytes:statSync(source).size,afterBytes:statSync(target).size,timeAndOtherCoverageIdentical:true as const,hostScopeDaysPreserved};
   copy.close();copy=undefined;

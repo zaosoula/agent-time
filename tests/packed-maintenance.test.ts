@@ -24,3 +24,6 @@ test('hot history stays raw until byte budget or age is reached; pass is bounded
 test('ambiguous identities across the database never become a shared tool call',()=>{
  const db=openEventDatabase(':memory:');try{createPackedEventSchema(db);for(let i=0;i<3;i++)insertEventRow(db,String(i),i,event(String(i),i,i===0?'tool_start':'tool_end','same'));const before=eventsDigest(db);assert.equal(packEventHistory(db,{now:1e8}).toolCalls,0);assert.equal(eventsDigest(db),before);}finally{db.close();}
 });
+test('physical blocks keep insertion locality when event clocks are interleaved',()=>{
+ const db=openEventDatabase(':memory:');try{createPackedEventSchema(db);for(let i=0;i<200;i++)insertEventRow(db,String(i),(i*13)%200,event(String(i),(i*13)%200,'activity'));packEventHistory(db,{now:1e8,maxRows:16});assert.deepEqual(db.prepare("SELECT rowid FROM events WHERE typeof(payload_data)='blob' ORDER BY rowid").all().map(row=>row.rowid),Array.from({length:16},(_,i)=>i+1));}finally{db.close();}
+});

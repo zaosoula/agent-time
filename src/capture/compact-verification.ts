@@ -29,7 +29,7 @@ export function rowDigest(rows:Iterable<Record<string,unknown>>):string{
 export const eventsDigest=(db:DatabaseSync,where='')=>rowDigest(db.prepare(`SELECT event_id,observed_at,payload FROM events ${where} ORDER BY rowid`).iterate());
 export function otherTablesDigest(db:DatabaseSync):string{
  const digest=createHash('sha256');
- for(const table of db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name<>'events' AND name NOT GLOB 'at_*' ORDER BY name").iterate()){
+ for(const table of db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' AND name<>'events' AND name NOT IN ('at_event_blocks','at_tool_keys','at_pack_state') ORDER BY name").iterate()){
   const name=String(table.name).replaceAll('"','""');
   digest.update(JSON.stringify(table)+'\n');
   digest.update(rowDigest(db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).iterate()));

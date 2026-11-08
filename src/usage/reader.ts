@@ -1,4 +1,4 @@
-import {openEventDatabase} from '../capture/event-database.ts';
+import {openEventDatabase,isPackedEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';import {homedir} from 'node:os';import {join} from 'node:path';
 import {readdir,stat,realpath} from 'node:fs/promises';import {createReadStream} from 'node:fs';
 import {parseUsage,tokenTotal,type ParserState,type UsageRecord,type Counts} from './parser.ts';
@@ -111,7 +111,7 @@ export class UsageReader{
  private capturedSessions(){
   // Hook rows are only appended, so each call reads just the rows added since the last one.
   let changed=false;
-  const rows=this.db.prepare("SELECT rowid,json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') sessionId,json_extract(payload,'$.agentId') agentId,json_extract(payload,'$.kind') kind,observed_at first FROM events WHERE rowid>? AND json_extract(payload,'$.source')='hook' ORDER BY rowid").all(this.capturedRowid) as Array<{rowid:number;provider:unknown;sessionId:unknown;agentId:unknown;kind:unknown;first:number}>;
+  const rows=this.db.prepare(`SELECT rowid,json_extract(payload,'$.provider') provider,json_extract(payload,'$.sessionId') sessionId,json_extract(payload,'$.agentId') agentId,json_extract(payload,'$.kind') kind,observed_at first FROM events WHERE rowid>? AND ${isPackedEventDatabase(this.db)?"source='hook'":"json_extract(payload,'$.source')='hook'"} ORDER BY rowid`).iterate(this.capturedRowid);
   const earliest=(map:Map<string,number>,key:string,first:number)=>{const previous=map.get(key);if(previous===undefined||first<previous){map.set(key,first);changed=true;}};
   for(const row of rows){
    this.capturedRowid=Math.max(this.capturedRowid,Number(row.rowid));

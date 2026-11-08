@@ -1,4 +1,4 @@
-import {openEventDatabase} from './event-database.ts';
+import {openEventDatabase,isPackedEventDatabase} from './event-database.ts';
 import {existsSync,readFileSync,writeFileSync,mkdirSync,readdirSync,lstatSync,copyFileSync,renameSync,chmodSync,accessSync,constants,rmSync} from 'node:fs';
 import {homedir} from 'node:os';import {join,dirname,resolve,basename} from 'node:path';import {fileURLToPath} from 'node:url';import {createHash,randomUUID} from 'node:crypto';import {execFileSync} from 'node:child_process';
 import {DatabaseSync} from 'node:sqlite';
@@ -173,10 +173,16 @@ export class HookInstallation{
    const wanted=new Set(discovered.map(target=>`${target.id}/${runtimeVersion}`));
    // The observed-at hook index gives newest delivery first. Stop once every
    // discovered runtime is found, and cap work for dormant installations.
+   if(isPackedEventDatabase(db)){
+    const candidates=db.prepare("SELECT rowid,observed_at at FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' ORDER BY observed_at DESC LIMIT 20000").all().sort((a,b)=>Number(a.rowid)-Number(b.rowid));
+    const read=db.prepare("SELECT json_extract(payload,'$.runtimeId') runtime FROM events WHERE rowid=?");
+    for(const row of candidates){const runtime=String(read.get(row.rowid!)?.runtime||'');if(wanted.has(runtime))lastEvents.set(runtime,Math.max(lastEvents.get(runtime)??-Infinity,Number(row.at)));}
+   }else{
    const recent=db.prepare("SELECT json_extract(payload,'$.runtimeId') runtime,observed_at at FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' ORDER BY observed_at DESC LIMIT 20000");
    for(const row of recent.iterate()){
     const runtime=String(row.runtime||'');if(!wanted.has(runtime))continue;
     lastEvents.set(runtime,Number(row.at));wanted.delete(runtime);if(!wanted.size)break;
+   }
    }
   }finally{db.close();}}catch{}
   const ready=this.ready(),targets=discovered.map(t=>{

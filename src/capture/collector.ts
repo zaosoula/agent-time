@@ -1,3 +1,4 @@
+import {cleanupArchiveStaging} from './archive-storage.ts';
 import {storagePolicyDecision,quickStorageUsage,estimatedBytes} from './storage-policy.ts';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync, readdirSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
@@ -100,6 +101,7 @@ export class Collector {
   private seenSpoolIssues=new Set<string>();
   private storageTask:Promise<unknown>|undefined;
   private careTimer:ReturnType<typeof setTimeout>|undefined;
+  private starting=false;private startEpoch=0;private checkingStorage=false;
   private nextStorageCheck=0;private nextArchiveCare=0;
   private careState:{at:number|null;error:string|null}={at:null,error:null};
   private scheduleStorageCare(delay=60000){clearTimeout(this.careTimer);if(this.running)this.careTimer=setTimeout(()=>{void this.performStorageCare().finally(()=>this.scheduleStorageCare());},delay).unref();}
@@ -159,12 +161,13 @@ export class Collector {
   /** Report a problem met before the collector was created, such as a failed storage replacement. */
   noteStartupIssue(issue:string){this.startupIssues.push(issue);}
   private removeStaleExportTemporaries(){
+    try{cleanupArchiveStaging(this.output);}catch(error){this.startupIssues.push(`Archive staging cleanup could not finish: ${String(error)}`);}
     // An interrupted export leaves a .tmp copy of the whole database behind.
     const folder=join(this.output,'exports');
     try{
       if(!existsSync(folder)||lstatSync(folder).isSymbolicLink())return;
       for(const name of readdirSync(folder)){
-        if(!/^agent-time-.*\.sqlite\.tmp$/.test(name))continue;
+        if(!/^agent-time-.*\.sqlite(?:\.gz\.[a-f0-9-]+)?\.tmp$/.test(name))continue;
         const path=join(folder,name),info=lstatSync(path);
         if(info.isFile()&&Date.now()-info.mtimeMs>exportTemporaryAgeMs)unlinkSync(path);
       }
@@ -229,7 +232,7 @@ export class Collector {
   }
   exportArchive(){return this.exclusiveStorageTask(()=>runStorageTask<{path:string;bytes:number;events:number}>({op:'export',database:join(this.output,'events.sqlite'),output:this.output}));}
   listArchives(){return this.store.listArchives(this.output);}
-  deleteArchive(id:string){this.requireOwner();if(pendingReplacement(this.output)?.candidate===id)throw new Error('Cancel the pending replacement before deleting its archive');return this.store.deleteArchive(this.output,id);}
+  deleteArchive(id:string){this.requireOwner();if(this.storageTask)throw new Error('Wait for the storage operation to finish before deleting an archive');if(pendingReplacement(this.output)?.candidate===id)throw new Error('Cancel the pending replacement before deleting its archive');return this.store.deleteArchive(this.output,id);}
   previewArchive(id:string){return this.exclusiveStorageTask(()=>runStorageTask({op:'preview',database:join(this.output,'events.sqlite'),output:this.output,id}));}
   /** Runs off the request thread so other requests are answered while a large archive imports. */
   async importArchive(id:string){
@@ -247,7 +250,7 @@ export class Collector {
     try{return await task;}finally{this.storageTask=undefined;}
   }
   storageUsage(){return {...storageUsage(this.output),storageLimitMB:this.surfaces.storageLimitMB,care:{...this.careState,paused:existsSync(join(this.output,'storage-paused.json'))}};}
-  reclaimWal(){this.requireOwner();this.store.checkpointWal();return this.storageUsage();}
+  reclaimWal(){this.requireOwner();if(this.storageTask)throw new Error('Wait for the storage operation to finish before reclaiming space');this.store.checkpointWal();return this.storageUsage();}
   /** The verified copy and VACUUM run in a worker thread; this resolves when the copy is ready. */
   prepareStorageCompaction(){
     if(this.running||this.stopping)throw new Error('Pause capture before preparing storage recovery');
@@ -455,12 +458,12 @@ export class Collector {
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Change settings in the app that owns capture');
     const next={...this.surfaces,...patch} as CaptureSettings;
     if(Object.keys(defaultSettings).every(k=>next[k as keyof CaptureSettings]===this.surfaces[k as keyof CaptureSettings]))return this.status();
+    const timingChanged=Object.keys(defaultSettings).some(key=>key!=='storageLimitMB'&&next[key]!==this.surfaces[key]);
     const browserChanged=browsers.some(source=>next[source.setting]!==this.surfaces[source.setting]);
-    if(this.lockOwned)this.drainHooks();
+    if(this.lockOwned&&timingChanged)this.drainHooks();
     const path=join(this.output,'settings.json');let existing:Record<string,unknown>={};
     try{if(existsSync(path))existing=JSON.parse(readFileSync(path,'utf8'));}catch{/* Rewrite a damaged file from the current settings. */}
     writeFileSync(path+'.tmp',JSON.stringify({...existing,...next},null,2)+'\n',{mode:0o600});renameSync(path+'.tmp',path);
-    const timingChanged=Object.keys(defaultSettings).some(key=>key!=='storageLimitMB'&&next[key]!==this.surfaces[key]);
     if(!timingChanged){this.surfaces=next;this.nextStorageCheck=0;return this.status();}
     const change=makeEvent('capture','capture_settings',{data:{previous:{...this.surfaces},surfaces:next}});
     this.store.put(change);this.surfaceHistory.push(change);this.surfaces=next;this.revision++;this.invalidateSummaries();
@@ -660,13 +663,16 @@ export class Collector {
   async start(durationSeconds?:number) {
     if(durationSeconds!==undefined&&(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds>86400))throw new Error('Duration must be 1–86400 seconds');
     if(this.running)return this.status();
+    if(this.starting)throw new Error('Capture is already starting');
     if(this.stopping)throw new Error('Capture is stopping');
     if(this.storageTask)throw new Error('Wait for the storage operation to finish before resuming capture');
     const lock=join(this.output,'capture.lock');
     clearStaleLock(lock,{unreadable:'Unreadable collector lock; inspect before removing',live:'Another collector owns this data directory'});
-    writeLock(lock);this.lockOwned=true;this.running=true;this.lastError=null;this.failedPoller=null;this.macError=null;
+    writeLock(lock);this.lockOwned=true;this.starting=true;const epoch=++this.startEpoch;this.lastError=null;this.failedPoller=null;this.macError=null;
     try{
       if(!await this.ensureStorageCapacity())throw new Error(this.lastError!);
+      if(!this.lockOwned||this.startEpoch!==epoch)throw new Error('Capture start was cancelled');
+      this.running=true;
       this.nextStorageCheck=Date.now()+10000;this.scheduleStorageCare(30000);
       this.store.put(makeEvent('capture','capture_start'));
       this.activityProbe.start();
@@ -682,11 +688,12 @@ export class Collector {
       this.running=false;this.activityProbe.stop();clearTimeout(this.careTimer);clearTimeout(this.deadline);
       if(ownsLock(lock))unlinkSync(lock);
       this.lockOwned=false;throw error;
-    }
+    }finally{this.starting=false;}
   }
   private async tick() {
+    if(!this.running||this.checkingStorage)return;
+    if(Date.now()>=this.nextStorageCheck){this.nextStorageCheck=Date.now()+10000;this.checkingStorage=true;try{if(!await this.ensureStorageCapacity()){this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));await this.stop();return;}}finally{this.checkingStorage=false;}}
     if(!this.running)return;
-    if(Date.now()>=this.nextStorageCheck){this.nextStorageCheck=Date.now()+10000;if(!await this.ensureStorageCapacity()){this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));await this.stop();return;}}
     this.inFlight=this.poll().catch(error=>{this.lastError=`Capture poll failed: ${String(error)}`;});
     await this.inFlight;this.inFlight=undefined;
     if(this.running)this.timer=setTimeout(()=>{void this.tick();},this.interval*1000);
@@ -739,6 +746,7 @@ export class Collector {
     this.stopping=this.stopOwned().finally(()=>{this.stopping=undefined;});return this.stopping;
   }
   private async stopOwned() {
+    this.startEpoch++;
     this.running=false;clearTimeout(this.careTimer);clearTimeout(this.timer);clearTimeout(this.deadline);
     this.focusedTabs=[];this.focusedTabsAt=0;
     // Kill the helper immediately; slow fleet reads cannot orphan it during shutdown.

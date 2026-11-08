@@ -11,3 +11,6 @@ test('optimized copy preserves every logical row, sequence gap, review and timin
  const again=join(root,'again');assert.equal(optimizedCaptureCopy(target,again).afterRows,4999);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+test('optimized copies refuse dangling links and existing sidecars without modifying them',async()=>{
+ const {symlinkSync,writeFileSync,readFileSync}=await import('node:fs');const root=mkdtempSync(join(tmpdir(),'at-copy-path-')),source=join(root,'source'),target=join(root,'target');try{const store=new EventStore(source);store.close();symlinkSync(join(root,'missing'),target);assert.throws(()=>optimizedCaptureCopy(source,target),/new|different/);rmSync(target);writeFileSync(target+'-journal','preexisting');assert.throws(()=>optimizedCaptureCopy(source,target),/new|different/);assert.equal(readFileSync(target+'-journal','utf8'),'preexisting');}finally{rmSync(root,{recursive:true,force:true});}
+});

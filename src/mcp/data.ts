@@ -1,5 +1,5 @@
 import {boundedSpoolListing,MAX_PENDING_HOOKS,MAX_HOOK_BYTES} from '../capture/hooks.ts';
-import {openEventDatabase} from '../capture/event-database.ts';
+import {openEventDatabase,isPackedEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
 import {randomUUID} from 'node:crypto';
 import {existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,unlinkSync,writeFileSync} from 'node:fs';
@@ -78,7 +78,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
   const options=snapshotSettings(output),pending=pendingReports(output);
-  const resources=reportedResources([...db.prepare("SELECT payload FROM events WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'").all(now()-31*86400).map(row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
+  const resources=reportedResources([...Array.from(db.prepare(`SELECT payload FROM events ${isPackedEventDatabase(db)?'INDEXED BY events_resources_at':''} WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'`).iterate(now()-31*86400),row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
   const intervals:Interval[]=[],coverage:Issue[]=[],unresolved:Issue[]=[],sessions=new Map<string,Session>(),firstSeen=new Map<string,number>();
   const kept=new Map<string,CaptureEvent>();let previousTrusted=true;let readFrom=Infinity;
   for(const [start,end] of chunks(from,to)){
@@ -254,10 +254,11 @@ export function coverage(s:Snapshot){
 /** Historical coverage can span many more events than a time reduction. Stream only the evidence needed here. */
 export function coverageForRange(output:string,from:number,to:number){
  const db=database(output);try{
-  const issues=db.prepare("SELECT observed_at,payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.kind')='coverage' ORDER BY observed_at LIMIT 501").all(from,to);
+  const issues=db.prepare(`SELECT observed_at,payload FROM events ${isPackedEventDatabase(db)?'INDEXED BY events_coverage_at':''} WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.kind')='coverage' ORDER BY observed_at LIMIT 501`).all(from,to);
   const permissionPeriods:Array<{start:number;end:number;reason:string}>=[],observationGaps:Array<{start:number;end:number;reason:string}>=[];
   let permissionOpen=false,previous:number|null=null;
-  for(const row of db.prepare("SELECT observed_at,json_extract(payload,'$.data.accessibilityTrusted') AS trusted FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='macos' AND json_extract(payload,'$.kind')='activity' ORDER BY observed_at").iterate(from,to)){
+  const permissionQuery=isPackedEventDatabase(db)?'SELECT observed_at,accessibility_trusted trusted FROM events WHERE observed_at>=? AND observed_at<? AND activity_sample=1 ORDER BY observed_at':"SELECT observed_at,json_extract(payload,'$.data.accessibilityTrusted') AS trusted FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='macos' AND json_extract(payload,'$.kind')='activity' ORDER BY observed_at";
+  for(const row of db.prepare(permissionQuery).iterate(from,to)){
    const at=Number(row.observed_at);
    if(previous!==null&&at-previous>300)observationGaps.push({start:previous,end:at,reason:'No macOS observations; pause, sleep or collector interruption requires review'});
    if(row.trusted===0){
@@ -331,7 +332,7 @@ export function currentWork(output:string){
   const rows=db?.prepare("SELECT payload FROM events WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at DESC LIMIT 2000").all(now()-43200)||[];
   const reports=[...rows.map(r=>JSON.parse(String(r.payload)) as CaptureEvent),...pendingReports(output)].sort((a,b)=>a.observedAt-b.observedAt);
   const sessionEnds=new Map<string,number>();
-  for(const row of db?.prepare("SELECT payload FROM events WHERE observed_at>? AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at").all(now()-43200)||[]){const event=JSON.parse(String(row.payload)) as CaptureEvent;if(event.provider&&event.sessionId)sessionEnds.set(`${event.provider}:${event.sessionId}`,event.observedAt);}
+  for(const row of db?.prepare(`SELECT payload FROM events ${db&&isPackedEventDatabase(db)?'INDEXED BY events_session_ends_at':''} WHERE observed_at>? AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at`).all(now()-43200)||[]){const event=JSON.parse(String(row.payload)) as CaptureEvent;if(event.provider&&event.sessionId)sessionEnds.set(`${event.provider}:${event.sessionId}`,event.observedAt);}
   const contexts=new Map<string,CaptureEvent>(),starts=new Map<string,CaptureEvent>(),stops=new Set<string>(),ports=new Map<number,CaptureEvent>();
   for(const e of reports){
    const id=String(e.data?.contextId||'');

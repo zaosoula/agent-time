@@ -14,10 +14,10 @@ export type StorageTask=
 export function runStorageTask<T>(task:StorageTask):Promise<T>{
  return new Promise((resolve,reject)=>{
   const worker=new Worker(new URL(import.meta.url),{workerData:task});
-  let settled=false;
+  let settled=false;let failure:Error|undefined;
   worker.once('message',(message:{ok:boolean;result?:T;error?:string})=>{settled=true;if(message.ok)resolve(message.result as T);else reject(new Error(message.error));});
-  worker.once('error',error=>{if(!settled){settled=true;reject(error);}});
-  worker.once('exit',code=>{if(!settled){settled=true;reject(new Error(`Storage task stopped unexpectedly (${code})`));}});
+  worker.once('error',error=>{failure=error instanceof Error?error:new Error(String(error));});
+  worker.once('exit',code=>{if(!settled){settled=true;reject(failure??new Error(`Storage task stopped unexpectedly (${code})`));}});
  });
 }
 

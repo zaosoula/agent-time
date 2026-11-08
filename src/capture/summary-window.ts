@@ -52,7 +52,13 @@ const windowQuery="SELECT rowid,payload FROM events WHERE observed_at>=? AND obs
 /** Events relevant to [from,to), in insertion order, with the rowid of the newest one. */
 export function readWindowEvents(db:DatabaseSync,from:number,to:number,agentIdleThreshold:number):{events:CaptureEvent[];bounds:WindowBounds}{
  const bounds=windowBounds(from,to,agentIdleThreshold),parse=eventParser(),events:CaptureEvent[]=[];
- for(const row of db.prepare(windowQuery).iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo))events.push(parse(String(row.payload)));
+ if(Number(db.prepare('PRAGMA user_version').get()?.user_version)===2){
+  // Filter/sort only metadata first. Decoding inside a timestamp-index scan or
+  // SQLite sorter would defeat the bounded cache on interleaved event clocks.
+  const rows=db.prepare('SELECT rowid FROM events WHERE observed_at>=? AND observed_at<? AND (observed_at>=? AND observed_at<? OR activity_sample=0) ORDER BY rowid');
+  const read=db.prepare('SELECT payload FROM events WHERE rowid=?');
+  for(const row of rows.iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo))events.push(parse(String(read.get(row.rowid!)!.payload)));
+ }else for(const row of db.prepare(windowQuery).iterate(bounds.readFrom,bounds.readTo,bounds.activityFrom,bounds.activityTo))events.push(parse(String(row.payload)));
  return {events,bounds};
 }
 export function localDayBounds(date:string):{from:number;to:number}{

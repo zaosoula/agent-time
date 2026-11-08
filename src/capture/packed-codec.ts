@@ -4,6 +4,7 @@ import {gzipSync,gunzipSync} from 'node:zlib';
 export const MAX_BLOCK_EVENTS=2048;
 export const MAX_BLOCK_BYTES=2*1024*1024;
 export const MAX_CODEC_BYTES=4*1024*1024;
+export const MAX_COMPRESSED_BYTES=MAX_CODEC_BYTES+65536;
 type ObjectValue=Record<string,unknown>;
 type Shape=[string[],string[]|null];
 type Part=[number,number,unknown[],unknown[]];
@@ -97,6 +98,7 @@ export function encodeEventBlock(payloads:string[],toolPairs:Array<[number,numbe
 function invalid():never{throw new Error('Corrupt packed event format');}
 function keys(value:unknown):value is string[]{return Array.isArray(value)&&value.length<=1024&&value.every(key=>typeof key==='string')&&new Set(value).size===value.length;}
 export function decodeEventBlock(data:Uint8Array,expectedKey:string):string[]{
+ if(data.byteLength>MAX_COMPRESSED_BYTES)throw new Error('Compressed block size exceeds its limit');
  if(!/^[a-f0-9]{64}$/.test(expectedKey)||digest(data)!==expectedKey)throw new Error('Packed block digest mismatch');
  let value:unknown;
  try{value=JSON.parse(gunzipSync(data,{maxOutputLength:MAX_CODEC_BYTES}).toString('utf8'));}catch{throw new Error('Corrupt packed block or decompression size limit exceeded');}

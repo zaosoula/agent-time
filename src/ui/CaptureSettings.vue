@@ -525,7 +525,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         <section class="settings-section">
           <h2>Data &amp; backup</h2>
           <p class="section-intro">Storage used on this Mac, archives and restores.</p>
-          <StorageUsage :running="Boolean(status?.running)" />
+          <StorageUsage :running="Boolean(status?.running)" :limit="status?.surfaces.storageLimitMB" @change="emit('change',$event)" />
           <ArchiveExport :running="Boolean(status?.running)" />
           <h3 class="subsection-title danger-title">Danger zone</h3>
           <TrackingCleanup />

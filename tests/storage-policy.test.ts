@@ -31,3 +31,8 @@ test('summary cache eviction recomputes the same timing values within its memory
  const cache=new DaySummaries(store,()=>({idleThreshold:300,agentIdleThreshold:300}),64),first=structuredClone(cache.window('2026-10-20').raw);cache.window('2026-10-25');assert.equal(cache.computations,2);assert.deepEqual(cache.window('2026-10-20').raw,first);assert.equal(cache.computations,3);
  }finally{store.close();}
 });
+test('stopping during storage preflight cancels the pending start before any capture begins',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'at-start-cancel-')),collector=new Collector(root);try{
+ let release!:(ok:boolean)=>void;const pending=new Promise<boolean>(resolve=>{release=resolve;});(collector as any).ensureStorageCapacity=()=>pending;const starting=collector.start(30);const rejected=assert.rejects(starting,/cancelled/);assert.equal(collector.status().running,false);await collector.stop();release(true);await rejected;assert.equal(collector.status().running,false);assert.equal(collector.store.events().some(event=>event.kind==='capture_start'),false);
+ }finally{await collector.close();rmSync(root,{recursive:true,force:true});}
+});

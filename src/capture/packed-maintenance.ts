@@ -9,7 +9,7 @@ export function indexToolBoundaries(db:DatabaseSync,maxRows=20480):number{
  CREATE INDEX IF NOT EXISTS at_tool_identity ON at_tool_keys(identity);
  CREATE TABLE IF NOT EXISTS at_pack_state(id INTEGER PRIMARY KEY,last_rowid INTEGER NOT NULL);
  INSERT OR IGNORE INTO at_pack_state VALUES(1,0);
- CREATE INDEX IF NOT EXISTS at_events_hot ON events(observed_at) WHERE typeof(payload_data)='text'`);
+ CREATE INDEX IF NOT EXISTS at_events_hot ON events(rowid) WHERE typeof(payload_data)='text'`);
  const cursor=Number(db.prepare('SELECT last_rowid FROM at_pack_state WHERE id=1').get()!.last_rowid),write=db.prepare('INSERT OR IGNORE INTO at_tool_keys VALUES(?,?,?)');let count=0,last=cursor;
  db.exec('BEGIN IMMEDIATE');try{
   for(const row of db.prepare("SELECT rowid,source,CASE WHEN source='hook' THEN payload ELSE NULL END payload FROM events WHERE rowid>? ORDER BY rowid LIMIT ?").iterate(cursor,maxRows)){
@@ -27,7 +27,7 @@ export function packEventHistory(db:DatabaseSync,options:{now:number;hotBytes?:n
  let hot=Number(db.prepare("SELECT coalesce(sum(payload_bytes),0) n FROM events INDEXED BY at_events_hot WHERE typeof(payload_data)='text'").get()!.n);
  const cutoff=options.now-(options.hotDays??7)*86400,budget=options.hotBytes??128*1024*1024;
  // A bounded candidate list uses metadata only; unusually large legacy rows stay raw.
- const candidates=db.prepare("SELECT rowid,payload_bytes,observed_at FROM events INDEXED BY at_events_hot WHERE typeof(payload_data)='text' AND payload_bytes<=? AND (observed_at<? OR ? > ?) ORDER BY observed_at,rowid LIMIT ?").all(MAX_BLOCK_BYTES,cutoff,hot,budget,maxRows);
+ const candidates=db.prepare("SELECT rowid,payload_bytes,observed_at FROM events INDEXED BY at_events_hot WHERE typeof(payload_data)='text' AND payload_bytes<=? AND (observed_at<? OR ? > ?) ORDER BY rowid LIMIT ?").all(MAX_BLOCK_BYTES,cutoff,hot,budget,maxRows);
  let position=0;
  while(position<candidates.length&&result.packedEvents<maxRows&&result.originalBytes<maxBytes){
   const rows:Array<{rowid:number;payload:string}>=[];const selected=new Set<number>();let bytes=0;
@@ -41,7 +41,6 @@ export function packEventHistory(db:DatabaseSync,options:{now:number;hotBytes?:n
    const candidate=candidates[position++]!;if(Number(candidate.observed_at)>=cutoff&&hot<=budget)break;
    if(bytes&&bytes+Number(candidate.payload_bytes)>Math.min(MAX_BLOCK_BYTES,maxBytes-result.originalBytes)){position--;break;}
    add(Number(candidate.rowid));
-   if(indexed){const identity=db.prepare('SELECT identity FROM at_tool_keys WHERE rowid=?').get(candidate.rowid!);if(identity){const pair=db.prepare('SELECT rowid FROM at_tool_keys WHERE identity=? LIMIT 3').all(identity.identity!);if(pair.length===2)for(const item of pair)add(Number(item.rowid));}}
   }
   if(!rows.length)break;
   const identities=new Map<string,{start:number[];end:number[]}>();
@@ -52,15 +51,31 @@ export function packEventHistory(db:DatabaseSync,options:{now:number;hotBytes?:n
   for(;;){try{block=encodeEventBlock(rows.map(row=>row.payload),pairs.filter(([a,b])=>a<rows.length&&b<rows.length));break;}catch(error){if(!(error instanceof Error)||!error.message.includes('codec size')||rows.length<2)throw error;rows.splice(Math.ceil(rows.length/2));bytes=rows.reduce((n,row)=>n+Buffer.byteLength(row.payload),0);}}
 
   db.exec('BEGIN IMMEDIATE');try{
-   db.prepare('INSERT OR IGNORE INTO at_event_blocks VALUES(?,?,?,?)').run(block.key,block.data,block.originalBytes,block.count);
+   db.prepare('INSERT OR IGNORE INTO at_event_blocks(key,data,original_bytes,event_count) VALUES(?,?,?,?)').run(block.key,block.data,block.originalBytes,block.count);
    const write=db.prepare("UPDATE events SET payload_data=? WHERE rowid=? AND typeof(payload_data)='text' AND payload_data=?");
    for(let slot=0;slot<rows.length;slot++){const row=rows[slot]!;if(Number(write.run(eventLocator(block.key,slot),row.rowid,row.payload).changes)!==1)throw new Error('History changed during packing; retry later');}
    db.exec('COMMIT');
   }catch(error){db.exec('ROLLBACK');throw error;}
   result.packedEvents+=rows.length;result.originalBytes+=bytes;result.compressedBytes+=block.data.length;result.toolCalls+=block.records.toolCalls;hot-=bytes;
  }
- // No logical rows are removed by packing. Only wholly unreferenced blocks can go.
- db.exec("CREATE TEMP TABLE IF NOT EXISTS at_live_blocks(key TEXT PRIMARY KEY) WITHOUT ROWID; DELETE FROM at_live_blocks; INSERT OR IGNORE INTO at_live_blocks SELECT lower(hex(substr(payload_data,3,32))) FROM events WHERE typeof(payload_data)='blob'; DELETE FROM at_event_blocks WHERE key NOT IN (SELECT key FROM at_live_blocks); PRAGMA incremental_vacuum(256)");
+ db.exec('PRAGMA incremental_vacuum(256)');
  result.oversizedEvents=Number(db.prepare("SELECT count(*) n FROM events WHERE typeof(payload_data)='text' AND payload_bytes>?").get(MAX_BLOCK_BYTES)!.n);
  return result;
+}
+
+/** Offline only: live packing never deletes evidence or leaves orphan blocks. */
+export function collectUnusedPackedBlocks(db:DatabaseSync):void{
+ if(!isPackedEventDatabase(db))return;
+ db.exec("CREATE TEMP TABLE IF NOT EXISTS at_live_blocks(key TEXT PRIMARY KEY) WITHOUT ROWID; DELETE FROM at_live_blocks; INSERT OR IGNORE INTO at_live_blocks SELECT lower(hex(substr(payload_data,3,32))) FROM events WHERE typeof(payload_data)='blob'; DELETE FROM at_event_blocks WHERE key NOT IN (SELECT key FROM at_live_blocks)");
+}
+/** A private copy may repack sparse blocks without changing any logical row. */
+export function unpackHistoryCopy(db:DatabaseSync):void{
+ if(!isPackedEventDatabase(db))return;
+ for(;;){
+  const candidates=db.prepare("SELECT rowid,payload_bytes FROM events WHERE typeof(payload_data)='blob' ORDER BY rowid LIMIT 2048").all();if(!candidates.length)break;
+  const rows:Array<{rowid:number;payload:string}>=[];let bytes=0;
+  for(const row of candidates){const size=Number(row.payload_bytes);if(rows.length&&bytes+size>MAX_BLOCK_BYTES)break;const payload=String(db.prepare('SELECT payload FROM events WHERE rowid=?').get(row.rowid!)!.payload);const actualBytes=Buffer.byteLength(payload);if(rows.length&&bytes+actualBytes>MAX_BLOCK_BYTES)break;rows.push({rowid:Number(row.rowid),payload});bytes+=actualBytes;}
+  db.exec('BEGIN IMMEDIATE');try{const write=db.prepare('UPDATE events SET payload_data=? WHERE rowid=?');for(const row of rows)write.run(row.payload,row.rowid);db.exec('COMMIT');}catch(error){db.exec('ROLLBACK');throw error;}
+ }
+ collectUnusedPackedBlocks(db);
 }

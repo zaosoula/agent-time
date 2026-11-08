@@ -115,3 +115,11 @@ test('unchanged live worker snapshots are stored once per heartbeat, fresh ones 
   assert.deepEqual([...retainedObservationRows(rows)].sort((a,b)=>a-b),[1,4,7]);
  }finally{store.close();}
 });
+test('packed workspace context and session ends match legacy queries with interleaved clocks',async()=>{
+ const {makeEvent}=await import('../src/capture/events.ts');const {packEventHistory}=await import('../src/capture/packed-maintenance.ts');const root=mkdtempSync(join(tmpdir(),'at-context-parity-')),path=join(root,'legacy');const legacy=openEventDatabase(path);legacy.exec('CREATE TABLE events(event_id TEXT PRIMARY KEY,observed_at REAL,payload TEXT)');legacy.close();const old=new EventStore(path),packed=new EventStore(':memory:');
+ try{const records=[makeEvent('hook','tool_start',{observedAt:20,workspaceId:'w',cwd:'/later',provider:'codex',sessionId:'s'}),makeEvent('hook','tool_start',{observedAt:10,workspaceId:'w',cwd:'/earlier',provider:'codex',sessionId:'s'}),makeEvent('hook','session_end',{observedAt:50,provider:'codex',sessionId:'s'}),makeEvent('hook','session_end',{observedAt:30,provider:'codex',sessionId:'s'}),makeEvent('orca','terminal',{observedAt:20,terminalHandle:'z',workspaceId:'w',cwd:'/last'}),makeEvent('orca','terminal',{observedAt:30,terminalHandle:'a',workspaceId:'w',cwd:'/first'})];for(const record of records){old.put(record);packed.put(record);}packEventHistory(packed.database,{now:1e8});for(const since of [0,15,25])assert.deepEqual(packed.workspaceObservations(since),old.workspaceObservations(since));assert.deepEqual(packed.sessionEnds(0,100),old.sessionEnds(0,100));}
+ finally{old.close();packed.close();rmSync(root,{recursive:true,force:true});}
+});
+test('review signatures only read metadata and remain usable without decoding historical payloads',async()=>{
+ const {makeEvent}=await import('../src/capture/events.ts');const {packEventHistory}=await import('../src/capture/packed-maintenance.ts');const store=new EventStore(':memory:');try{store.put(makeEvent('agent_report','work_context',{observedAt:10,monotonicAt:10}));packEventHistory(store.database,{now:1e8});const before=store.daySignature(0,100,'1970-01-01');store.database.function('at_event_payload',{deterministic:true},(_value)=>{throw new Error('Signature decoded history');});assert.equal(store.daySignature(0,100,'1970-01-01'),before);}finally{store.close();}
+});

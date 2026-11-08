@@ -10,8 +10,11 @@ import {
 import type { StorageUsage } from '../capture/storage-usage.ts';
 import { humanizeError } from './errors.ts';
 import { bytes as size, count } from './format.ts';
+import {storageProjection} from './storage-presentation.ts';
 import { toast } from './toast.ts';
-defineProps<{ running: boolean }>();
+const props=defineProps<{ running: boolean;limit?:number }>();
+const emit=defineEmits<{change:[settings:{storageLimitMB:number}]} >();
+function changeBudget(event:Event){const input=event.target as HTMLInputElement,value=Number(input.value);if(Number.isFinite(value)&&value>=1&&value<=1024)emit('change',{storageLimitMB:Math.round(value*1024)});else input.value=String((props.limit??5120)/1024);}
 const usage = ref<StorageUsage | null>(null),
   busy = ref(false),
   error = ref('');
@@ -40,12 +43,7 @@ const recent = computed(() => {
   }
   return [...days].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 7);
 });
-const forecast = computed(() => {
-  const days = recent.value.filter(([, day]) => day.events > 0);
-  return days.length
-    ? Math.round((days.reduce((total, [, day]) => total + day.bytes, 0) / days.length) * 30)
-    : null;
-});
+const forecast=computed(()=>storageProjection(usage.value?.byDay||[],usage.value?.history));
 async function refresh() {
   busy.value = true;
   error.value = '';
@@ -81,7 +79,7 @@ async function compact() {
     prepared.value = await storageRecoveryTransport.prepare();
     pending.value = await storageRecoveryTransport.pending();
     usage.value = await storageTransport.usage();
-    toast.success('Compacted copy verified. Quit and reopen Agent Time to apply it.');
+    toast.success('Optimized copy verified. Quit and reopen Agent Time to apply it.');
   } catch (cause) {
     error.value = humanizeError(cause);
   } finally {
@@ -125,13 +123,24 @@ onMounted(() => {
       >
       <p v-if="usage.freeBytes !== null">
         {{ size(usage.freeBytes) }} available on this disk.<span
-          v-if="usage.freeBytes < usage.database.bytes + 64 * 1024 * 1024"
+          v-if="usage.freeBytes < Math.max(usage.database.bytes,(usage.history?.originalBytes||0)+(usage.history?.hotBytes||0)) * 3 + 1024 * 1024 * 1024"
           class="storage-error"
         >
-          A verified compacted copy needs at least {{ size(usage.database.bytes + 64 * 1024 * 1024) }} free;
+          A verified compacted copy needs at least {{ size(Math.max(usage.database.bytes,(usage.history?.originalBytes||0)+(usage.history?.hotBytes||0)) * 3 + 1024 * 1024 * 1024) }} free;
           clear space before preparing it.</span
         >
       </p>
+      <div class="storage-action" role="status">
+        <strong>{{ usage.history?.efficient ? 'Automatic storage care is on' : 'Optimize history to enable automatic storage care' }}</strong>
+        <p v-if="usage.history?.efficient">All original timestamps and review decisions are kept. Older events share compressed records; recent data is kept ready for capture.</p>
+        <p v-else>Prepare an optimized copy below to reduce storage while keeping every remaining event and the same timing calculations.</p>
+        <p v-if="usage.history?.coldEvents">{{ count(usage.history.coldEvents) }} events use {{ size(usage.history.compressedBytes) }} of compressed payload, saving {{ size(Math.max(0,usage.history.originalBytes-usage.history.compressedBytes)) }}. Recent uncompressed payload: {{ size(usage.history.hotBytes) }}. Event references and indexes are included in the database size above.</p>
+        <label>Storage budget <input type="number" min="1" max="1024" step="1" :value="(limit??usage.storageLimitMB??5120)/1024" :disabled="busy" @change="changeBudget" /> GB</label>
+        <p>Includes the database, archives, hook runtimes and pending events. Agent Time compresses history and keeps 1 GB free on disk. Capture pauses if it cannot stay within your budget. Unique history is never deleted automatically.</p>
+        <p v-if="usage.care?.paused" class="storage-error">Capture is paused for storage. Free disk space, increase the budget, or remove a backup you no longer need, then start capture.</p>
+        <p v-if="usage.care?.error" class="storage-error">Storage care could not finish: {{ usage.care.error }}</p>
+        <p v-else-if="usage.care?.at">Last storage care: {{ new Date(usage.care.at*1000).toLocaleString() }}.</p>
+      </div>
       <p v-if="lastResult" role="status">
         {{
           lastResult.status === 'applied'
@@ -158,9 +167,8 @@ onMounted(() => {
         </li>
       </ul>
       <p v-if="!recent.length">No events recorded in the last 30 days.</p>
-      <p v-if="forecast !== null">
-        At the recent captured-payload rate, another 30 tracked days would add about
-        {{ size(forecast) }} before database and index overhead. This is an estimate, not a storage limit.
+      <p v-if="forecast.bytes !== null">
+        At the recent rate, another 30 tracked days would add about {{ size(forecast.bytes!) }} of {{ forecast.compressed ? 'compressed' : 'uncompressed' }} payload, before event references and index overhead. This estimate uses {{ forecast.compressed ? 'your measured compression rate' : 'captured payload sizes' }}.
       </p>
       <div v-if="usage.wal.bytes > 0" class="storage-action">
         <p>
@@ -173,18 +181,15 @@ onMounted(() => {
       </div>
       <div class="storage-action">
         <p>
-          Create a verified compacted copy. Agent Time compares event order, timing, coverage, and review
-          decisions before replacing the database on the next launch. The original stays as a restorable
-          archive, so total storage initially increases. Delete that archive explicitly only after confirming
-          capture works.
+          Create a verified optimized copy. Every event ID, timestamp, payload and review decision is checked before replacement on the next launch. The original stays as a compressed recovery archive. Older connected agent tools may need to reconnect after this one-time upgrade.
         </p>
         <button v-if="!pending" class="btn btn-primary" :disabled="busy || running" @click="compact">
-          {{ busy ? 'Verifying copy…' : 'Prepare compacted database' }}
+          {{ busy ? 'Verifying copy…' : 'Prepare optimized database' }}
         </button>
         <small v-if="running">Pause capture before preparing space recovery.</small>
         <template v-if="pending"
           ><strong
-            >{{ pending.kind === 'compaction' ? 'Compacted database' : 'Archive replacement' }} ready for the
+            >{{ pending.kind === 'compaction' ? 'Optimized database' : 'Archive replacement' }} ready for the
             next launch</strong
           >
           <p v-if="prepared">
@@ -223,6 +228,7 @@ onMounted(() => {
   line-height: 1.5;
   margin: 6px 0 12px;
 }
+.storage-action input {width: 90px; margin: 0 6px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px;}
 .storage-total {
   display: block;
   font-size: var(--text-md);

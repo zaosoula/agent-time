@@ -314,20 +314,20 @@ fn stage_archive_copy(source:&std::path::Path,output:&std::path::Path)->Result<S
  let folder=output.join("exports");
  if folder.exists()&&std::fs::symlink_metadata(&folder).map_err(|e|e.to_string())?.file_type().is_symlink(){return Err("Export folder must not be a symlink".into());}
  std::fs::create_dir_all(&folder).map_err(|e|e.to_string())?;
- #[cfg(unix)] if available_bytes(&folder)?<info.len().saturating_add(256*1024*1024){return Err("Not enough free space to stage this archive safely".into());}
+ #[cfg(unix)] if available_bytes(&folder)?<info.len().saturating_add(1024*1024*1024){return Err("Not enough free space to stage this archive safely".into());}
  #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;std::fs::set_permissions(&folder,std::fs::Permissions::from_mode(0o700)).map_err(|e|e.to_string())?;}
  let stamp=SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e|e.to_string())?.as_secs();
  let id=format!("agent-time-{stamp}-{}.sqlite",uuid::Uuid::new_v4());
  let id=if compressed{format!("{id}.gz")}else{id};
- let path=folder.join(&id);
+ let path=folder.join(&id);let temporary=folder.join(format!("{id}.tmp"));
  let result=(||->Result<(),String>{
-  let mut target=std::fs::OpenOptions::new().write(true).create_new(true).open(&path).map_err(|e|e.to_string())?;
+  let mut target=std::fs::OpenOptions::new().write(true).create_new(true).open(&temporary).map_err(|e|e.to_string())?;
   #[cfg(unix)] {use std::os::unix::fs::PermissionsExt;target.set_permissions(std::fs::Permissions::from_mode(0o600)).map_err(|e|e.to_string())?;}
   std::io::copy(&mut input.take(info.len().saturating_add(1)),&mut target).map_err(|e|e.to_string())?;
   if target.metadata().map_err(|e|e.to_string())?.len()!=info.len(){return Err("Archive changed during copying".into());}
-  target.sync_all().map_err(|e|e.to_string())
+  target.sync_all().map_err(|e|e.to_string())?;drop(target);std::fs::rename(&temporary,&path).map_err(|e|e.to_string())
  })();
- if let Err(error)=result{let _=std::fs::remove_file(&path);return Err(error);}
+ if let Err(error)=result{let _=std::fs::remove_file(&temporary);return Err(error);}
  Ok(id)
 }
 #[tauri::command]
