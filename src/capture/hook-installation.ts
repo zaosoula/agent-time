@@ -105,6 +105,17 @@ export class HookInstallation{
   * a development or test process must never replace the user's runtime with
   * its own Node and sources (constructing an installer used to do exactly that).
   */
+ /**
+  * Only the packaged app changes the agent configurations of this Mac's user. A development
+  * build or script (often pointed at a copy of the data) once rewrote every hook to spool into
+  * a scratch folder, silently stopping capture. Tests pass their own home and are unaffected;
+  * set AGENT_TIME_DEV_HOOKS=1 to install from a development build on purpose.
+  */
+ private assertMayChangeAgents(){
+  const packaged=process.execPath.includes('.app/Contents/MacOS/');
+  if(!packaged&&resolve(this.home)===resolve(homedir())&&this.env.AGENT_TIME_DEV_HOOKS!=='1'&&process.env.AGENT_TIME_DEV_HOOKS!=='1')
+   throw new Error('This development build does not change agent hooks on this Mac. Use the installed Agent Time, or set AGENT_TIME_DEV_HOOKS=1.');
+ }
  refreshRuntime():boolean{
   if(this.ready()||!this.hasInstallations())return false;
   this.installRuntime();return true;
@@ -256,6 +267,7 @@ export class HookInstallation{
  }
  cleanupPreview():TrackingCleanupPreview {const plan=this.cleanupPlan();return {configurations:plan.manifests.map(m=>m.path),helpers:plan.helpers,errors:plan.errors};}
  cleanup():TrackingCleanupResult {
+  this.assertMayChangeAgents();
   if(this.busy)throw new Error('Hook installation is already running');this.busy=true;
   const result:TrackingCleanupResult={removedConfigurations:[],removedHelpers:[],errors:[]};
   try{
@@ -275,6 +287,7 @@ export class HookInstallation{
   }finally{this.busy=false;}
  }
  async install(provider:HookProvider,targetIds?:string[]){
+  this.assertMayChangeAgents();
   if(!agentById.has(provider))throw new Error('Invalid provider');if(this.busy)throw new Error('Hook installation is already running');this.busy=true;
   try{
    this.installErrors.clear();this.installRuntime();

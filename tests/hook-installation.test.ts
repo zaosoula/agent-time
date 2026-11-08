@@ -284,3 +284,10 @@ test('a hook derives its installation from the transcript path, the config varia
  assert.equal(hookInstallationId('claude',{},{},'/u'),id('/u/.claude/settings.json'));
  assert.equal(hookInstallationId('codex',{transcript_path:'/k/home/sessions/2026/r.jsonl'},{},'/u'),id('/k/home/hooks.json'));
 });
+
+test('a development process does not change the real user agent hooks',async()=>{
+ const {homedir}=await import('node:os');
+ const manager=new HookInstallation(join(tmpdir(),'agent-time-dev-guard'),{home:homedir(),env:{}});
+ await assert.rejects(()=>manager.install('claude'),/development build/);
+ assert.throws(()=>manager.cleanup(),/development build/);
+});
