@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.30` candidate — 2026-11-08
+## `0.2.0-beta.30` published — 2026-11-08
 
 Project Explorer on Home: one full-day activity chart with five key figures, and compact project rows that expand into a session explorer (sessions; selected session's window, cumulative and elapsed agent time, subagents, peak, session-scale concurrency chart, agent executions with recorded metadata). Session-level human time is shown only when capture links it to the session. Agent-reported items appear as task context and in a separate collapsible section, never in measured time. Focus scopes the main chart and figures to a project; the chart zooms by pinch or ⌘-scroll, pans sideways and takes keyboard input. Narrow windows stack the sidebar and the session list. Also: hook install and removal for the real user now require the packaged app (or `AGENT_TIME_DEV_HOOKS=1`), after a development build used for a smoke test rewrote the owner's five agent configurations to a scratch spool for about four minutes; they were restored and the 15 stranded events imported. Locally 344 JavaScript tests, typecheck, UI build without externalized modules and 26 Rust tests passed; rendered on a copy of the owner's data at 1440 and 390 px and in the desktop shell. See [updater notes](0.2.0-beta.30-notes.md).
+
+GitHub's Apple Silicon [release run 42431213273](https://github.com/zaosoula/agent-time/actions/runs/42431213273) published exact commit `cce3cc4`; public downloads matched staged SHA-256 `79766aac7405aec8b62138ee748c92ab93c3e907d6025560b170cae1cfff93c8` (updater archive) and `2c3ddc5275c6219d41270b07bfe15c629de6e63bf535a053c0b2d6eff9799423` (DMG).
 
 ## `0.2.0-beta.29` published — 2026-11-08
 
