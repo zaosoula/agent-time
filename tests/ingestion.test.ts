@@ -5,6 +5,14 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { readWorkers,orcaCliAvailable } from '../src/capture/orca.ts';
 import { normalizeHook, spoolHook, importSpool,spoolStatus } from '../src/capture/hooks.ts';
+
+test('hook capture omits false defaults but retains a blocked stop',()=>{
+ for(const provider of ['claude','codex']){
+  const ordinary=normalizeHook(provider,{hook_event_name:'PreToolUse',session_id:'s',tool_use_id:'tool'},{});
+  assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(ordinary)).data,'stopBlocked'),false);
+  assert.equal(normalizeHook(provider,{hook_event_name:'Stop',session_id:'s',stop_hook_active:true},{}).data?.stopBlocked,true);
+ }
+});
 import { EventStore } from '../src/capture/store.ts';
 test('all worker pages are read and repeated cursors are coverage errors', async () => {
   const pages = [{ok:true,result:{workers:[{dispatchId:'d1'}],page:{hasMore:true,nextCursor:'p2'}}},{ok:true,result:{workers:[{dispatchId:'d2'}],page:{hasMore:false}}}];

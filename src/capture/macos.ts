@@ -20,7 +20,7 @@ export function normalizeActivity(payload: unknown, context: Partial<CaptureEven
     ...context,sourceAt:Number.isFinite(p.observedAt)?p.observedAt:undefined,
     data:{foregroundBundleId:typeof p.foregroundBundleId==='string'?p.foregroundBundleId:'unknown',
       foregroundName:typeof p.foregroundName==='string'?p.foregroundName:'Unknown app',
-      idleSeconds:good?p.idleSeconds:null,idleStatus:good?'observed':'unknown',
+      idleSeconds:good?p.idleSeconds:null,
       accessibilityTrusted:p.accessibilityTrusted===true,
       browserDomain:domain,browserOrigin:browserUrl?new URL(browserUrl).origin:undefined,browserUrl,browserTitle:browserUrl&&typeof p.browserTitle==='string'?p.browserTitle.slice(0,180):undefined,
       orcaWindowTitle:typeof p.orcaWindowTitle==='string'?p.orcaWindowTitle.slice(0,180):undefined,

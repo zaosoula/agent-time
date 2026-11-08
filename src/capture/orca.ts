@@ -45,9 +45,8 @@ export function workerEvent(worker: JsonObject): CaptureEvent {
     terminalIncarnation: resource.endpointIncarnation, runtimeId: resource.endpointId,
     provider: p.provider?.id, runId: worker.runId, taskId: worker.taskId, dispatchId: worker.dispatchId,
     data: { state: stage.activity || 'unknown', outcome: p.outcome || worker.dispatchStatus,
-      fresh: evidence.liveStatus === 'fresh', terminalState: worker.terminalState,
-      takeover: resource.retainedReason === 'user_takeover', parent: p.parent || null,
-      liveness: p.liveness?.verdict || 'unverifiable' },
+      fresh: evidence.liveStatus === 'fresh',
+      takeover: resource.retainedReason === 'user_takeover'?true:undefined },
   });
 }
 const settledOutcomes=new Set(['succeeded','failed','completed','cancelled','abandoned']);

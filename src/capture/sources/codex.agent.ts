@@ -11,7 +11,7 @@ const text=(value:unknown)=>typeof value==='string'?value.slice(0,512):undefined
 const count=(value:unknown)=>typeof value==='number'&&Number.isFinite(value)&&value>=0?Math.floor(value):0;
 function normalizeHook(payload:unknown,context:Partial<CaptureEvent>):CaptureEvent{
  const p=object(payload),name=String(p.hook_event_name||'unknown');
- return makeEvent('hook',kinds[name]||'unknown',{...context,provider:'codex',sessionId:text(p.session_id),turnId:text(p.turn_id),agentId:text(p.agent_id),cwd:text(p.cwd)||context.cwd,data:{hook:name,toolId:text(p.tool_use_id),toolName:text(p.tool_name),source:text(p.source),childType:text(p.agent_type),stopBlocked:p.stop_hook_active===true}});
+ return makeEvent('hook',kinds[name]||'unknown',{...context,provider:'codex',sessionId:text(p.session_id),turnId:text(p.turn_id),agentId:text(p.agent_id),cwd:text(p.cwd)||context.cwd,data:{hook:name,toolId:text(p.tool_use_id),toolName:text(p.tool_name),source:text(p.source),childType:text(p.agent_type),stopBlocked:p.stop_hook_active===true?true:undefined}});
 }
 function parseUsage(e:any,state:ParserState,accountId:string):UsageRecord|undefined{
  const timestamp=Date.parse(e.timestamp)/1000;if(!Number.isFinite(timestamp))return;

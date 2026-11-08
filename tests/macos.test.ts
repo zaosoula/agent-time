@@ -3,7 +3,7 @@ import { normalizeActivity } from '../src/capture/macos.ts';
 test('invalid or impossible idle stays unknown',()=>{
  for(const idleSeconds of [-1,NaN,Infinity,5000]){
   const e=normalizeActivity({foregroundBundleId:'test',idleSeconds,uptime:100,observedAt:10},{collectorEpoch:'a'});
-  assert.equal(e.data?.idleSeconds,null);assert.equal(e.data?.idleStatus,'unknown');
+  assert.equal(e.data?.idleSeconds,null);assert.equal(Object.hasOwn(e.data!,'idleStatus'),false);
  }
 });
 test('foreground remains available without accessibility; no guessed session',()=>{

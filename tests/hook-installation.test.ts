@@ -1,9 +1,27 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
-import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync,symlinkSync,existsSync,statSync} from 'node:fs';
+import {mkdtempSync,mkdirSync,writeFileSync,readFileSync,rmSync,readdirSync,symlinkSync,existsSync,statSync,utimesSync} from 'node:fs';
 import {tmpdir} from 'node:os';import {join} from 'node:path';import {execFileSync} from 'node:child_process';
 import {HookInstallation} from '../src/capture/hook-installation.ts';
 import {EventStore} from '../src/capture/store.ts';
 function fixture(){const home=mkdtempSync(join(tmpdir(),'ade-user-hooks-')),output=join(home,'capture'),db=new EventStore(join(output,'events.sqlite'));const manager=new HookInstallation(output,{home,env:{}});return {home,output,db,manager,close(){db.close();rmSync(home,{recursive:true});}};}
+test('startup prunes obsolete runtimes even when the installed runtime is already current',async()=>{
+ const f=fixture();try{
+  await f.manager.install('codex');
+  const root=join(f.home,'Library/Application Support/studio.ezyo.agenttime/hook-runtime');
+  const add=(name:string,age:number)=>{
+   const path=join(root,name);mkdirSync(join(path,'sources'),{recursive:true});
+   for(const file of ['node','hook-runner.ts','package.json','json.ts'])writeFileSync(join(path,file),'owned');
+   utimesSync(path,new Date(Date.now()-age),new Date(Date.now()-age));return path;
+  };
+  const old=add('1111111111111111',3*60*60*1000),previous=add('2222222222222222',2*60*60*1000);
+  const current=readFileSync(join(root,'current'),'utf8');
+  assert.equal(f.manager.refreshRuntime(),false);
+  for(let tries=0;tries<100&&existsSync(old);tries++)await new Promise(resolve=>setTimeout(resolve,10));
+  assert.equal(existsSync(old),false);
+  assert.equal(existsSync(previous),true);
+  assert.equal(readFileSync(join(root,'current'),'utf8'),current);
+ }finally{f.close();}
+});
 test('first-run choice persists and user installs are idempotent while preserving other hooks',async()=>{
  const f=fixture();try{
   mkdirSync(join(f.home,'.claude'));const path=join(f.home,'.claude/settings.json');writeFileSync(path,JSON.stringify({theme:'dark',hooks:{Stop:[{hooks:[{type:'command',command:'other'}]}]}}));

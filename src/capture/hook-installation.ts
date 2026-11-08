@@ -63,6 +63,7 @@ function managedLast(config:any,recognized:string[]){
 function privateWrite(path:string,text:string){mkdirSync(dirname(path),{recursive:true,mode:0o700});if(existsSync(path)&&lstatSync(path).isSymbolicLink())throw new Error('symlink state refused');const temp=path+'.'+randomUUID()+'.tmp';writeFileSync(temp,text,{mode:0o600,flag:'wx'});renameSync(temp,path);}
 export class HookInstallation{
  private output:string;private home:string;private env:NodeJS.ProcessEnv;private runtime:string;private stateRoot:string;private migrationError:string|null=null;private busy=false;private installErrors=new Map<string,string>();
+ private runtimePruneTimer:ReturnType<typeof setTimeout>|undefined;
  constructor(output:string,options:Options={}){this.output=resolve(output);this.home=options.home||homedir();this.env=options.env||process.env;this.stateRoot=join(this.home,'Library/Application Support/studio.ezyo.agenttime');this.runtime=join(this.stateRoot,'hook-runtime',runtimeVersion);}
  /** Whether this Mac has hooks installed by Agent Time. */
  private hasInstallations(){const records=join(this.stateRoot,'hook-installations');return existsSync(records)&&readdirSync(records,{withFileTypes:true}).some(entry=>entry.isDirectory()&&existsSync(this.ledgerPath(entry.name)));}
@@ -117,8 +118,19 @@ export class HookInstallation{
    throw new Error('This development build does not change agent hooks on this Mac. Use the installed Agent Time, or set AGENT_TIME_DEV_HOOKS=1.');
  }
  refreshRuntime():boolean{
-  if(this.ready()||!this.hasInstallations())return false;
+  if(this.ready()){this.scheduleRuntimePruning();return false;}
+  if(!this.hasInstallations())return false;
   this.installRuntime();return true;
+ }
+ private scheduleRuntimePruning(){
+  const parent=dirname(this.runtime),currentPath=join(parent,'current');
+  const prune=()=>{
+   try{if(readFileSync(currentPath,'utf8')===runtimeVersion+'\n')void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});}catch{/* A changed launcher is left alone. */}
+  };
+  prune();clearTimeout(this.runtimePruneTimer);
+  // Recheck after the grace period for hooks already in flight, including
+  // when startup found an already-current runtime and needed no installation.
+  this.runtimePruneTimer=setTimeout(prune,65*60*1000);this.runtimePruneTimer.unref();
  }
  private installRuntime(){
   const parent=dirname(this.runtime);if(existsSync(parent)&&lstatSync(parent).isSymbolicLink())throw new Error('symlink runtime refused');
@@ -137,12 +149,7 @@ export class HookInstallation{
   if(!existsSync(launchPath)||readFileSync(launchPath,'utf8')!==launcher)privateWrite(launchPath,launcher);
   if(!existsSync(currentPath)||readFileSync(currentPath,'utf8')!==runtimeVersion+'\n')privateWrite(currentPath,runtimeVersion+'\n');
   const launched=JSON.parse(execFileSync('/bin/sh',[launchPath,'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));if(launched.ok!==true||launched.node!==process.version)throw new Error('Hook launcher verification failed');
-  void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});
-  // Newly replaced copies get a grace period for hooks already in flight.
-  // Recheck after that period even if Agent Time stays open for days.
-  setTimeout(()=>{
-   try{if(readFileSync(currentPath,'utf8')===runtimeVersion+'\n')void pruneHookRuntimes(parent,runtimeVersion).catch(()=>{});}catch{/* A changed launcher is left alone. */}
-  },65*60*1000).unref();
+  this.scheduleRuntimePruning();
  }
  verify(){
   if(this.ready()){const check=JSON.parse(execFileSync('/bin/sh',[join(dirname(this.runtime),'launch.sh'),'--self-test'],{encoding:'utf8',timeout:runtimeSelfTestTimeout,maxBuffer:4096}));if(check.ok!==true||check.node!==process.version)throw new Error('Installed hook runtime verification failed');}
