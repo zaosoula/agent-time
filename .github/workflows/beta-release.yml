@@ -16,6 +16,14 @@ on:
         required: true
         default: false
         type: boolean
+      runner:
+        description: macOS runner image (macos-15 is usually available at once; macos-26 as a fallback)
+        required: true
+        default: macos-15
+        type: choice
+        options:
+          - macos-15
+          - macos-26
 
 permissions:
   contents: read
@@ -25,22 +33,25 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  build:
+  # Checks run beside the signed build instead of before it; publishing waits for both.
+  check:
     if: github.ref == 'refs/heads/main'
-    runs-on: macos-26
-    timeout-minutes: 90
-    environment: beta-signing
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '26'
           cache: npm
-      - name: Confirm Apple Silicon and install locked dependencies
+      - name: Install locked dependencies
         run: |
           test "$(uname -m)" = arm64
           npm ci
-          rustup target add aarch64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: check
       - name: Check candidate
         env:
           EXPECTED_VERSION: ${{ inputs.expected_version }}
@@ -51,6 +62,31 @@ jobs:
           npm audit --omit=dev --audit-level=high
           npm run sidecars:build
           cargo test --locked --manifest-path src-tauri/Cargo.toml
+
+  build:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 90
+    environment: beta-signing
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26'
+          cache: npm
+      - name: Confirm Apple Silicon and install locked dependencies
+        env:
+          EXPECTED_VERSION: ${{ inputs.expected_version }}
+        run: |
+          test "$(uname -m)" = arm64
+          npm ci
+          rustup target add aarch64-apple-darwin
+          node scripts/ci-stage-beta.mjs --check-version
+      # Dependencies rebuild only when Cargo.lock or the toolchain changes; the app itself always rebuilds.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: release
       - name: Prepare temporary Apple signing credentials
         env:
           APPLE_CERTIFICATE_B64: ${{ secrets.APPLE_CERTIFICATE_B64 }}
@@ -110,7 +146,7 @@ jobs:
 
   publish:
     if: inputs.publish == true
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
     timeout-minutes: 15
     environment:
