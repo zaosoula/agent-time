@@ -329,6 +329,11 @@ function createStore() {
 
   watch(selectedDate, () => {
     summaryRevision++;
+    // Drop the previous day's summary so the page shows loading, not an empty day, until this one arrives.
+    summaryLoaded.value = false;
+    summary.value = emptySummary;
+    summaryKey = '';
+    summaryToken = undefined;
     selectedSessionKey.value = '';
     dayReview.value = null;
     notes.value = [];

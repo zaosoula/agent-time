@@ -244,7 +244,7 @@ onUnmounted(() => {
           </button>
         </nav>
         <div class="section-label">
-          Projects <span>{{ store.projects.length }}</span>
+          Projects <span v-if="store.summaryLoaded">{{ store.projects.length }}</span>
         </div>
         <button
           :class="['project-row', { selected: store.project === 'all' && showsProject }]"
@@ -262,7 +262,8 @@ onUnmounted(() => {
             <span class="project-dot" :style="{ background: projectColor(name) }"></span>
             <span :title="name">{{ projectDisplay(name, store.projects) }}</span>
           </button>
-          <p v-if="!store.projects.length" class="sidebar-empty">Projects appear when activity is recorded.</p>
+          <p v-if="!store.summaryLoaded && !store.projects.length" class="sidebar-empty">Loading projects…</p>
+          <p v-else-if="!store.projects.length" class="sidebar-empty">Projects appear when activity is recorded.</p>
         </div>
         <div class="sidebar-footer">
           <button

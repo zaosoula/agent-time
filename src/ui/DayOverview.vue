@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, useId, watch } from 'vue';
-import { Activity, ArrowUpRight, Bot, Clock3, GitBranch, Layers3, Minus, Plus, RotateCcw, User, X } from '@lucide/vue';
+import { Activity, ArrowUpRight, Bot, Clock3, GitBranch, Layers3, LoaderCircle, Minus, Plus, RotateCcw, User, X } from '@lucide/vue';
 import InfoPopover from './InfoPopover.vue';
 import { inactivityGaps, parallelism } from './overview-metrics.ts';
 import type { Interval } from '../capture/events.ts';
@@ -262,7 +262,8 @@ function move(event: PointerEvent) {
     <div class="overview-cards">
       <div v-for="figure in figures" :key="figure.label" :class="['overview-card', figure.kind]">
         <span class="figure-label"><component :is="figure.icon" :size="15" />{{ figure.label }}</span>
-        <strong>{{ store.summaryLoaded ? figure.value : '–' }}</strong>
+        <strong v-if="store.summaryLoaded">{{ figure.value }}</strong>
+        <strong v-else><span class="skeleton figure-skeleton" aria-label="Loading"></span></strong>
         <small>{{ figure.detail }}</small>
       </div>
     </div>
@@ -332,7 +333,10 @@ function move(event: PointerEvent) {
             <span v-if="hover.children">{{ hover.roots }} sessions · {{ hover.children }} subagents</span>
             <span>{{ hover.human ? 'You were active' : 'No human activity recorded' }}</span>
           </div>
-          <p v-if="store.summaryLoaded && !areaPath && !humanBars.length" class="chart-empty">No activity recorded in this range.</p>
+          <p v-if="!store.summaryLoaded" class="chart-empty chart-loading" role="status">
+            <span><LoaderCircle :size="15" class="spin" />Loading activity…</span>
+          </p>
+          <p v-else-if="!areaPath && !humanBars.length" class="chart-empty">No activity recorded in this range.</p>
         </div>
       </div>
       <div class="chart-bottom">
@@ -415,6 +419,11 @@ function move(event: PointerEvent) {
 .chart-hover { position: absolute; top: 8px; transform: translateX(-50%); display: flex; flex-direction: column; gap: 3px; padding: 10px 12px; border: 1px solid var(--border-strong); border-radius: 9px; background: var(--panel-raised); font-size: var(--text-xs); pointer-events: none; width: 152px; box-shadow: var(--shadow-popover); }
 .chart-hover span { color: var(--muted); }
 .chart-empty { position: absolute; inset: 0 0 26px; display: grid; place-items: center; margin: 0; color: var(--muted); font-size: var(--text-sm); }
+.chart-loading span { display: inline-flex; align-items: center; gap: 8px; }
+.spin { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
+.figure-skeleton { width: 64px; height: 30px; }
 .chart-bottom { justify-content: space-between; flex-wrap: wrap; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .period-controls { display: flex; gap: 4px; flex-wrap: wrap; }
 .period-controls button { padding: 5px 9px; border-radius: 6px; font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }

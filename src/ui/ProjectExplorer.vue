@@ -126,7 +126,8 @@ const reportedCounts = computed(() => {
         <SessionExplorer :sessions="sessionsFor(group)" :now="store.minute" />
       </div>
     </div>
-    <p v-if="!groups.length" class="empty">
+    <p v-if="!groups.length && !store.summaryLoaded" class="empty">Loading project activity…</p>
+    <p v-else-if="!groups.length" class="empty">
       {{ query ? 'No project matches this search.' : 'No project activity recorded on this day.' }}
     </p>
 
