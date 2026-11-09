@@ -212,3 +212,27 @@ test('a hook links to an unchanged live worker until its next heartbeat is due',
  const late=summarize([stale('w',0),hook('start',400,'tool_start'),hook('end',410,'tool_end')]);
  assert.equal(late.intervals.find(i=>i.state==='running')?.dispatchId,undefined);
 });
+test('background shells count from launch to their completion notice without the idle cap',()=>{
+ const h={sessionId:'s',terminalHandle:'t',hostId:'local',provider:'claude'};
+ const events=[
+  e('p',0,'prompt_submitted',h),e('ts',10,'tool_start',{...h,data:{toolId:'bash'}}),e('te',11,'tool_end',{...h,data:{toolId:'bash',backgroundTaskId:'b1'}}),
+  e('stop',20,'response_stop',{...h,data:{backgroundTasks:['b1']}}),
+  e('done',1800,'prompt_submitted',{...h,data:{backgroundTaskId:'b1',backgroundStatus:'completed'}}),e('stop2',1810,'response_stop',{...h,data:{backgroundTasks:[]}}),
+ ];
+ const summary=summarize(events);
+ const shell=summary.intervals.find(i=>i.background);
+ assert.deepEqual([shell?.start,shell?.end,shell?.proof],[11,1800,'observed']);
+ assert.ok(summary.agentSeconds>=1780,`agent time ${summary.agentSeconds}`);
+ // Without background tracking the same session is capped at the idle threshold.
+ const plain=summarize(events.map(event=>({...event,data:{...event.data,backgroundTaskId:undefined,backgroundTasks:undefined}})));
+ assert.ok(plain.agentSeconds<summary.agentSeconds/2,`plain ${plain.agentSeconds}`);
+});
+test('a background shell missing from Stop ends there, and an unfinished one stops at its last sighting',()=>{
+ const h={sessionId:'s',terminalHandle:'t',hostId:'local',provider:'claude'};
+ const ended=summarize([e('te',10,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('stop',600,'response_stop',{...h,data:{backgroundTasks:[]}})]).intervals.find(i=>i.background);
+ assert.deepEqual([ended?.end,ended?.proof],[600,'inferred']);
+ const open=summarize([e('te',10,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('stop',900,'response_stop',{...h,data:{backgroundTasks:['b1']}})]).intervals.find(i=>i.background);
+ assert.deepEqual([open?.end,open?.proof],[900,'observed']);
+ const legacy=summarize([e('te',10,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('stop',900,'response_stop',h)]).intervals.find(i=>i.background);
+ assert.equal(legacy,undefined);
+});

@@ -76,6 +76,8 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  const workerPrevious=new Map<string,CaptureEvent>(),childLifecycle=new Map<string,CaptureEvent>();
  const active=new Map<string,{event:CaptureEvent;state:'running'|'waiting';session:Session;key:string}>();
  const provisional:Array<{event:CaptureEvent;session:Session;key:string}>=[];
+ /** Background shells by `key:taskId`, open from launch until their completion notice. `seen` is the latest Stop that listed it running. */
+ const background=new Map<string,{event:CaptureEvent;session:Session;key:string;taskId:string;seen?:CaptureEvent}>();
  const turnStarts=new Map<string,CaptureEvent>(),activityAnchors=new Map<string,number[]>();
  const bindings=new Map<string,CaptureEvent>(),toolBindings=new Map<string,CaptureEvent>();
  const workerSnapshots=new Map<string,CaptureEvent[]>();let activityPrevious:CaptureEvent|undefined;
@@ -101,6 +103,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
     for(const i of standaloneIntervals.get(sessionKey)||[])if(!i.dispatchId){i.dispatchId=e.dispatchId;i.runId=e.runId;i.taskId=e.taskId;i.workspaceId=e.workspaceId;}
     standaloneIntervals.delete(sessionKey);
     for(const [id,a] of [...active])if(a.key===standaloneKey){active.delete(id);a.key=key;a.session=s;active.set(key+id.slice(standaloneKey.length),a);}
+    for(const [id,b] of [...background])if(b.key===standaloneKey){background.delete(id);b.key=key;b.session=s;background.set(key+':'+b.taskId,b);}
     const turn=turnStarts.get(standaloneKey);if(turn){turnStarts.delete(standaloneKey);turnStarts.set(key,turn);}
     const oldFences=sessionFences.get(standaloneKey);if(oldFences){sessionFences.delete(standaloneKey);sessionFences.set(key,[...(sessionFences.get(key)||[]),...oldFences]);}
     const oldAnchors=activityAnchors.get(standaloneKey);if(oldAnchors){activityAnchors.delete(standaloneKey);activityAnchors.set(key,[...(activityAnchors.get(key)||[]),...oldAnchors]);}
@@ -126,6 +129,28 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    else {unresolved.push({reason:'Unmatched tool continuity is unknown across an observation gap',eventId:a.event.eventId});if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});}
    active.delete(id);
   }
+ }
+ /** A background shell works without hook events, so its time is not capped by agent idleness. */
+ function addBackground(b:{event:CaptureEvent;session:Session},end:CaptureEvent,proof:Interval['proof']){
+  const count=intervals.length;add(b.event,end,'running',b.session,proof);
+  if(intervals.length>count)intervals[intervals.length-1]!.background=true;
+ }
+ function trackBackground(e:CaptureEvent,key:string,s:Session){
+  const taskId=typeof e.data?.backgroundTaskId==='string'?e.data.backgroundTaskId:undefined;
+  if(e.kind==='tool_end'&&taskId){if(!background.has(key+':'+taskId))background.set(key+':'+taskId,{event:e,session:s,key,taskId});return;}
+  if(e.kind==='prompt_submitted'&&taskId){
+   const b=background.get(key+':'+taskId);if(b){addBackground(b,e,'observed');background.delete(key+':'+taskId);}
+   return;
+  }
+  // Stop lists the shells still running: a shell missing from it finished at the latest then.
+  if(e.kind==='response_stop'&&Array.isArray(e.data?.backgroundTasks)){
+   const running=new Set(e.data.backgroundTasks);
+   for(const [id,b] of [...background])if(b.key===key){
+    if(running.has(b.taskId))b.seen=e;else{addBackground(b,e,'inferred');background.delete(id);}
+   }
+  }
+  // Ending the session stops its shells.
+  if(e.kind==='session_end')for(const [id,b] of [...background])if(b.key===key){addBackground(b,e,'inferred');background.delete(id);}
  }
  function applyBinding(e:CaptureEvent,b:CaptureEvent):CaptureEvent {return {...e,workspaceId:b.workspaceId,runId:b.runId,taskId:b.taskId,dispatchId:b.dispatchId};}
  function resolve(e:CaptureEvent):CaptureEvent {
@@ -239,6 +264,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    if(start){add(start,e,'running',s,'observed');childLifecycle.delete(key);}
    else {unresolved.push({reason:'Native child end has no observed start',eventId:e.eventId});s.proof='unresolved';}
   }
+  trackBackground(e,key,s);
   if(s.state==='completed'&&!child)continue;
   if(e.kind==='prompt_submitted'){
    const previous=turnStarts.get(key);if(previous)unresolved.push({reason:'Turn replaced before a response stop',eventId:previous.eventId});
@@ -269,6 +295,8 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   unresolved.push({reason:'Open tool has no observed end; credited one provisional minute without extending to now',eventId:a.event.eventId});
   if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});
  }
+ // A shell still running is credited up to the last Stop that listed it, never extended to now.
+ for(const b of background.values())if(b.seen)addBackground(b,b.seen,'observed');
  for(const c of childLifecycle.values())unresolved.push({reason:'Native child has no observed end; not extended to now',eventId:c.eventId});
  for(const start of turnStarts.values())unresolved.push({reason:'Open turn has no observed response stop; not extended to now',eventId:start.eventId});
  for(const anchors of activityAnchors.values())anchors.sort((a,b)=>a-b);
@@ -276,6 +304,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  const intervalKey=(i:Interval)=>i.child?`child:${i.hostId}:${i.sessionId}:${i.agentId}`:i.dispatchId?`dispatch:${i.hostId}:${i.dispatchId}`:`session:${i.hostId}:${i.sessionId}`;
  const idleGaps=new Map<string,Array<[number,number]>>();
  const capped=(i:Interval,key:string):Array<[number,number]>=>{
+  if(i.background)return [[i.start,i.end]];
   const anchors=activityAnchors.get(key)||[];
   let low=0,high=anchors.length;
   while(low<high){const mid=(low+high)>>>1;if(anchors[mid]!<=i.start)low=mid+1;else high=mid;}

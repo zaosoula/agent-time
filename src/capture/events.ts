@@ -12,6 +12,8 @@ export interface Interval {
   start: number; end: number; state: 'running' | 'turn' | 'grouped' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
   sourceEventIds: string[]; hostId?: string; workspaceId?: string; sessionId?: string; agentId?: string;
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
+  /** Time a background shell ran without hook events; not capped by agent idleness. */
+  background?: boolean;
   tabId?: string; terminalHandle?: string; tabTitle?: string; browserDomain?: string; browserOrigin?: string; browserBundleId?: string; browserUrl?: string; browserTitle?: string;
   foregroundName?: string; foregroundBundleId?: string; userAttribution?: 'assigned' | 'unassigned'; reviewSegment?: 'before' | 'after';
   attributionSource?:string;attributionReason?:string;
