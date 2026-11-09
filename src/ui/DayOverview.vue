@@ -402,7 +402,7 @@ function move(event: PointerEvent) {
 .y-axis { position: relative; }
 .y-axis span { position: absolute; right: 0; transform: translateY(50%); font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .chart-plot { position: relative; padding-bottom: 26px; border-radius: 6px; outline-offset: 4px; min-width: 0; }
-.chart-plot svg { display: block; width: 100%; height: var(--plot-height); overflow: visible; }
+.chart-plot > svg { display: block; width: 100%; height: var(--plot-height); overflow: visible; }
 .grid { stroke: var(--border); stroke-dasharray: 3 5; vector-effect: non-scaling-stroke; }
 .grid.vertical { opacity: 0.6; }
 .idle { opacity: 0.35; }
@@ -420,6 +420,7 @@ function move(event: PointerEvent) {
 .chart-hover span { color: var(--muted); }
 .chart-empty { position: absolute; inset: 0 0 26px; display: grid; place-items: center; margin: 0; color: var(--muted); font-size: var(--text-sm); }
 .chart-loading span { display: inline-flex; align-items: center; gap: 8px; }
+.chart-loading svg { flex: none; width: 15px; height: 15px; }
 .spin { animation: spin 0.9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .spin { animation: none; } }
