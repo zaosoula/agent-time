@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue';
-import { CheckCircle2, CircleHelp } from '@lucide/vue';
-import { dateTime } from './format.ts';
+import { CircleHelp } from '@lucide/vue';
 import type { CaptureStatus } from './transport.ts';
 import type { HookInstallationStatus } from '../capture/hook-installation.ts';
 import type { CaptureHealth } from '../capture/health.ts';
@@ -69,32 +68,14 @@ const macPermission = computed(
     !macEnabled.value ||
     !props.health?.sources.some((source) => source.id === 'macos' && source.state === 'permission-limited'),
 );
-const allAgentsDelivered = computed(() =>
-  enabledAgents.value.every((agent) => {
-    const targets = props.hooks?.targets.filter((target) => target.provider === agent.id) || [];
-    return (
-      targets.length > 0 &&
-      targets.every((target) => target.state === 'installed' && target.lastEvent !== null)
-    );
-  }),
-);
+// One delivered event proves the installed hooks reach Agent Time. Requiring every account or
+// profile kept the banner open forever for accounts that are never used; Capture health still
+// shows each target.
 const verified = computed(
   () =>
     (enabledAgents.value.length > 0 || macEnabled.value) &&
-    allAgentsDelivered.value &&
+    (!enabledAgents.value.length || deliveredAgent.value) &&
     (!macEnabled.value || deliveredMac.value),
-);
-const lastEvent = computed(() =>
-  Math.max(
-    0,
-    ...(props.hooks?.targets
-      .filter(
-        (target) =>
-          enabledAgents.value.some((agent) => agent.id === target.provider) && target.state === 'installed',
-      )
-      .map((target) => target.lastEvent || 0) || []),
-    deliveredMac.value ? props.health?.latest.macos || 0 : 0,
-  ),
 );
 const stage = computed(() => {
   if (!props.status) return 'checking';
@@ -103,8 +84,27 @@ const stage = computed(() => {
   if (enabledAgents.value.length && !hooksCurrent.value) return 'hooks';
   return verified.value ? 'verified' : 'waiting';
 });
-// Once dismissed, the banner stays hidden unless hooks need fixing, which needs the user's action.
-const visible = computed(() => stage.value !== 'checking' && (!dismissed.value || stage.value === 'hooks'));
+// Setup verified once stays verified: a hook runtime update restarts delivery tracking, but
+// waiting for the next event after an update needs no attention.
+const verifiedOnceKey = 'agent-time.capture-verified-once';
+const verifiedOnce = ref(localStorage.getItem(verifiedOnceKey) === '1');
+watch(
+  stage,
+  (value) => {
+    if (value !== 'verified') return;
+    verifiedOnce.value = true;
+    localStorage.setItem(verifiedOnceKey, '1');
+  },
+  { immediate: true },
+);
+// Hidden once complete. Dismissed banners stay hidden unless hooks need fixing, which needs the user.
+const visible = computed(
+  () =>
+    stage.value !== 'checking' &&
+    stage.value !== 'verified' &&
+    !(stage.value === 'waiting' && verifiedOnce.value) &&
+    (!dismissed.value || stage.value === 'hooks'),
+);
 function dismiss() {
   dismissed.value = true;
   localStorage.setItem(key.value, '1');
@@ -114,15 +114,12 @@ function dismiss() {
   <section
     v-if="visible"
     class="setup-verification"
-    :class="{ complete: stage === 'verified' }"
     aria-label="Capture setup verification"
   >
-    <CheckCircle2 v-if="stage === 'verified'" :size="18" /><CircleHelp v-else :size="18" />
+    <CircleHelp :size="18" />
     <div>
       <strong>{{
-        stage === 'verified'
-          ? 'Initial delivery confirmed'
-          : stage === 'paused'
+        stage === 'paused'
             ? 'Capture is paused'
             : stage === 'disabled'
               ? 'Choose what to capture'
@@ -130,11 +127,7 @@ function dismiss() {
                 ? 'Connect your agent hooks'
                 : 'Waiting for the first captured event'
       }}</strong>
-      <p v-if="stage === 'verified'">
-        Every enabled source has a recorded event; the latest was at
-        {{ dateTime(lastEvent) }}. This confirms setup worked; Capture health shows what is arriving now.
-      </p>
-      <p v-else-if="stage === 'paused'">Start capture to check that events reach Agent Time.</p>
+      <p v-if="stage === 'paused'">Start capture to check that events reach Agent Time.</p>
       <p v-else-if="stage === 'disabled'">
         Enable Mac activity or an agent in Settings, then verify one real observation.
       </p>
@@ -175,7 +168,7 @@ function dismiss() {
     <button v-else-if="stage === 'hooks'" @click="emit('hooks')">Review hooks</button>
     <button v-else-if="stage === 'waiting'" @click="emit('health')">Check capture</button>
     <button v-if="stage !== 'hooks' && stage !== 'disabled'" class="btn btn-quiet btn-sm" @click="dismiss">
-      {{ stage === 'verified' ? 'Done' : 'Hide' }}
+      Hide
     </button>
     </div>
   </section>
@@ -202,13 +195,6 @@ function dismiss() {
   color: var(--status-warning);
   flex: none;
   margin-top: 1px;
-}
-.setup-verification.complete {
-  border-color: color-mix(in srgb, var(--status-good) 38%, transparent);
-  background: color-mix(in srgb, var(--status-good) 8%, transparent);
-}
-.setup-verification.complete > svg {
-  color: var(--status-good);
 }
 .setup-verification > div {
   flex: 1;
