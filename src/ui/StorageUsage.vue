@@ -9,7 +9,7 @@ import {
 } from './transport.ts';
 import type { StorageUsage } from '../capture/storage-usage.ts';
 import { humanizeError } from './errors.ts';
-import { bytes as size, count } from './format.ts';
+import { bytes as size } from './format.ts';
 import {storageProjection} from './storage-presentation.ts';
 import { toast } from './toast.ts';
 const props=defineProps<{ running: boolean;limit?:number }>();
@@ -21,28 +21,20 @@ const usage = ref<StorageUsage | null>(null),
 const pending = ref<PendingStorage | null>(null),
   prepared = ref<PreparedStorage | null>(null);
 const lastResult = ref<StorageReplacementResult | null>(null);
-const rows = computed(() =>
-  usage.value
-    ? [
-        { name: 'Event database', value: usage.value.database },
-        { name: 'SQLite write-ahead log', value: usage.value.wal },
-        { name: 'SQLite shared memory', value: usage.value.sharedMemory },
-        { name: 'Pending hook events', value: usage.value.spool },
-        { name: 'Generated hook runtimes', value: usage.value.runtimes },
-        { name: 'Local archives', value: usage.value.exports },
-      ]
-    : [],
-);
-const recent = computed(() => {
-  const days = new Map<string, { events: number; bytes: number }>();
-  for (const row of usage.value?.byDay || []) {
-    const day = days.get(row.date) || { events: 0, bytes: 0 };
-    day.events += row.events;
-    day.bytes += row.payloadBytes;
-    days.set(row.date, day);
-  }
-  return [...days].sort((a, b) => b[0].localeCompare(a[0])).slice(0, 7);
+// What a person recognizes, not how SQLite lays it out: database files are one "history".
+const parts = computed(() => {
+  const u = usage.value;
+  if (!u) return [];
+  return [
+    { name: 'Your history', detail: 'Recorded activity, sessions and reviews', bytes: u.database.bytes + u.wal.bytes + u.sharedMemory.bytes, color: 'var(--agent-chart)' },
+    { name: 'Backups', detail: 'Copies kept from earlier storage upgrades', bytes: u.exports.bytes, color: 'var(--human-chart)' },
+    { name: 'Agent connections', detail: 'Hook helpers and events waiting to be saved', bytes: u.runtimes.bytes + u.spool.bytes, color: 'var(--status-good)' },
+  ];
 });
+const budgetBytes = computed(() => ((props.limit ?? usage.value?.storageLimitMB ?? 5120) * 1024 * 1024));
+const scale = computed(() => Math.max(budgetBytes.value, usage.value?.totalBytes || 0, 1));
+const overBudget = computed(() => (usage.value?.totalBytes || 0) > budgetBytes.value);
+const diskLow = computed(() => usage.value?.freeBytes !== null && usage.value?.freeBytes !== undefined && usage.value.freeBytes < 2 * 1024 ** 3);
 const forecast=computed(()=>storageProjection(usage.value?.byDay||[],usage.value?.history));
 async function refresh() {
   busy.value = true;
@@ -108,157 +100,85 @@ onMounted(() => {
 <template>
   <section class="storage-usage card" aria-labelledby="storage-title">
     <div class="storage-head">
-      <div>
-        <h3 id="storage-title">Storage</h3>
-        <p>See what Agent Time keeps on this Mac. Index space is part of the database size.</p>
-      </div>
-      <button class="btn btn-sm" :disabled="busy" @click="refresh">
-        {{ busy ? 'Measuring…' : 'Refresh' }}
-      </button>
+      <h3 id="storage-title">Storage</h3>
+      <span v-if="usage" class="storage-used">{{ size(usage.totalBytes) }} of {{ size(budgetBytes) }} used</span>
+      <button class="btn btn-sm" :disabled="busy" @click="refresh">{{ busy ? 'Measuring…' : 'Refresh' }}</button>
     </div>
     <p v-if="error" role="alert" class="storage-error">{{ error }}</p>
     <template v-if="usage">
-      <strong class="storage-total"
-        >{{ size(usage.totalBytes) }} total · {{ count(usage.eventCount) }} events</strong
-      >
-      <p v-if="usage.freeBytes !== null">
-        {{ size(usage.freeBytes) }} available on this disk.<span
-          v-if="usage.freeBytes < Math.max(usage.database.bytes,(usage.history?.originalBytes||0)+(usage.history?.hotBytes||0)) * 3 + 1024 * 1024 * 1024"
-          class="storage-error"
-        >
-          A verified compacted copy needs at least {{ size(Math.max(usage.database.bytes,(usage.history?.originalBytes||0)+(usage.history?.hotBytes||0)) * 3 + 1024 * 1024 * 1024) }} free;
-          clear space before preparing it.</span
-        >
-      </p>
-      <div class="storage-action" role="status">
-        <strong>{{ usage.history?.efficient ? 'Automatic storage care is on' : 'Optimize history to enable automatic storage care' }}</strong>
-        <p v-if="usage.history?.efficient">All original timestamps and review decisions are kept. Older events share compressed records; recent data is kept ready for capture.</p>
-        <p v-else>Prepare an optimized copy below to reduce storage while keeping every remaining event and the same timing calculations.</p>
-        <p v-if="usage.history?.coldEvents">{{ count(usage.history.coldEvents) }} events use {{ size(usage.history.compressedBytes) }} of compressed payload, saving {{ size(Math.max(0,usage.history.originalBytes-usage.history.compressedBytes)) }}. Recent uncompressed payload: {{ size(usage.history.hotBytes) }}. Event references and indexes are included in the database size above.</p>
-        <label>Storage budget <input type="number" min="1" max="1024" step="1" :value="(limit??usage.storageLimitMB??5120)/1024" :disabled="busy" @change="changeBudget" /> GB</label>
-        <p>Includes the database, archives, hook runtimes and pending events. Agent Time compresses history and keeps 1 GB free on disk. Capture pauses if it cannot stay within your budget. Unique history is never deleted automatically.</p>
-        <p v-if="usage.care?.paused" class="storage-error">Capture is paused for storage. Free disk space, increase the budget, or remove a backup you no longer need, then start capture.</p>
-        <p v-if="usage.care?.error" class="storage-error">Storage care could not finish: {{ usage.care.error }}</p>
-        <p v-else-if="usage.care?.at">Last storage care: {{ new Date(usage.care.at*1000).toLocaleString() }}.</p>
+      <div class="storage-bar" role="img" :aria-label="`${size(usage.totalBytes)} of ${size(budgetBytes)} used`">
+        <span
+          v-for="part in parts.filter((item) => item.bytes > 0)"
+          :key="part.name"
+          :style="{ width: `max(3px, ${(part.bytes / scale) * 100}%)`, background: part.color }"
+          :title="`${part.name}: ${size(part.bytes)}`"
+        ></span>
       </div>
-      <p v-if="lastResult" role="status">
-        {{
-          lastResult.status === 'applied'
-            ? 'Storage replacement completed. The prior database remains in Local archives as ' +
-              lastResult.backup +
-              '. Review capture before choosing whether to delete it.'
-            : 'Storage replacement was cancelled because data changed or the prior swap was interrupted. The current database was kept.'
-        }}
+      <div class="storage-legend">
+        <span v-for="part in parts" :key="part.name"><i :style="{ background: part.color }"></i>{{ part.name }}</span>
+      </div>
+
+      <p v-if="usage.care?.paused" class="storage-error">
+        Capture is paused to stay within your limit. Raise the limit or delete a backup you no longer need.
       </p>
-      <dl>
-        <div v-for="row in rows" :key="row.name">
-          <dt>{{ row.name }}</dt>
-          <dd>{{ size(row.value.bytes) }}<small v-if="row.value.truncated"> · partial scan</small></dd>
-        </div>
-      </dl>
-      <p>
-        Database indexes occupy about {{ size(usage.indexes.bytes) }} within the event database. Recent
-        captured payload, excluding database and index overhead:
+      <p v-else-if="overBudget" class="storage-error">
+        Over your limit. Capture pauses if Agent Time cannot compress enough; raise the limit or delete a backup.
       </p>
-      <ul>
-        <li v-for="[date, day] in recent" :key="date">
-          <span>{{ date }}</span
-          ><span>{{ count(day.events) }} events · {{ size(day.bytes) }}</span>
+      <p v-else-if="diskLow" class="storage-error">Your Mac is almost out of space. Capture pauses if less than 1 GB is free.</p>
+
+      <ul class="storage-list">
+        <li v-for="part in parts" :key="part.name">
+          <i :style="{ background: part.color }"></i>
+          <span><strong>{{ part.name }}</strong><small>{{ part.detail }}</small></span>
+          <b>{{ size(part.bytes) }}</b>
         </li>
       </ul>
-      <p v-if="!recent.length">No events recorded in the last 30 days.</p>
-      <p v-if="forecast.bytes !== null">
-        At the recent rate, another 30 tracked days would add about {{ size(forecast.bytes!) }} of {{ forecast.compressed ? 'compressed' : 'uncompressed' }} payload, before event references and index overhead. This estimate uses {{ forecast.compressed ? 'your measured compression rate' : 'captured payload sizes' }}.
+
+      <label class="storage-limit">
+        <span><strong>Storage limit</strong><small>Agent Time compresses older history and never deletes it on its own.</small></span>
+        <span><input type="number" min="1" max="1024" step="1" :value="budgetBytes / 1024 ** 3" :disabled="busy" @change="changeBudget" /> GB</span>
+      </label>
+      <p v-if="forecast.bytes !== null" class="storage-note">At your recent pace, a month of tracking adds about {{ size(forecast.bytes!) }}.</p>
+      <p v-if="usage.care?.error" class="storage-error">Storage cleanup could not finish: {{ usage.care.error }}</p>
+      <p v-if="lastResult && lastResult.status !== 'applied'" class="storage-note">
+        A storage upgrade was cancelled because data changed. Your current data was kept.
       </p>
-      <div v-if="usage.wal.bytes > 0" class="storage-action">
-        <p>
-          Reclaim the SQLite write-ahead log after saved events are checkpointed. This keeps all observations
-          and review decisions.
-        </p>
-        <button class="btn" :disabled="busy" @click="reclaim">
-          Reclaim {{ size(usage.wal.bytes) }} of temporary space
-        </button>
+
+      <div v-if="!usage.history?.efficient || pending" class="storage-action">
+        <template v-if="!pending">
+          <span><strong>Save space</strong><small>Compress your history once. Everything is checked before switching, and the original is kept as a backup.</small></span>
+          <button class="btn btn-primary" :disabled="busy || running" @click="compact">{{ busy ? 'Preparing…' : 'Save space' }}</button>
+          <small v-if="running">Pause capture first.</small>
+        </template>
+        <template v-else>
+          <span><strong>Ready to save {{ prepared ? size(prepared.savingsBytes) : 'space' }}</strong><small>Quit and reopen Agent Time to finish.</small></span>
+          <button class="btn" :disabled="busy" @click="cancel">Cancel</button>
+        </template>
       </div>
-      <div class="storage-action">
-        <p>
-          Create a verified optimized copy. Every event ID, timestamp, payload and review decision is checked before replacement on the next launch. The original stays as a compressed recovery archive. Older connected agent tools may need to reconnect after this one-time upgrade.
-        </p>
-        <button v-if="!pending" class="btn btn-primary" :disabled="busy || running" @click="compact">
-          {{ busy ? 'Verifying copy…' : 'Prepare optimized database' }}
-        </button>
-        <small v-if="running">Pause capture before preparing space recovery.</small>
-        <template v-if="pending"
-          ><strong
-            >{{ pending.kind === 'compaction' ? 'Optimized database' : 'Archive replacement' }} ready for the
-            next launch</strong
-          >
-          <p v-if="prepared">
-            Live database reduction: {{ size(prepared.savingsBytes) }}. Events:
-            {{ count(prepared.beforeRows) }} → {{ count(prepared.afterRows) }}. The rollback archive will also
-            use disk space.
-          </p>
-          <p>
-            Quit Agent Time completely, then reopen it to apply. If the source changes first, replacement is
-            cancelled and current data remains in place.
-          </p>
-          <button class="btn" :disabled="busy" @click="cancel">Cancel pending replacement</button></template
-        >
+      <div v-else-if="usage.wal.bytes > 64 * 1024 * 1024" class="storage-action">
+        <span><strong>Free temporary space</strong><small>{{ size(usage.wal.bytes) }} can be released without losing anything.</small></span>
+        <button class="btn" :disabled="busy" @click="reclaim">Free up</button>
       </div>
     </template>
   </section>
 </template>
 <style scoped>
-.storage-usage {
-  margin-top: 16px;
-  padding: 19px 20px;
-  font-size: var(--text-sm);
-}
-.storage-head {
-  display: flex;
-  align-items: start;
-  justify-content: space-between;
-  gap: 16px;
-}
-.storage-head h3 {
-  font-size: var(--text-md);
-  margin: 0 0 6px;
-}
-.storage-usage p {
-  color: var(--muted);
-  line-height: 1.5;
-  margin: 6px 0 12px;
-}
-.storage-action input {width: 90px; margin: 0 6px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px;}
-.storage-total {
-  display: block;
-  font-size: var(--text-md);
-  margin: 12px 0;
-}
-.storage-usage dl {
-  margin: 0;
-}
-.storage-usage dl div,
-.storage-usage li {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 7px 0;
-  border-top: 1px solid var(--border);
-}
-.storage-usage dd {
-  margin: 0;
-  font-variant-numeric: tabular-nums;
-}
-.storage-usage ul {
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-.storage-error {
-  color: var(--status-danger) !important;
-}
-.storage-action {
-  border-top: 1px solid var(--border);
-  padding-top: 10px;
-}
+.storage-usage { margin-top: 16px; padding: 19px 20px; font-size: var(--text-sm); }
+.storage-head { display: flex; align-items: center; gap: 12px; }
+.storage-head h3 { margin: 0; font-size: var(--text-md); }
+.storage-used { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
+.storage-bar { display: flex; gap: 2px; height: 22px; margin: 14px 0 8px; padding: 0; overflow: hidden; border-radius: 6px; background: var(--hover); }
+.storage-bar span { height: 100%; }
+.storage-legend { display: flex; flex-wrap: wrap; gap: 6px 16px; color: var(--muted); font-size: var(--text-xs); }
+.storage-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.storage-legend i, .storage-list i { width: 9px; height: 9px; flex: none; border-radius: 50%; }
+.storage-list { margin: 16px 0 0; padding: 0; list-style: none; }
+.storage-list li, .storage-limit, .storage-action { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-top: 1px solid var(--border); }
+.storage-list li > span, .storage-limit > span:first-child, .storage-action > span { flex: 1; min-width: 0; }
+.storage-list strong, .storage-limit strong, .storage-action strong { display: block; font-weight: 550; }
+.storage-list small, .storage-limit small, .storage-action small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-xs); }
+.storage-list b { font-weight: 500; font-variant-numeric: tabular-nums; }
+.storage-limit input { width: 64px; margin-right: 4px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; }
+.storage-note { margin: 4px 0 8px; color: var(--muted); font-size: var(--text-xs); }
+.storage-error { margin: 12px 0 0; color: var(--status-danger); }
 </style>
