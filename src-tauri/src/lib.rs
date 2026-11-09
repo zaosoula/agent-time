@@ -24,11 +24,29 @@ fn stop_owned(child:&mut Child) {
  let _=child.kill();let _=child.wait();
 }
 struct LaunchSpec {node:PathBuf,cli:PathBuf,output:PathBuf,helper:PathBuf,keychain:PathBuf,path:String}
+/// Collector diagnostics: its stderr plus the bridge's own restart and timeout notes. Kept
+/// small by rotating to one previous file.
+const COLLECTOR_LOG_BYTES:u64=1024*1024;
+fn collector_log(output:&std::path::Path)->Option<std::fs::File>{
+ let path=output.join("collector.log");
+ if std::fs::metadata(&path).map(|meta|meta.len()>COLLECTOR_LOG_BYTES).unwrap_or(false){let _=std::fs::rename(&path,output.join("collector.log.1"));}
+ let mut options=std::fs::OpenOptions::new();options.create(true).append(true);
+ #[cfg(unix)] std::os::unix::fs::OpenOptionsExt::mode(&mut options,0o600);
+ options.open(path).ok()
+}
+fn log_collector(output:&std::path::Path,message:&str){
+ if let Some(mut file)=collector_log(output){
+  let at=SystemTime::now().duration_since(UNIX_EPOCH).map(|d|d.as_secs()).unwrap_or(0);
+  let _=writeln!(file,"[bridge {at}] {message}");
+ }
+}
 impl LaunchSpec {
  fn spawn(&self)->Result<(Child,ChildStdin,ChildStdout),String>{
   let mut command=Command::new(&self.node);
   command.arg(&self.cli).arg("protocol").arg("--output").arg(&self.output).arg("--probe").arg(&self.helper).arg("--keychain").arg(&self.keychain)
-   .env("PATH",&self.path).stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::inherit());
+   .env("PATH",&self.path).stdin(Stdio::piped()).stdout(Stdio::piped())
+   .stderr(collector_log(&self.output).map(Stdio::from).unwrap_or_else(Stdio::inherit));
+  log_collector(&self.output,"starting collector");
   let mut child=spawn_owned(&mut command).map_err(|e|e.to_string())?;
   let input=child.stdin.take().ok_or("sidecar stdin unavailable")?;
   let output=child.stdout.take().ok_or("sidecar stdout unavailable")?;
@@ -127,9 +145,13 @@ impl Bridge {
   if restart.closed{return Err("Collector stopped for update or exit".into());}
   if self.child_alive()?{return Ok(());}
   if restart.window.elapsed()>Duration::from_secs(300){restart.window=Instant::now();restart.attempts=0;}
-  if restart.attempts>=3{return Err("Collector repeatedly exited; reopen Agent Time to retry".into());}
+  if restart.attempts>=3{
+   if restart.attempts==3{restart.attempts+=1;log_collector(&self.launch.output,"collector exited 3 times in 5 minutes; not restarting");}
+   return Err("Collector repeatedly exited; reopen Agent Time to retry".into());}
   restart.attempts+=1;
   let attempt=restart.attempts;
+  let status=self.child.lock().ok().and_then(|mut child|child.try_wait().ok().flatten()).map(|status|format!("{status}")).unwrap_or_else(||"unknown status".into());
+  log_collector(&self.launch.output,&format!("collector exited ({status}); restart attempt {attempt}"));
   restart.restarting=true;
   drop(restart);
   let result=self.respawn(attempt);
@@ -205,6 +227,7 @@ impl Bridge {
     }
     // A live but wedged sidecar cannot be restarted by ensure_live. Force its
     // next request through the same bounded recovery path as a crashed child.
+    log_collector(&self.launch.output,&format!("`{method}` got no reply within {}s; stopping the collector",timeout.as_secs()));
     if let Ok(mut child)=self.child.lock(){kill_owned(&mut child);}
     Err("Collector request timed out; restarting capture on the next check".into())
    },

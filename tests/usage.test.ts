@@ -65,3 +65,22 @@ test('provider usage switches skip disabled logs while retaining previously impo
   assert.equal(reader.summary().days.find(d=>d.provider==='claude')?.tokens,30);assert.equal(reader.summary().days.find(d=>d.provider==='codex')?.tokens,100);
  }finally{await reader.close();rmSync(root,{recursive:true});}
 });
+test('captured sessions resume from saved progress and start over when history changes',async()=>{
+ const {mkdtempSync,writeFileSync,rmSync}=await import('node:fs');const {tmpdir}=await import('node:os');const {join}=await import('node:path');const {setTimeout:sleep}=await import('node:timers/promises');const {DatabaseSync}=await import('node:sqlite');const {UsageReader}=await import('../src/usage/reader.ts');
+ const root=mkdtempSync(join(tmpdir(),'ade-usage-captured-'));
+ writeFileSync(join(root,'s.jsonl'),JSON.stringify({type:'assistant',timestamp:new Date().toISOString(),sessionId:'s',message:{id:'m',model:'claude-opus-5-5',usage:{input_tokens:10,output_tokens:20}}})+'\n');
+ const path=join(root,'usage.sqlite'),db=new DatabaseSync(path);db.exec('CREATE TABLE events(event_id TEXT PRIMARY KEY,observed_at REAL,payload TEXT)');
+ db.prepare('INSERT INTO events VALUES(?,?,?)').run('other-1',Date.now()/1000-5,JSON.stringify({source:'macos',kind:'activity'}));
+ db.prepare('INSERT INTO events VALUES(?,?,?)').run('hook-1',Date.now()/1000-10,JSON.stringify({source:'hook',provider:'claude',sessionId:'s'}));
+ const open=async()=>{const reader=new UsageReader(path,[{provider:'claude',accountId:'a',path:root}],async()=>({ok:true,result:{rateLimits:{},claude:{},codex:{}}}),'');reader.start();for(let i=0;i<100&&reader.summary().scanning;i++)await sleep(10);return reader;};
+ try{
+  const tokens=async()=>{const reader=await open();try{return reader.summary().days[0]?.tokens;}finally{await reader.close();}};
+  assert.equal(await tokens(),30);
+  // Saved progress covers the hook row, so it is not read again.
+  db.prepare("UPDATE events SET payload=? WHERE event_id='hook-1'").run(JSON.stringify({source:'macos',kind:'activity'}));
+  assert.equal(await tokens(),30);
+  // Rows removed from the covered history invalidate it; the session is no longer captured.
+  db.prepare("DELETE FROM events WHERE event_id='other-1'").run();
+  assert.equal(await tokens(),undefined);
+ }finally{db.close();rmSync(root,{recursive:true});}
+});
