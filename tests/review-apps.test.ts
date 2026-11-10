@@ -74,3 +74,52 @@ test('review shortcuts preserve native buttons and picker keys while Space still
  assert.equal(reviewShortcutAllowed('j',{...row,inReview:false}),false);
  assert.equal(reviewShortcutAllowed('j',{...row,nativeControl:true}),true);
 });
+
+test('context groups condense repeated visits without filling gaps or changing source visits',async()=>{
+ const {reviewContextGroups}=await import('../src/ui/review-apps.ts');
+ const input=Array.from({length:134},(_,i)=>interval('visit'+i,i*20,i*20+5));
+ const before=JSON.stringify(input),visits=buildAppReviewGroups(input),contexts=reviewContextGroups(visits);
+ assert.equal(contexts.length,1);const context=contexts[0]!;
+ assert.equal(context.label,'General activity');assert.equal(context.seconds,670);assert.equal(context.groups.length,134);
+ assert.deepEqual(new Set(context.groups),new Set(visits));assert.equal(JSON.stringify(input),before);
+ assert.deepEqual(context.groups.map(g=>[g.start,g.end]),input.map(i=>[i.start,i.end]));
+ assert.equal(reviewTimelineBars(input,visits,{start:0,end:2680}).length,134);
+ assert.equal(reviewAppSections(visits)[0]!.contexts.length,1);
+ const selected=Object.fromEntries(context.groups.map(g=>[reviewGroupId(g),true]));
+ assert.equal(reviewSelection(visits,selected).pairs.length,134);assert.equal(reviewSelection(visits,selected).seconds,670);
+});
+test('context groups keep projects, review decisions, pages, apps and split segments separate',async()=>{
+ const {reviewContextGroups}=await import('../src/ui/review-apps.ts');
+ const input=[
+  interval('a',0,5,{browserUrl:'https://example.com/a',browserTitle:'Page A'}),
+  interval('b',20,25,{browserUrl:'https://example.com/a',browserTitle:'Page A'}),
+  interval('c',40,45,{browserUrl:'https://example.com/b',browserTitle:'Page B'}),
+  interval('d',60,65,{browserUrl:'https://example.com/a',browserTitle:'Page A',workspaceId:'manual::/a',userAttribution:'assigned'}),
+  interval('e',80,85,{browserUrl:'https://example.com/a',browserTitle:'Page A',workspaceId:'auto::/a'}),
+  interval('f',100,105,{browserUrl:'https://example.com/a',browserTitle:'Page A',userAttribution:'unassigned'}),
+  interval('g',120,125,{foregroundBundleId:'brave',foregroundName:'Brave',browserUrl:'https://example.com/a',browserTitle:'Page A'}),
+  interval('s',140,145,{reviewSegment:'before',userAttribution:'assigned',workspaceId:'manual::/a'}),
+  interval('s',145,150,{reviewSegment:'after',userAttribution:'unassigned'}),
+ ];
+ const visits=buildAppReviewGroups(input),contexts=reviewContextGroups(visits);
+ assert.equal(contexts.length,8);assert.equal(contexts.find(c=>c.groups.length===2)?.label,'Page A');
+ assert.equal(contexts.reduce((sum,c)=>sum+c.seconds,0),45);
+ assert.equal(new Set(contexts.map(c=>c.key)).size,8);
+ for(const context of contexts){
+  assert.equal(new Set(context.groups.map(g=>JSON.stringify([g.appKey,g.projectPath,g.userAttribution,g.reviewSegment,g.browserUrl]))).size,1);
+ }
+ const keys=Object.fromEntries(contexts.flatMap(c=>c.groups).map(g=>[reviewGroupId(g),true]));
+ assert.equal(reviewSelection(visits,keys).pairs.length,7);
+});
+test('context checkbox state includes hidden visits and excludes split activity',async()=>{
+ const {reviewContextGroups,reviewCheckState}=await import('../src/ui/review-apps.ts');
+ const visits=buildAppReviewGroups([interval('a',0,5),interval('b',20,25),interval('s',40,45,{reviewSegment:'before'})]);
+ const context=reviewContextGroups(visits).find(c=>c.groups.length===2)!;
+ const [first,second]=context.groups;
+ assert.deepEqual(reviewCheckState(context.groups,{}),{eligible:context.groups,checked:false,partial:false});
+ assert.equal(reviewCheckState(context.groups,{[reviewGroupId(first!)]:true}).partial,true);
+ assert.equal(reviewCheckState(context.groups,{[reviewGroupId(first!)]:true,[reviewGroupId(second!)]:true}).checked,true);
+ const split=visits.filter(g=>g.reviewSegment);assert.equal(reviewCheckState(split,Object.fromEntries(split.map(g=>[reviewGroupId(g),true]))).checked,false);
+ const later=reviewContextGroups([...visits, ...buildAppReviewGroups([interval('new',60,65)])]).find(c=>c.label==='General activity'&&c.groups.length===3)!;
+ assert.equal(later.key,context.key);
+});

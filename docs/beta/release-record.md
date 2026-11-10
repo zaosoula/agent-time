@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.41` candidate — 2026-11-10
+
+Compact context groups replace the long default visit list. Separate visits with the same app/context, project, decision and attribution evidence share one review row; the original spans and source IDs remain available through View visits. Whole-group selection includes hidden eligible visits and preserves the existing 10,000-pair request limit. Split portions remain separate and cannot be overwritten by app/group bulk selection. Shared presentation state keeps the day summary and sidebar badge consistent with the visible group counts. CSV/legacy review consumers and persisted backlog data retain their existing representation.
+
+Local validation: 420 JavaScript tests, production typecheck/build and 30 focused UI/grouping/review checks passed. A 134-visit regression fixture renders one context row with zero raw visit rows until requested, preserving all spans, gaps and actual summed seconds. Isolated browser checks using real collector endpoints cover whole-group assignment and Undo, one-visit assignment separating projects and Undo restoring the group, 30-to-60 visit pagination, timeline reveal to visit 134, filter/date selection reset, Space selection and native picker behavior, and real intra-interval split portions excluded from app bulk selection. No capture, schema, storage or timing-accounting changes were made.
+
+Signing, publication and public-byte verification are pending this release run. Existing large-day ribbon rendering remains unchanged; this release reduces default visit-list rendering rather than claiming new ribbon performance or native desktop accessibility measurements. Installation on the owner's Mac is not claimed by the source/browser checks.
+
 ## `0.2.0-beta.40` published and verified — 2026-11-10
 
 App-based activity review: actual-interval app/project timeline lanes, expandable app sections with observed totals, individual visits and one shared assign/reassign/leave-unassigned bar. Existing persisted Undo, evidence, suggestions, notes, automatic-match reset, split editing and future website-rule preview remain available. Keyboard navigation reveals hidden visits, while text editors, project pickers and native button activation keep their keys. Initial child rendering is limited to 30 visits per expanded app. The small Home timeline loader fix is also included. See [updater notes](0.2.0-beta.40-notes.md).

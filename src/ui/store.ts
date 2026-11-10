@@ -14,6 +14,7 @@ import { dayConfidence } from '../capture/day-confidence.ts';
 import { unobservedGaps } from '../capture/gaps.ts';
 import { outdatedHookTargets } from '../capture/hook-warning.ts';
 import { groupHumanReview, humanReviewState, type HumanReviewGroup } from '../capture/human-review.ts';
+import {buildAppReviewGroups,reviewContextGroups} from './review-apps.ts';
 import { humanIntervalsBySession } from '../capture/orca-focus.ts';
 import {
   dayReviewTransport,
@@ -688,7 +689,11 @@ function createStore() {
   );
 
   // ---- Review ------------------------------------------------------------------------------
-  /** Review groups for the whole selected day, shared by the review queue, badge and export. */
+  const appReviewGroups = computed(() => buildAppReviewGroups(dayIntervals.value));
+  const reviewContexts = computed(() => reviewContextGroups(appReviewGroups.value));
+  const reviewContextPending = computed(() => reviewContexts.value.filter(context=>['unmatched','conflict'].includes(humanReviewState(context.groups[0]!))));
+  const reviewContextCaptured = computed(() => reviewContexts.value.filter(context=>humanReviewState(context.groups[0]!)==='captured'));
+  /** Original review groups remain available for exports and existing consumers. */
   const reviewGroups = computed<HumanReviewGroup[]>(() => groupHumanReview(dayIntervals.value));
   const exportReviewGroups = computed(() =>
     project.value === 'all' ? reviewGroups.value : groupHumanReview(filteredIntervals.value),
@@ -702,9 +707,7 @@ function createStore() {
   const dayReviewed = computed(() => Boolean(dayReview.value?.completedAt && !dayReview.value.stale));
   /** Count shown on the Review navigation item. */
   const reviewBadge = computed(() =>
-    summaryLoaded.value && summaryPages.includes(page.value)
-      ? reviewPending.value.length
-      : (dayReview.value?.pendingGroups ?? reviewPending.value.length),
+    summaryLoaded.value ? reviewContextPending.value.length : 0,
   );
   const dayGaps = computed(() => unobservedGaps(dayIntervals.value));
 
@@ -825,6 +828,9 @@ function createStore() {
     dayCaptureReasons,
     confidence,
     observedAgentSources,
+    appReviewGroups,
+    reviewContextPending,
+    reviewContextCaptured,
     reviewGroups,
     exportReviewGroups,
     reviewPending,

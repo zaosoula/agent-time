@@ -14,8 +14,8 @@ const store = reactive(useStore());
 const notes = ref<InstanceType<typeof DayNotes> | null>(null);
 const marking = ref(false);
 
-const pending = computed(() => store.reviewPending.length);
-const captured = computed(() => store.reviewCaptured.length);
+const pending = computed(() => store.reviewContextPending.length);
+const captured = computed(() => store.reviewContextCaptured.length);
 const canMark = computed(
   () => Boolean(store.dayReview?.hasActivity) && (!store.dayReview?.completedAt || store.dayReview.stale),
 );
@@ -69,7 +69,7 @@ async function markReviewed() {
             <strong>
               {{
                 pending
-                  ? `${pending} ${pending === 1 ? 'item needs' : 'items need'} a project`
+                  ? `${pending} ${pending === 1 ? 'group needs' : 'groups need'} a project`
                   : store.dayReview?.stale
                     ? 'Something changed since your last review'
                     : captured
@@ -88,7 +88,7 @@ async function markReviewed() {
         v-if="canMark"
         class="btn btn-primary"
         :disabled="marking || Boolean(pending)"
-        :title="pending ? 'Give the remaining items a project first' : 'Accept the automatic matches and mark the day reviewed'"
+        :title="pending ? 'Give the remaining groups a project first' : 'Accept the automatic matches and mark the day reviewed'"
         @click="markReviewed"
       >
         {{ captured ? 'Accept matches and mark reviewed' : 'Mark day reviewed' }}

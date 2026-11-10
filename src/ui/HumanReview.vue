@@ -12,12 +12,12 @@ import {
   type ReviewAction,
 } from './transport.ts';
 import { useStore } from './store.ts';
-import { clock, dateTime, duration } from './format.ts';
+import { clock, preciseClock, dateTime, duration } from './format.ts';
 import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
-import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,reviewShortcutAllowed,type AppReviewGroup,type ReviewAppSection} from './review-apps.ts';
+import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
 
 const emit = defineEmits<{
   note: [start: number, end: number, label: string];
@@ -33,6 +33,8 @@ const choices = ref<Record<string, string>>({}),
   filterText = ref(''),
   openApps = ref<Record<string,boolean>>({}),
   appLimits = ref<Record<string,number>>({}),
+  openContexts = ref<Record<string,boolean>>({}),
+  visitLimits = ref<Record<string,number>>({}),
   selectedGroups = ref<Record<string, boolean>>({}),
   bulkProject = ref(''),
   focused = ref(''),
@@ -83,7 +85,7 @@ const projectPaths = computed(() =>
 
 // Derive app visits from the same day intervals used by the shared timing totals.
 const groups = computed(() =>
-  buildAppReviewGroups(intervals.value).filter(
+  store.appReviewGroups.filter(
     (group) =>
       !store.reviewSiteFilter ||
       Boolean(
@@ -127,16 +129,24 @@ const activeGroups = computed(() => {
 const apps = computed(() => reviewAppSections(activeGroups.value));
 const observedSeconds = computed(() => activeGroups.value.reduce((n,group) => n+group.seconds,0));
 const isAppOpen = (app:ReviewAppSection) => openApps.value[app.key] ?? apps.value[0]?.key===app.key;
-const children = (app:ReviewAppSection) => app.groups.slice(0,appLimits.value[app.key]||30);
-const visible = computed(() => apps.value.flatMap(app=>isAppOpen(app)?children(app):[]));
+const children = (app:ReviewAppSection) => app.contexts.slice(0,appLimits.value[app.key]||30);
+const visits = (context:ReviewContextGroup) => context.groups.slice(0,visitLimits.value[context.key]||30);
+const isContextOpen = (context:ReviewContextGroup) => Boolean(openContexts.value[context.key]);
+const allContexts = computed(() => apps.value.flatMap(app=>app.contexts));
+const visibleContexts = computed(() => apps.value.flatMap(app=>isAppOpen(app)?children(app):[]));
+const visible = computed(() => visibleContexts.value.flatMap(context=>isContextOpen(context)?visits(context):[]));
 const selection = computed(() => reviewSelection(activeGroups.value,selectedGroups.value));
 const bulkGroups = computed(() => selection.value.groups);
 const selectedSeconds = computed(() => selection.value.seconds);
+const contextMeta = computed(() => new Map(allContexts.value.map(context=>[context.key,reviewCheckState(context.groups,selectedGroups.value)])));
+const selectedContextCount = computed(() => [...contextMeta.value.values()].filter(state=>state.checked||state.partial).length);
+const queueContextCount = computed(() => reviewContextGroups(queue.value).length);
+const reviewedContextCount = computed(() => reviewContextGroups(reviewed.value).length);
 const appMeta = computed(() => new Map(apps.value.map(app=>{
-  const eligible=app.groups.filter(group=>!group.reviewSegment),count=eligible.filter(group=>selectedGroups.value[id(group)]).length;
+  const check=reviewCheckState(app.groups,selectedGroups.value);
   const identities=new Set(app.groups.map(group=>JSON.stringify([group.userAttribution||humanReviewState(group),group.projectPath||''])));
   const conflict=app.groups.some(group=>humanReviewState(group)==='conflict');
-  return [app.key,{eligible,checked:eligible.length>0&&count===eligible.length,partial:count>0&&count<eligible.length,label:conflict?'Conflicting matches':identities.size===1?stateLabel(app.groups[0]!):'Mixed projects',conflict}] as const;
+  return [app.key,{...check,label:conflict?'Conflicting matches':identities.size===1?stateLabel(app.groups[0]!):'Mixed projects',conflict}] as const;
 })));
 function toggleApp(app:ReviewAppSection){openApps.value[app.key]=!isAppOpen(app);}
 function toggleAllApps(){const all=apps.value.every(isAppOpen);openApps.value=Object.fromEntries(apps.value.map(app=>[app.key,!all]));}
@@ -144,7 +154,15 @@ function selectApp(app:ReviewAppSection,checked:boolean){
   if(pending.value)return;
   for(const group of appMeta.value.get(app.key)!.eligible)selectedGroups.value[id(group)]=checked;
 }
-function selectVisible(){if(!pending.value)selectedGroups.value=Object.fromEntries(visible.value.filter(group=>!group.reviewSegment).map(group=>[id(group),true]));}
+function selectContext(context:ReviewContextGroup,checked:boolean){
+  if(pending.value)return;
+  for(const group of contextMeta.value.get(context.key)!.eligible)selectedGroups.value[id(group)]=checked;
+}
+function selectVisible(){
+  if(pending.value)return;
+  selectedGroups.value=Object.fromEntries(visibleContexts.value.flatMap(context=>contextMeta.value.get(context.key)!.eligible).map(group=>[id(group),true]));
+}
+function toggleContext(context:ReviewContextGroup){openContexts.value[context.key]=!isContextOpen(context);}
 async function selectTimeline(groupId:string){
   if(pending.value)return;
   const group=activeGroups.value.find(group=>id(group)===groupId);if(!group)return;
@@ -206,6 +224,8 @@ watch(
     ruleImpact.value = null;
     appLimits.value = {};
     openApps.value = {};
+    openContexts.value = {};
+    visitLimits.value = {};
     bulkProject.value = '';
     try {
       const saved = JSON.parse(sessionStorage.getItem(key) || '{}');
@@ -303,28 +323,55 @@ function keyboard(event: KeyboardEvent) {
   }
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if(pending.value)return;
-  const rows=apps.value.flatMap(app=>app.groups),current=rows.findIndex(group=>id(group)===focused.value),group=rows[current];
+  const rows=apps.value.flatMap(app=>app.contexts.flatMap(context=>[
+    {key:context.key,context,group:undefined as AppReviewGroup|undefined},
+    ...(isContextOpen(context)?context.groups.map(group=>({key:id(group),context,group})):[]),
+  ])),current=rows.findIndex(row=>row.key===focused.value),row=rows[current],group=row?.group;
   if(event.key==='j'||event.key==='k'){
-    event.preventDefault();const index=Math.max(0,Math.min(rows.length-1,current+(event.key==='j'?1:-1)));if(rows[index])void focusGroup(rows[index]!);return;
+    event.preventDefault();const index=Math.max(0,Math.min(rows.length-1,current+(event.key==='j'?1:-1)));if(rows[index]){const next=rows[index]!;void(next.group?focusGroup(next.group):focusContext(next.context));}return;
   }
   if(['1','2','3'].includes(event.key)&&bulkGroups.value.length){
     const path=projectPaths.value[Number(event.key)-1];if(path){event.preventDefault();bulkProject.value=path;}return;
   }
-  if(event.key===' '&&group&&!group.reviewSegment){event.preventDefault();selectedGroups.value[id(group)]=!selectedGroups.value[id(group)];return;}
+  if(event.key===' '&&row){
+    event.preventDefault();
+    if(group){if(!group.reviewSegment)selectedGroups.value[id(group)]=!selectedGroups.value[id(group)];}
+    else selectContext(row.context,!contextMeta.value.get(row.context.key)!.checked);
+    return;
+  }
   const assign=event.key.toLowerCase()==='a'||event.key==='Enter'&&!(event.target as Element)?.closest('button');
   if(assign){
     if(bulkGroups.value.length){event.preventDefault();void bulkAssign();}
     else if(group&&!group.reviewSegment){event.preventDefault();void decide(group,'assigned');}
+    else if(row&&!group&&contextMeta.value.get(row.context.key)!.eligible.length){
+      event.preventDefault();selectContext(row.context,true);bulkProject.value ||= row.context.groups[0]?.projectPath||'';void bulkAssign();
+    }
   }
   if(event.key.toLowerCase()==='u'){
     if(bulkGroups.value.length){event.preventDefault();void bulkDecide('unassigned');}
     else if(group&&!group.reviewSegment){event.preventDefault();void decide(group,'unassigned');}
+    else if(row&&!group&&contextMeta.value.get(row.context.key)!.eligible.length){event.preventDefault();selectContext(row.context,true);void bulkDecide('unassigned');}
   }
+}
+function revealContext(context:ReviewContextGroup){
+  const app=apps.value.find(app=>app.key===context.groups[0]?.appKey);
+  if(!app)return;
+  openApps.value[app.key]=true;
+  const index=app.contexts.findIndex(item=>item.key===context.key);
+  appLimits.value[app.key]=Math.max(appLimits.value[app.key]||30,Math.ceil((index+1)/30)*30);
+}
+async function focusContext(context:ReviewContextGroup){
+  focused.value=context.key;revealContext(context);
+  await nextTick();document.getElementById(`review-${context.key}`)?.focus();
 }
 async function focusGroup(group:HumanReviewGroup){
   focused.value=id(group);
-  const app=apps.value.find(app=>app.groups.some(item=>id(item)===id(group)));
-  if(app){openApps.value[app.key]=true;const index=app.groups.findIndex(item=>id(item)===id(group));appLimits.value[app.key]=Math.max(appLimits.value[app.key]||30,Math.ceil((index+1)/30)*30);}
+  const context=allContexts.value.find(context=>context.groups.some(item=>id(item)===id(group)));
+  if(context){
+    revealContext(context);openContexts.value[context.key]=true;
+    const index=context.groups.findIndex(item=>id(item)===id(group));
+    visitLimits.value[context.key]=Math.max(visitLimits.value[context.key]||30,Math.ceil((index+1)/30)*30);
+  }
   await nextTick();document.getElementById(`review-${id(group)}`)?.focus();
 }
 
@@ -531,15 +578,16 @@ async function saveSplit(group: HumanReviewGroup) {
   <section ref="root" class="human-review" aria-labelledby="human-review-title">
     <div class="human-review-body">
       <ReviewTimeline :date="store.selectedDate" :intervals="intervals" :groups="activeGroups" :selected="selectedGroups" :focused="focused" @select="selectTimeline" />
-      <div class="app-review-heading"><h2 id="human-review-title">App activity <small>{{ duration(observedSeconds) }} observed</small></h2><span>{{ apps.length }} apps · {{ activeGroups.length }} visits</span></div>
+      <div class="app-review-heading"><h2 id="human-review-title">Your Mac activity <small>{{ duration(observedSeconds) }} observed</small></h2><span>{{ apps.length }} apps · {{ allContexts.length }} groups</span></div>
+      <p class="app-review-explanation">Estimated active time in your foreground apps. Assign a whole group, or inspect its visits.</p>
       <div class="human-review-controls" role="group" aria-label="Activity view">
-        <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode='queue'">To review · {{ queue.length }}</button>
-        <button :class="{active:viewMode==='reviewed'}" :aria-pressed="viewMode==='reviewed'" @click="viewMode='reviewed'">Decided · {{ reviewed.length }}</button>
+        <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode='queue'">To review · {{ queueContextCount }}</button>
+        <button :class="{active:viewMode==='reviewed'}" :aria-pressed="viewMode==='reviewed'" @click="viewMode='reviewed'">Decided · {{ reviewedContextCount }}</button>
         <button :class="{active:viewMode==='all'}" :aria-pressed="viewMode==='all'" @click="viewMode='all'">All activity</button>
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<button class="btn btn-quiet btn-sm" @click="store.reviewSiteFilter=''">Clear filter</button></span>
         <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
       </div>
-      <div class="app-review-tools"><button class="btn btn-quiet btn-sm" :disabled="!apps.length" @click="toggleAllApps">{{ apps.every(isAppOpen)?'Collapse all':'Expand all' }}</button><button class="btn btn-quiet btn-sm" :disabled="Boolean(pending)||!visible.length" @click="selectVisible">Select visible visits</button></div>
+      <div class="app-review-tools"><button class="btn btn-quiet btn-sm" :disabled="!apps.length" @click="toggleAllApps">{{ apps.every(isAppOpen)?'Collapse all':'Expand all' }}</button><button class="btn btn-quiet btn-sm" :disabled="Boolean(pending)||!visibleContexts.length" @click="selectVisible">Select visible groups</button></div>
       <p v-if="error" class="human-review-error" role="alert">{{ error }} <button class="btn btn-quiet btn-sm" @click="error=''">Dismiss</button></p>
       <p v-if="notice" class="human-review-notice" role="status">{{ notice }}<button v-if="undoAvailable" class="btn btn-sm" :disabled="Boolean(pending)" @click="undo(dayHistory.find(action=>action.canUndo)!)">Undo ⌘Z</button><button class="btn btn-quiet btn-sm" @click="notice=''">Dismiss</button></p>
       <div v-if="!store.summaryLoaded" class="human-review-empty" aria-hidden="true"><span v-for="index in 3" :key="index" class="skeleton" style="height:38px;margin:6px 0" /></div>
@@ -548,17 +596,27 @@ async function saveSplit(group: HumanReviewGroup) {
         <div class="app-review-columns"><span>Time</span><span>App / activity</span><span>Project</span><span /></div>
         <section v-for="app in apps" :key="app.key" class="review-app" :aria-label="`${app.label} activity`">
           <header class="review-app-header">
-            <button type="button" class="review-app-toggle" :aria-expanded="isAppOpen(app)" @click="toggleApp(app)"><strong class="app-review-duration">{{ duration(app.seconds) }}</strong><ChevronRight :size="14" :class="{expanded:isAppOpen(app)}" /><AppWindow :size="17" /><span>{{ app.label }} <small>{{ app.groups.length }} visits<span v-if="app.hostId && app.hostId!=='local'"> · {{ app.hostId }}</span></small></span></button>
+            <button type="button" class="review-app-toggle" :aria-expanded="isAppOpen(app)" @click="toggleApp(app)"><strong class="app-review-duration">{{ duration(app.seconds) }}</strong><ChevronRight :size="14" :class="{expanded:isAppOpen(app)}" /><AppWindow :size="17" /><span>{{ app.label }} <small>{{ app.contexts.length }} {{ app.contexts.length===1?'group':'groups' }} · {{ app.groups.length }} visits<span v-if="app.hostId && app.hostId!=='local'"> · {{ app.hostId }}</span></small></span></button>
             <span class="review-app-project" :class="{conflict:appMeta.get(app.key)!.conflict}" :title="appMeta.get(app.key)!.label">{{ appMeta.get(app.key)!.label }}</span>
             <label class="review-app-check"><input type="checkbox" :checked="appMeta.get(app.key)!.checked" :indeterminate="appMeta.get(app.key)!.partial" :disabled="Boolean(pending)||!appMeta.get(app.key)!.eligible.length" :aria-label="`Select all eligible ${app.label} visits`" @change="selectApp(app,($event.target as HTMLInputElement).checked)" /></label>
           </header>
           <template v-if="isAppOpen(app)">
-            <article v-for="group in children(app)" :id="`review-${id(group)}`" :key="id(group)" class="review-row" :class="[rowState(group),{focused:focused===id(group),open:isOpen(group),picked:selectedGroups[id(group)]}]" tabindex="0" data-review-visit @focus="focused=id(group)">
+            <section v-for="context in children(app)" :key="context.key" class="review-context-section" :aria-label="`${context.label} group`">
+              <div :id="`review-${context.key}`" class="review-row review-context" :class="{focused:focused===context.key,picked:contextMeta.get(context.key)!.checked}" tabindex="0" data-review-context @focus="focused=context.key">
+                <div class="review-main">
+                  <strong class="app-review-duration">{{ duration(context.seconds) }}</strong>
+                  <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
+                  <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="context.groups[0]!.userAttribution==='assigned'" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
+                  <label class="review-app-check"><input type="checkbox" :checked="contextMeta.get(context.key)!.checked" :indeterminate="contextMeta.get(context.key)!.partial" :disabled="Boolean(pending)||!contextMeta.get(context.key)!.eligible.length" :aria-label="`Select ${context.label} group in ${app.label}`" @change="selectContext(context,($event.target as HTMLInputElement).checked)" /></label>
+                </div>
+              </div>
+              <template v-if="isContextOpen(context)">
+            <article v-for="group in visits(context)" :id="`review-${id(group)}`" :key="id(group)" class="review-row review-visit" :class="[rowState(group),{focused:focused===id(group),open:isOpen(group),picked:selectedGroups[id(group)]}]" tabindex="0" data-review-visit @focus="focused=id(group)">
               <div class="review-main">
                 <strong class="app-review-duration">{{ duration(group.seconds) }}</strong>
-                <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ group.label===app.label?'Foreground activity':title(group) }}</strong><small>{{ clock(group.start) }}–{{ clock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
+                <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ group.label===app.label?'Visit':title(group) }}</strong><small>{{ preciseClock(group.start) }}–{{ preciseClock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
                 <span class="review-state" :title="group.attributionReason||group.projectPath||undefined"><Check v-if="group.userAttribution==='assigned'" :size="11" />{{ stateLabel(group) }}</span>
-                <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${group.label} at ${clock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
+                <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${group.label} at ${preciseClock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
               </div>
         <div
           v-for="item in store.notes.filter((note) => note.start >= group.start && note.end <= group.end)"
@@ -703,12 +761,15 @@ async function saveSplit(group: HumanReviewGroup) {
         </div>
 
             </article>
-            <button v-if="app.groups.length>children(app).length" class="btn btn-quiet btn-sm app-review-more" @click="appLimits[app.key]=(appLimits[app.key]||30)+30">Show more {{ app.label }} visits ({{ app.groups.length-children(app).length }} remaining)</button>
+                <button v-if="context.groups.length>visits(context).length" class="btn btn-quiet btn-sm app-review-more" @click="visitLimits[context.key]=(visitLimits[context.key]||30)+30">Show more visits ({{ context.groups.length-visits(context).length }} remaining)</button>
+              </template>
+            </section>
+            <button v-if="app.contexts.length>children(app).length" class="btn btn-quiet btn-sm app-review-more" @click="appLimits[app.key]=(appLimits[app.key]||30)+30">Show more {{ app.label }} groups ({{ app.contexts.length-children(app).length }} remaining)</button>
           </template>
         </section>
       </div>
       <div v-if="bulkGroups.length" class="app-review-assignment" aria-label="Assign selected activity">
-        <div class="app-review-selection" aria-live="polite"><strong>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} · {{ duration(selectedSeconds) }}</strong><small>{{ selection.pairs.length }} {{ selection.pairs.length===1?'recording':'recordings' }} selected</small></div>
+        <div class="app-review-selection" aria-live="polite"><strong>{{ selectedContextCount }} {{ selectedContextCount===1?'group':'groups' }} · {{ duration(selectedSeconds) }}</strong><small>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} selected</small></div>
         <ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" />
         <span v-if="bulkProject" class="bulk-impact">{{ name(bulkProject) }}: {{ duration(bulkProjectBefore) }} → {{ duration(bulkProjectAfter) }}</span>
         <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ selection.hasDecisions?'Reassign':'Assign' }} {{ duration(selectedSeconds) }}</button>
@@ -1378,4 +1439,11 @@ async function saveSplit(group: HumanReviewGroup) {
 @media(max-width:540px){.human-review-body{padding:12px}.app-review-columns{grid-template-columns:46px minmax(0,1fr) 82px 20px;gap:5px;padding:8px 2px}.review-app-header{grid-template-columns:minmax(0,1fr) 82px 20px;gap:5px;padding:3px 2px}.review-app-toggle{grid-template-columns:44px 12px minmax(0,1fr);gap:5px}.review-app-toggle>svg:nth-of-type(2){display:none}.review-app-toggle>span{font-size:12px}.review-row{padding:5px 2px}.review-main{grid-template-columns:44px minmax(0,1fr) 82px 20px;gap:5px}.review-main>.review-what{padding-left:16px}.review-state{font-size:11px;max-width:82px}.review-detail,.review-row .human-review-note{margin-left:0;margin-right:0}.app-review-more{margin-left:0}.app-review-assignment{bottom:4px;padding:10px}.app-review-assignment>.project-picker{min-width:0;flex-basis:100%}}
 @media(pointer:coarse){.review-app-header{min-height:48px}.review-app-check{min-height:44px}.review-row{padding-top:7px;padding-bottom:7px}}
 
+.app-review-explanation{font-size:var(--text-sm);color:var(--muted);margin:-5px 0 15px}
+.review-context-section{border-top:1px solid color-mix(in srgb,var(--border) 55%,transparent)}
+.review-context{border-top:0}.review-context .review-what strong{font-weight:550}
+.review-visit{margin-left:22px;background:color-mix(in srgb,var(--panel-raised) 55%,transparent)}
+.review-visit .review-main>.review-what{padding-left:48px}.review-visit .review-main>.app-review-duration{font-size:11px}
+@media(max-width:820px){.review-visit{margin-left:12px}.review-visit .review-main>.review-what{padding-left:30px}}
+@media(max-width:540px){.review-visit{margin-left:4px}.review-visit .review-main>.review-what{padding-left:16px}}
 </style>

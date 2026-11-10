@@ -8,12 +8,19 @@ export interface AppReviewGroup extends HumanReviewGroup {
   bundleId?:string;
   hostId?:string;
 }
+export interface ReviewContextGroup {
+  key:string;
+  label:string;
+  groups:AppReviewGroup[];
+  seconds:number;
+}
 export interface ReviewAppSection {
   key:string;
   label:string;
   bundleId?:string;
   hostId?:string;
   groups:AppReviewGroup[];
+  contexts:ReviewContextGroup[];
   seconds:number;
 }
 export const reviewGroupId=(group:HumanReviewGroup)=>`${group.start}:${group.key}`;
@@ -42,14 +49,34 @@ export function buildAppReviewGroups(intervals:Interval[]):AppReviewGroup[]{
   flush();return result;
 }
 
+/** Summaries may cover separate visits. Keep their actual spans only in groups. */
+export function reviewContextGroups(groups:AppReviewGroup[]):ReviewContextGroup[]{
+  const contexts=new Map<string,ReviewContextGroup>();
+  for(const group of groups){
+    const key=`context:${group.key}`;
+    let context=contexts.get(key);
+    if(!context){
+      context={key,label:group.label===group.appName?'General activity':group.label,groups:[],seconds:0};
+      contexts.set(key,context);
+    }
+    context.groups.push(group);context.seconds+=group.seconds;
+  }
+  for(const context of contexts.values())context.groups.sort((a,b)=>a.start-b.start||a.end-b.end);
+  return [...contexts.values()].sort((a,b)=>b.seconds-a.seconds||a.groups[0]!.start-b.groups[0]!.start||a.key.localeCompare(b.key));
+}
+export function reviewCheckState(groups:AppReviewGroup[],selected:Readonly<Record<string,boolean>>){
+  const eligible=groups.filter(group=>!group.reviewSegment),count=eligible.filter(group=>selected[reviewGroupId(group)]).length;
+  return {eligible,checked:eligible.length>0&&count===eligible.length,partial:count>0&&count<eligible.length};
+}
+
 export function reviewAppSections(groups:AppReviewGroup[]):ReviewAppSection[]{
   const sections=new Map<string,ReviewAppSection>();
   for(const group of groups){
     let app=sections.get(group.appKey);
-    if(!app){app={key:group.appKey,label:group.appName,bundleId:group.bundleId,hostId:group.hostId,groups:[],seconds:0};sections.set(app.key,app);}
+    if(!app){app={key:group.appKey,label:group.appName,bundleId:group.bundleId,hostId:group.hostId,groups:[],contexts:[],seconds:0};sections.set(app.key,app);}
     app.groups.push(group);app.seconds+=group.seconds;
   }
-  for(const app of sections.values())app.groups.sort((a,b)=>a.start-b.start||a.end-b.end);
+  for(const app of sections.values()){app.groups.sort((a,b)=>a.start-b.start||a.end-b.end);app.contexts=reviewContextGroups(app.groups);}
   return [...sections.values()].sort((a,b)=>b.seconds-a.seconds||a.label.localeCompare(b.label)||a.key.localeCompare(b.key));
 }
 
