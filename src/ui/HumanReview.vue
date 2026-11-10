@@ -17,7 +17,7 @@ import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
-import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,type AppReviewGroup,type ReviewAppSection} from './review-apps.ts';
+import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,reviewShortcutAllowed,type AppReviewGroup,type ReviewAppSection} from './review-apps.ts';
 
 const emit = defineEmits<{
   note: [start: number, end: number, label: string];
@@ -284,10 +284,12 @@ async function undo(action: ReviewAction) {
 function ignoreShortcut(event: KeyboardEvent) {
   const target = event.target;
   if (!(target instanceof Element)) return false;
-  if (target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="dialog"], [role="listbox"], [role="combobox"], [role="menu"]'))
-    return true;
-  // Only act when focus is in the review queue or nowhere in particular.
-  return !(root.value?.contains(target) || target === document.body);
+  return !reviewShortcutAllowed(event.key, {
+    editing: Boolean(target.closest('input, textarea, select, [contenteditable=""], [contenteditable="true"], [role="dialog"], [role="listbox"], [role="combobox"], [role="menu"]')),
+    picker: Boolean(target.closest('[aria-haspopup]:not([aria-haspopup="false"])')),
+    nativeControl: Boolean(target.closest('button, a[href], summary, [role="button"]')),
+    inReview: Boolean(root.value?.contains(target) || target === document.body),
+  });
 }
 function keyboard(event: KeyboardEvent) {
   if (event.defaultPrevented || ignoreShortcut(event)) return;
@@ -706,7 +708,7 @@ async function saveSplit(group: HumanReviewGroup) {
         </section>
       </div>
       <div v-if="bulkGroups.length" class="app-review-assignment" aria-label="Assign selected activity">
-        <div class="app-review-selection" aria-live="polite"><strong>{{ bulkGroups.length }} visits · {{ duration(selectedSeconds) }}</strong><small>{{ selection.pairs.length }} recordings selected</small></div>
+        <div class="app-review-selection" aria-live="polite"><strong>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} · {{ duration(selectedSeconds) }}</strong><small>{{ selection.pairs.length }} {{ selection.pairs.length===1?'recording':'recordings' }} selected</small></div>
         <ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" />
         <span v-if="bulkProject" class="bulk-impact">{{ name(bulkProject) }}: {{ duration(bulkProjectBefore) }} → {{ duration(bulkProjectAfter) }}</span>
         <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ selection.hasDecisions?'Reassign':'Assign' }} {{ duration(selectedSeconds) }}</button>

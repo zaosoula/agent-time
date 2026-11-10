@@ -92,3 +92,8 @@ export function reviewTimelineBars(intervals:Interval[],groups:AppReviewGroup[],
   }
   return bars;
 }
+
+/** Editing/picker keys and native button activation belong to their controls. */
+export function reviewShortcutAllowed(key:string,target:{inReview:boolean;editing:boolean;picker:boolean;nativeControl:boolean}):boolean{
+  return target.inReview&&!target.editing&&!target.picker&&!(target.nativeControl&&(key===' '||key==='Enter'));
+}

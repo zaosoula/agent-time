@@ -60,3 +60,17 @@ test('review ribbon fits actual human activity within local day boundaries, incl
   const empty=reviewTimelineRange(date,[],start+60);assert.ok(empty.start>=start&&empty.end<=end&&empty.end>empty.start);assert.ok(empty.start<=start+60&&empty.end>=start+60);
  }
 });
+
+test('review shortcuts preserve native buttons and picker keys while Space still selects visits',async()=>{
+ const {reviewShortcutAllowed}=await import('../src/ui/review-apps.ts');
+ const row={inReview:true,editing:false,picker:false,nativeControl:false};
+ assert.equal(reviewShortcutAllowed(' ',row),true);
+ assert.equal(reviewShortcutAllowed('Enter',row),true);
+ for(const key of [' ','Enter'])assert.equal(reviewShortcutAllowed(key,{...row,nativeControl:true}),false,`native button owns ${key}`);
+ for(const key of [' ','Enter','j','k','a','u','1','z']){
+  assert.equal(reviewShortcutAllowed(key,{...row,nativeControl:true,picker:true}),false,`picker owns ${key}`);
+  assert.equal(reviewShortcutAllowed(key,{...row,editing:true}),false,`text editor owns ${key}`);
+ }
+ assert.equal(reviewShortcutAllowed('j',{...row,inReview:false}),false);
+ assert.equal(reviewShortcutAllowed('j',{...row,nativeControl:true}),true);
+});
