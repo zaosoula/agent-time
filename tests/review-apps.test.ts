@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import type {Interval} from '../src/capture/events.ts';
-import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,reviewTimelineBars} from '../src/ui/review-apps.ts';
+import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,reviewTimelineBars,reviewTimelineRange} from '../src/ui/review-apps.ts';
 
 const interval=(id:string,start:number,end:number,extra:Partial<Interval>={}):Interval=>({start,end,state:'human',proof:'observed',sourceEventIds:[id+'a',id+'b'],hostId:'local',foregroundBundleId:'orca',foregroundName:'Orca',...extra});
 
@@ -51,4 +51,12 @@ test('ribbon bars distinguish both parts of a split sharing the same source IDs'
 test('app presentation excludes agent work and leaves frozen observation evidence untouched',()=>{
  const input=[interval('a',0,5),interval('b',5,10,{state:'grouped'})];input.forEach(i=>{Object.freeze(i.sourceEventIds);Object.freeze(i);});Object.freeze(input);
  const groups=buildAppReviewGroups(input);assert.equal(groups.length,1);assert.equal(groups[0]!.seconds,5);assert.deepEqual(groups[0]!.pairs,[['aa','ab']]);
+});
+
+test('review ribbon fits actual human activity within local day boundaries, including DST',()=>{
+ for(const date of ['2026-03-29','2026-10-25']){
+  const start=new Date(date+'T00:00:00').getTime()/1000,endDate=new Date(date+'T00:00:00');endDate.setDate(endDate.getDate()+1);const end=endDate.getTime()/1000;
+  const range=reviewTimelineRange(date,[interval('late',end-120,end-30)],end-10);assert.ok(range.start<=end-120);assert.ok(range.end>=end-30);assert.ok(range.start>=start&&range.end<=end);assert.ok(range.end>range.start);
+  const empty=reviewTimelineRange(date,[],start+60);assert.ok(empty.start>=start&&empty.end<=end&&empty.end>empty.start);assert.ok(empty.start<=start+60&&empty.end>=start+60);
+ }
 });

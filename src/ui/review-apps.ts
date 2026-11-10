@@ -1,6 +1,6 @@
 import type {Interval} from '../capture/events.ts';
 import {groupHumanReview,type HumanReviewGroup} from '../capture/human-review.ts';
-import type {TimeRange} from './timeline-viewport.ts';
+import {clampTimeRange,type TimeRange} from './timeline-viewport.ts';
 
 export interface AppReviewGroup extends HumanReviewGroup {
   appKey:string;
@@ -67,6 +67,14 @@ export interface ReviewTimelineBar {
   projectPath?:string;
   start:number;
   end:number;
+}
+export function reviewTimelineRange(date:string,intervals:Interval[],now:number):TimeRange{
+  const day=new Date(`${date}T00:00:00`),start=day.getTime()/1000;day.setDate(day.getDate()+1);const end=day.getTime()/1000;
+  let first=Infinity,last=-Infinity;
+  for(const item of intervals)if(item.state==='human'&&item.end>start&&item.start<end){first=Math.min(first,Math.max(start,item.start));last=Math.max(last,Math.min(end,item.end));}
+  const cursor=Math.max(start,Math.min(end,now));
+  const range=Number.isFinite(first)?{start:first-60,end:last+60}:{start:cursor-1800,end:cursor+60};
+  return clampTimeRange(range,start,end,1800);
 }
 /** Draw actual source spans, never a group's envelope across missing evidence. */
 export function reviewTimelineBars(intervals:Interval[],groups:AppReviewGroup[],range:TimeRange):ReviewTimelineBar[]{
