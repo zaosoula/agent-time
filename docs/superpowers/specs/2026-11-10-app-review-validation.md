@@ -21,3 +21,5 @@ Independent final review found one important keyboard issue: a review shortcut i
 Deferred minor: the two ribbon lanes render all visible-range bars. A synthetic 3,600-visit day can render 7,200 buttons. Child rows remain paginated; large-day rendering latency was not measured, so density-aware rendering is deferred rather than claiming a performance result.
 
 Review rulings: capture accuracy, minute-credit accounting and existing summary/backlog counts remain outside this presentation change because changing them would alter the timing contract. Native desktop accessibility and large-day latency are not claimed as tested; browser keyboard and real collector workflows were tested. The cost of retaining these boundaries is that existing summary grouping counts may differ from the finer visit count, and desktop/large-day behavior may need follow-up.
+
+Final gate: all 417 tests passed (0 failures,186.4seconds), then type checking and production bundle completed successfully. Independent review's important finding is fixed; only the ribbon density follow-up remains deferred.
