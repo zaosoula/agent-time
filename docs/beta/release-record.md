@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.40` candidate — 2026-11-10
+
+App-based activity review: actual-interval app/project timeline lanes, expandable app sections with observed totals, individual visits and one shared assign/reassign/leave-unassigned bar. Existing persisted Undo, evidence, suggestions, notes, automatic-match reset, split editing and future website-rule preview remain available. Keyboard navigation reveals hidden visits, while text editors, project pickers and native button activation keep their keys. Initial child rendering is limited to 30 visits per expanded app. The small Home timeline loader fix is also included. See [updater notes](0.2.0-beta.40-notes.md).
+
+The owner explicitly requested publication. Local implementation validation passed 417 JavaScript tests, production typecheck/build and isolated-browser checks against real collector endpoints. Independent review's important native-Space interception was reproduced and fixed, with automated regression and browser proof. Capture, stored history, schema, timing and minute-credit calculations are unchanged. Existing summary/backlog counts retain their original grouping, so they can differ from the finer visit count. Full details are in [the UI validation record](../superpowers/specs/2026-11-10-app-review-validation.md).
+
+Deferred minor: very busy days can render many ribbon bars; density-aware ribbon rendering is not included, and large-day latency/native desktop accessibility were not measured in this UI change. Signing, notarization, publication and public-byte verification are pending this candidate's release run. A fresh clean-machine installation and live in-app upgrade are not claimed by these local checks.
+
 ## `0.2.0-beta.36` published and verified — 2026-11-09
 
 Lossless efficient history keeps all event payloads, IDs, timestamps and insertion positions while sharing completed tool-call records and repeated observation contexts. Background packing, bounded decoder/summary/SQLite caches and bounded hook queues limit growth; verified gzip archives and a configurable 5 GiB managed-storage budget protect disk space without automatically deleting unique history. Full decisions, bounds, compatibility requirements and measurements are in [the storage efficiency audit](storage-efficiency.md).
