@@ -1,0 +1,54 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import type {Interval} from '../src/capture/events.ts';
+import {buildAppReviewGroups,reviewAppSections,reviewGroupId,reviewSelection,reviewTimelineBars} from '../src/ui/review-apps.ts';
+
+const interval=(id:string,start:number,end:number,extra:Partial<Interval>={}):Interval=>({start,end,state:'human',proof:'observed',sourceEventIds:[id+'a',id+'b'],hostId:'local',foregroundBundleId:'orca',foregroundName:'Orca',...extra});
+
+test('app sections use foreground app identity rather than the browser page title',()=>{
+ const input=[interval('a',0,5,{foregroundBundleId:'brave',foregroundName:'Brave',browserUrl:'https://example.com/a',browserTitle:'A page'}),interval('b',5,10,{foregroundBundleId:'chrome',foregroundName:'Chrome',browserUrl:'https://example.com/a',browserTitle:'A page'})];
+ const groups=buildAppReviewGroups(input),sections=reviewAppSections(groups);
+ assert.deepEqual(sections.map(s=>[s.label,s.seconds,s.groups.length]),[['Brave',5,1],['Chrome',5,1]]);
+ assert.notEqual(groups[0]!.appKey,groups[1]!.appKey);assert.deepEqual(new Set(groups.map(g=>g.label)),new Set(['A page']));
+});
+test('app visits preserve gaps and intervening apps instead of merging their envelopes',()=>{
+ const input=[interval('a',0,5),interval('b',5,10),interval('c',10,15,{foregroundBundleId:'spotify',foregroundName:'Spotify'}),interval('d',15,20),interval('e',25,30)];
+ const before=JSON.stringify(input),sections=reviewAppSections(buildAppReviewGroups(input));
+ assert.deepEqual(sections.map(s=>[s.label,s.seconds]),[['Orca',20],['Spotify',5]]);
+ assert.deepEqual(sections[0]!.groups.map(g=>[g.start,g.end,g.seconds,g.pairs.length]),[[0,10,10,2],[15,20,5,1],[25,30,5,1]]);
+ assert.equal(JSON.stringify(input),before);
+});
+test('browser contexts and review projects remain separate inside the same app',()=>{
+ const groups=buildAppReviewGroups([interval('a',0,5,{browserUrl:'https://example.com/a',browserTitle:'A'}),interval('b',5,10,{browserUrl:'https://example.com/b',browserTitle:'B'}),interval('c',10,15,{browserUrl:'https://example.com/b',browserTitle:'B',workspaceId:'manual::/other',userAttribution:'assigned'})]);
+ const sections=reviewAppSections(groups);assert.equal(sections.length,1);assert.equal(sections[0]!.seconds,15);assert.equal(sections[0]!.groups.length,3);assert.deepEqual(new Set(groups.flatMap(g=>g.pairs.map(p=>p.join(':')))),new Set(['aa:ab','ba:bb','ca:cb']));
+});
+test('same display names on different app IDs or hosts do not collapse into one app',()=>{
+ const sections=reviewAppSections(buildAppReviewGroups([interval('a',0,2,{foregroundBundleId:'one'}),interval('b',2,4,{foregroundBundleId:'two'}),interval('c',4,6,{foregroundBundleId:'one',hostId:'other'})]));
+ assert.equal(sections.length,3);assert.equal(new Set(sections.map(s=>s.key)).size,3);
+});
+test('bulk selection excludes split segments and deduplicates original pairs',()=>{
+ const groups=buildAppReviewGroups([interval('split',0,5,{reviewSegment:'before',userAttribution:'assigned',workspaceId:'manual::/a'}),interval('split',5,10,{reviewSegment:'after',userAttribution:'unassigned'}),interval('whole',10,15)]);
+ const selected=Object.fromEntries(groups.map(g=>[reviewGroupId(g),true]));const result=reviewSelection(groups,selected);
+ assert.equal(result.groups.length,1);assert.deepEqual(result.pairs,[['wholea','wholeb']]);assert.equal(result.seconds,5);
+ const whole=groups.find(g=>!g.reviewSegment)!;const duplicate={...whole,key:whole.key+'duplicate',start:20};const dedup=reviewSelection([whole,duplicate],{[reviewGroupId(whole)]:true,[reviewGroupId(duplicate)]:true});assert.deepEqual(dedup.pairs,[['wholea','wholeb']]);
+});
+test('selection cannot include stale or filtered IDs and reports the existing bulk limit',()=>{
+ const groups=buildAppReviewGroups([interval('a',0,5)]),group=groups[0]!;
+ assert.equal(reviewSelection(groups,{stale:true}).groups.length,0);
+ const huge={...group,pairs:Array.from({length:10001},(_,i)=>[String(i),'end'+i] as [string,string])};
+ assert.equal(reviewSelection([huge],{[reviewGroupId(huge)]:true}).overLimit,true);assert.equal(reviewSelection([group],{[reviewGroupId(group)]:true}).overLimit,false);
+});
+test('ribbon bars clip actual intervals and never paint across a gap or a filtered app',()=>{
+ const input=[interval('a',0,5),interval('b',5,10),interval('c',10,15,{foregroundBundleId:'other',foregroundName:'Other'}),interval('d',15,20),interval('e',25,30)],groups=buildAppReviewGroups(input).filter(g=>g.appName==='Orca');
+ const before=JSON.stringify(input),bars=reviewTimelineBars(input,groups,{start:2,end:18});
+ assert.deepEqual(bars.map(b=>[b.start,b.end]),[[2,10],[15,18]]);assert.equal(bars.reduce((n,b)=>n+b.end-b.start,0),11);assert.equal(JSON.stringify(input),before);
+ assert.equal(reviewTimelineBars(input,groups,{start:11,end:14}).length,0);
+});
+test('ribbon bars distinguish both parts of a split sharing the same source IDs',()=>{
+ const input=[interval('s',0,5,{reviewSegment:'before',userAttribution:'assigned',workspaceId:'manual::/a'}),interval('s',5,10,{reviewSegment:'after',userAttribution:'assigned',workspaceId:'manual::/b'})],groups=buildAppReviewGroups(input),bars=reviewTimelineBars(input,groups,{start:0,end:10});
+ assert.deepEqual(bars.map(b=>[b.start,b.end,b.projectPath]),[[0,5,'/a'],[5,10,'/b']]);assert.notEqual(bars[0]!.groupId,bars[1]!.groupId);
+});
+test('app presentation excludes agent work and leaves frozen observation evidence untouched',()=>{
+ const input=[interval('a',0,5),interval('b',5,10,{state:'grouped'})];input.forEach(i=>{Object.freeze(i.sourceEventIds);Object.freeze(i);});Object.freeze(input);
+ const groups=buildAppReviewGroups(input);assert.equal(groups.length,1);assert.equal(groups[0]!.seconds,5);assert.deepEqual(groups[0]!.pairs,[['aa','ab']]);
+});
