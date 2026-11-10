@@ -70,15 +70,11 @@ async function markReviewed() {
               {{
                 pending
                   ? `${pending} ${pending === 1 ? 'group needs' : 'groups need'} a project`
-                  : store.dayReview?.stale
-                    ? 'Something changed since your last review'
-                    : captured
-                      ? 'Everything left was matched automatically'
-                      : 'Nothing to review'
+                  : 'No activity needs a project'
               }}
             </strong>
             <span>
-              {{ captured }} matched automatically · {{ store.dayGaps.length }}
+              {{ captured }} automatically assigned · {{ store.dayGaps.length }}
               {{ store.dayGaps.length === 1 ? 'gap' : 'gaps' }} without activity
             </span>
           </div>
@@ -88,10 +84,10 @@ async function markReviewed() {
         v-if="canMark"
         class="btn btn-primary"
         :disabled="marking || Boolean(pending)"
-        :title="pending ? 'Give the remaining groups a project first' : 'Accept the automatic matches and mark the day reviewed'"
+        :title="pending ? 'Give the remaining groups a project first' : 'Mark the day reviewed; automatic assignments are already included'"
         @click="markReviewed"
       >
-        {{ captured ? 'Accept matches and mark reviewed' : 'Mark day reviewed' }}
+        Mark day reviewed
       </button>
     </div>
 

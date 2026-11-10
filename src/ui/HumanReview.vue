@@ -17,7 +17,7 @@ import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
-import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
+import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
 
 const emit = defineEmits<{
   note: [start: number, end: number, label: string];
@@ -29,7 +29,7 @@ const choices = ref<Record<string, string>>({}),
   error = ref(''),
   notice = ref(''),
   pending = ref(''),
-  viewMode = ref<'queue' | 'reviewed' | 'all'>('all'),
+  viewMode = ref<'queue' | 'reviewed' | 'all'>('queue'),
   filterText = ref(''),
   openApps = ref<Record<string,boolean>>({}),
   appLimits = ref<Record<string,number>>({}),
@@ -95,27 +95,9 @@ const groups = computed(() =>
 );
 const priority = { conflict: 0, unmatched: 1, captured: 2, reviewed: 3 };
 const queue = computed(() =>
-  groups.value
-    .filter(
-      (group) =>
-        humanReviewState(group) !== 'reviewed' &&
-        !(store.dayReviewed && humanReviewState(group) === 'captured'),
-    )
-    .sort(
-      (a, b) =>
-        priority[humanReviewState(a)] - priority[humanReviewState(b)] ||
-        b.seconds - a.seconds ||
-        b.start - a.start,
-    ),
+  reviewViewGroups(groups.value,'queue').sort((a,b)=>priority[humanReviewState(a)]-priority[humanReviewState(b)]||b.seconds-a.seconds||b.start-a.start),
 );
-const reviewed = computed(() =>
-  groups.value
-    .filter(
-      (group) =>
-        Boolean(group.userAttribution) || (store.dayReviewed && humanReviewState(group) === 'captured'),
-    )
-    .sort((a, b) => b.start - a.start),
-);
+const reviewed = computed(() => reviewViewGroups(groups.value,'reviewed').sort((a,b)=>b.start-a.start));
 const matchesFilter = (group: HumanReviewGroup, query: string) =>
   [(group as AppReviewGroup).appName, group.label, group.detail, group.projectPath, group.attributionSource, group.attributionReason].some(
     (value) => value?.toLocaleLowerCase().includes(query),
@@ -227,21 +209,18 @@ watch(
     openContexts.value = {};
     visitLimits.value = {};
     bulkProject.value = '';
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(key) || '{}');
-      viewMode.value = ['queue', 'reviewed', 'all'].includes(saved.viewMode) ? saved.viewMode : 'all';
-      filterText.value = typeof saved.filterText === 'string' ? saved.filterText : '';
-      focused.value = typeof saved.focused === 'string' ? saved.focused : '';
-    } catch {
-      /* Ignore old review state. */
-    }
+    let initial=initialReviewState(undefined);
+    try {initial=initialReviewState(JSON.parse(sessionStorage.getItem(key)||'{}'));}catch{/* Ignore invalid saved review state. */}
+    viewMode.value=initial.viewMode;
+    filterText.value=initial.filterText;
+    focused.value=initial.focused;
   },
   { immediate: true },
 );
 watch([viewMode, filterText, focused], () =>
   sessionStorage.setItem(
     reviewStateKey.value,
-    JSON.stringify({ viewMode: viewMode.value, filterText: filterText.value, focused: focused.value }),
+    JSON.stringify({ version:2,viewMode: viewMode.value, filterText: filterText.value, focused: focused.value }),
   ),
 );
 watch(
@@ -437,6 +416,10 @@ async function decide(group: HumanReviewGroup, mode: 'assigned' | 'unassigned' |
     error.value = 'Choose a project folder first.';
     return;
   }
+  if(mode==='assigned'&&!reviewCanAssign(group,path!)){
+    if(saveFuture)await saveRule(group);
+    return;
+  }
   if (saveFuture && !previewReady(group)) {
     error.value = 'Preview this future rule before saving it.';
     return;
@@ -554,14 +537,8 @@ function shortDetail(group: HumanReviewGroup) {
 function rowState(group: HumanReviewGroup) {
   return group.userAttribution ? 'decided' : humanReviewState(group);
 }
-function stateLabel(group: HumanReviewGroup) {
-  if (group.userAttribution === 'assigned') return name(group.projectPath || '');
-  if (group.userAttribution === 'unassigned') return 'Unassigned';
-  const state = humanReviewState(group);
-  if (state === 'conflict') return 'Conflicting matches';
-  if (group.projectPath) return `Matched · ${name(group.projectPath)}`;
-  return 'No project';
-}
+const stateLabel=reviewAssignmentLabel;
+
 async function saveSplit(group: HumanReviewGroup) {
   const draft = splitDraft.value;
   if (!draft || draft.key !== id(group)) return;
@@ -578,11 +555,11 @@ async function saveSplit(group: HumanReviewGroup) {
   <section ref="root" class="human-review" aria-labelledby="human-review-title">
     <div class="human-review-body">
       <ReviewTimeline :date="store.selectedDate" :intervals="intervals" :groups="activeGroups" :selected="selectedGroups" :focused="focused" @select="selectTimeline" />
-      <div class="app-review-heading"><h2 id="human-review-title">Your Mac activity <small>{{ duration(observedSeconds) }} observed</small></h2><span>{{ apps.length }} apps · {{ allContexts.length }} groups</span></div>
-      <p class="app-review-explanation">Estimated active time in your foreground apps. Assign a whole group, or inspect its visits.</p>
+      <div class="app-review-heading"><h2 id="human-review-title">Your Mac activity <small>{{ duration(observedSeconds) }} {{ viewMode==='queue'?'needs a project':'observed' }}</small></h2><span>{{ apps.length }} apps · {{ allContexts.length }} groups</span></div>
+      <p class="app-review-explanation">Estimated active time in your foreground apps. Automatically assigned time already counts toward its project; no confirmation is needed.</p>
       <div class="human-review-controls" role="group" aria-label="Activity view">
-        <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode='queue'">To review · {{ queueContextCount }}</button>
-        <button :class="{active:viewMode==='reviewed'}" :aria-pressed="viewMode==='reviewed'" @click="viewMode='reviewed'">Decided · {{ reviewedContextCount }}</button>
+        <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode='queue'">Needs a project · {{ queueContextCount }}</button>
+        <button :class="{active:viewMode==='reviewed'}" :aria-pressed="viewMode==='reviewed'" @click="viewMode='reviewed'">Assigned · {{ reviewedContextCount }}</button>
         <button :class="{active:viewMode==='all'}" :aria-pressed="viewMode==='all'" @click="viewMode='all'">All activity</button>
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<button class="btn btn-quiet btn-sm" @click="store.reviewSiteFilter=''">Clear filter</button></span>
         <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
@@ -591,7 +568,7 @@ async function saveSplit(group: HumanReviewGroup) {
       <p v-if="error" class="human-review-error" role="alert">{{ error }} <button class="btn btn-quiet btn-sm" @click="error=''">Dismiss</button></p>
       <p v-if="notice" class="human-review-notice" role="status">{{ notice }}<button v-if="undoAvailable" class="btn btn-sm" :disabled="Boolean(pending)" @click="undo(dayHistory.find(action=>action.canUndo)!)">Undo ⌘Z</button><button class="btn btn-quiet btn-sm" @click="notice=''">Dismiss</button></p>
       <div v-if="!store.summaryLoaded" class="human-review-empty" aria-hidden="true"><span v-for="index in 3" :key="index" class="skeleton" style="height:38px;margin:6px 0" /></div>
-      <div v-else-if="!apps.length" class="human-review-empty">{{ filterText?'No activity matches this filter.':store.reviewSiteFilter?'No recorded activity for this site on this day.':viewMode==='all'?'No activity recorded on this day.':viewMode==='reviewed'?'Nothing decided yet on this day.':'Nothing left to review on this day.' }}</div>
+      <div v-else-if="!apps.length" class="human-review-empty">{{ filterText?'No activity matches this filter.':store.reviewSiteFilter?'No recorded activity for this site on this day.':viewMode==='all'?'No activity recorded on this day.':viewMode==='reviewed'?'No activity is assigned to a project yet.':'No activity needs a project. Assigned time is available under Assigned or All activity.' }}</div>
       <div v-else class="app-review-list">
         <div class="app-review-columns"><span>Time</span><span>App / activity</span><span>Project</span><span /></div>
         <section v-for="app in apps" :key="app.key" class="review-app" :aria-label="`${app.label} activity`">
@@ -606,7 +583,7 @@ async function saveSplit(group: HumanReviewGroup) {
                 <div class="review-main">
                   <strong class="app-review-duration">{{ duration(context.seconds) }}</strong>
                   <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
-                  <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="context.groups[0]!.userAttribution==='assigned'" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
+                  <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="reviewIsAssigned(context.groups[0]!)" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
                   <label class="review-app-check"><input type="checkbox" :checked="contextMeta.get(context.key)!.checked" :indeterminate="contextMeta.get(context.key)!.partial" :disabled="Boolean(pending)||!contextMeta.get(context.key)!.eligible.length" :aria-label="`Select ${context.label} group in ${app.label}`" @change="selectContext(context,($event.target as HTMLInputElement).checked)" /></label>
                 </div>
               </div>
@@ -615,7 +592,7 @@ async function saveSplit(group: HumanReviewGroup) {
               <div class="review-main">
                 <strong class="app-review-duration">{{ duration(group.seconds) }}</strong>
                 <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ group.label===app.label?'Visit':title(group) }}</strong><small>{{ preciseClock(group.start) }}–{{ preciseClock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
-                <span class="review-state" :title="group.attributionReason||group.projectPath||undefined"><Check v-if="group.userAttribution==='assigned'" :size="11" />{{ stateLabel(group) }}</span>
+                <span class="review-state" :title="group.attributionReason||group.projectPath||undefined"><Check v-if="reviewIsAssigned(group)" :size="11" />{{ stateLabel(group) }}</span>
                 <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${group.label} at ${preciseClock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
               </div>
         <div
@@ -626,13 +603,14 @@ async function saveSplit(group: HumanReviewGroup) {
           <strong>Note</strong><span>{{ item.note }}</span>
         </div>
         <div v-if="isOpen(group)" class="review-detail">
+<p v-if="reviewIsAssigned(group)" class="review-attribution-note">Already counted in {{ name(group.projectPath!) }}. No confirmation is needed.</p>
 <div v-if="!group.reviewSegment" class="review-single-actions">
   <ProjectPicker :model-value="selected(group)" :paths="projectPaths" :label="`Project for ${group.label}`" @update:model-value="choices[id(group)]=$event;rulePreview=''" />
-  <button class="btn btn-sm" :disabled="Boolean(pending)||!selected(group)" @click="decide(group,'assigned')">{{ group.userAttribution?'Reassign':'Assign' }} {{ duration(group.seconds) }}</button>
+  <button class="btn btn-sm" :disabled="Boolean(pending)||!reviewCanAssign(group,selected(group))" @click="decide(group,'assigned')">{{ reviewIsAssigned(group)?'Change project':`Assign ${duration(group.seconds)}` }}</button>
   <button class="btn btn-sm" :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</button>
   <button v-if="group.userAttribution" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</button>
 </div>
-        <div v-if="suggestion(group) && !group.userAttribution" class="review-suggestion">
+        <div v-if="suggestion(group) && !group.userAttribution && !reviewIsAssigned(group)" class="review-suggestion">
           <span>
             Suggested <strong>{{ name(suggestion(group)!.projectPath) }}</strong> ·
             {{ suggestion(group)!.source.replaceAll('_', ' ') }} · {{ suggestion(group)!.detail }}
@@ -741,7 +719,7 @@ async function saveSplit(group: HumanReviewGroup) {
                 assigned separately.
               </small>
               <button
-                v-if="!group.userAttribution"
+                v-if="!group.userAttribution&&!reviewIsAssigned(group)"
                 class="btn btn-primary btn-sm"
                 :disabled="Boolean(pending) || !previewReady(group)"
                 @click="decide(group, 'assigned', true)"
@@ -772,7 +750,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <div class="app-review-selection" aria-live="polite"><strong>{{ selectedContextCount }} {{ selectedContextCount===1?'group':'groups' }} · {{ duration(selectedSeconds) }}</strong><small>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} selected</small></div>
         <ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" />
         <span v-if="bulkProject" class="bulk-impact">{{ name(bulkProject) }}: {{ duration(bulkProjectBefore) }} → {{ duration(bulkProjectAfter) }}</span>
-        <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ selection.hasDecisions?'Reassign':'Assign' }} {{ duration(selectedSeconds) }}</button>
+        <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ bulkGroups.some(reviewIsAssigned)?'Change project':'Assign' }} {{ duration(selectedSeconds) }}</button>
         <button class="btn btn-sm" :disabled="Boolean(pending)" @click="bulkDecide('unassigned')">Leave unassigned</button>
         <button class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="selectedGroups={}">Clear</button>
         <div v-if="projectPaths.length" class="app-review-project-shortcuts"><button v-for="(path,index) in projectPaths.slice(0,3)" :key="path" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" :aria-pressed="bulkProject===path" @click="bulkProject=path">{{ index+1 }} {{ name(path) }}</button></div>
@@ -1446,4 +1424,7 @@ async function saveSplit(group: HumanReviewGroup) {
 .review-visit .review-main>.review-what{padding-left:48px}.review-visit .review-main>.app-review-duration{font-size:11px}
 @media(max-width:820px){.review-visit{margin-left:12px}.review-visit .review-main>.review-what{padding-left:30px}}
 @media(max-width:540px){.review-visit{margin-left:4px}.review-visit .review-main>.review-what{padding-left:16px}}
+.review-state{white-space:normal;line-height:1.35;overflow-wrap:anywhere}
+.review-row.captured .review-state{color:var(--status-good)}
+.review-attribution-note{margin:0;color:var(--status-good);font-size:var(--text-sm)}
 </style>

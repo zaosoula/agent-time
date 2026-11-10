@@ -1,5 +1,5 @@
 import type {Interval} from '../capture/events.ts';
-import {groupHumanReview,type HumanReviewGroup} from '../capture/human-review.ts';
+import {groupHumanReview,humanReviewState,type HumanReviewGroup} from '../capture/human-review.ts';
 import {clampTimeRange,type TimeRange} from './timeline-viewport.ts';
 
 export interface AppReviewGroup extends HumanReviewGroup {
@@ -123,4 +123,38 @@ export function reviewTimelineBars(intervals:Interval[],groups:AppReviewGroup[],
 /** Editing/picker keys and native button activation belong to their controls. */
 export function reviewShortcutAllowed(key:string,target:{inReview:boolean;editing:boolean;picker:boolean;nativeControl:boolean}):boolean{
   return target.inReview&&!target.editing&&!target.picker&&!(target.nativeControl&&(key===' '||key==='Enter'));
+}
+
+export type ReviewViewMode='queue'|'reviewed'|'all';
+export function reviewIsAssigned(group:HumanReviewGroup):boolean{
+  return Boolean(group.projectPath)&&group.userAttribution!=='unassigned'&&humanReviewState(group)!=='conflict';
+}
+/** Automatic project evidence is already applied; it is never a pending confirmation. */
+export function reviewViewGroups(groups:AppReviewGroup[],mode:ReviewViewMode):AppReviewGroup[]{
+  if(mode==='queue')return groups.filter(group=>['unmatched','conflict'].includes(humanReviewState(group)));
+  if(mode==='reviewed')return groups.filter(reviewIsAssigned);
+  return [...groups];
+}
+export function initialReviewState(saved:unknown):{viewMode:ReviewViewMode;filterText:string;focused:string}{
+  const defaults={viewMode:'queue' as ReviewViewMode,filterText:'',focused:''};
+  if(!saved||typeof saved!=='object'||Array.isArray(saved))return defaults;
+  const state=saved as Record<string,unknown>;
+  if(state.version!==2)return defaults;
+  return {
+    viewMode:['queue','reviewed','all'].includes(String(state.viewMode))?state.viewMode as ReviewViewMode:'queue',
+    filterText:typeof state.filterText==='string'?state.filterText:'',
+    focused:typeof state.focused==='string'?state.focused:'',
+  };
+}
+export function reviewAssignmentLabel(group:HumanReviewGroup):string{
+  if(group.userAttribution==='unassigned')return 'Left unassigned';
+  if(humanReviewState(group)==='conflict')return 'Conflicting matches';
+  if(reviewIsAssigned(group)){
+    const name=group.projectPath!.split('/').filter(Boolean).at(-1)||group.projectPath;
+    return `${group.userAttribution==='assigned'?'Assigned':'Automatically assigned'} · ${name}`;
+  }
+  return 'Needs a project';
+}
+export function reviewCanAssign(group:HumanReviewGroup,path:string):boolean{
+  return Boolean(path)&&(!reviewIsAssigned(group)||path!==group.projectPath);
 }

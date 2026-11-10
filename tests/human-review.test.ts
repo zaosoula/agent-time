@@ -207,3 +207,23 @@ test('day review fingerprints are versioned and a failed legacy check is not rep
   assert.equal((collector.dayReviewStatus(date) as {stale:boolean}).stale,true);
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });
+
+test('an automatic Orca project match is credited before any manual confirmation',async()=>{
+ const {buildAppReviewGroups,reviewViewGroups}=await import('../src/ui/review-apps.ts');
+ const output=mkdtempSync(join(tmpdir(),'agent-time-auto-assigned-')),collector=new Collector(output);
+ try{
+  const now=Date.now()/1000-30;
+  for(const offset of [0,10])collector.store.put(makeEvent('macos','activity',{
+   observedAt:now+offset,monotonicAt:offset,hostId:'local',workspaceId:'local::'+output,
+   data:{foregroundName:'Orca',foregroundBundleId:'com.stablyai.orca',idleSeconds:0},
+  }));
+  const original=collector.store.events(),summary=collector.summary(),visits=buildAppReviewGroups(summary.intervals);
+  assert.equal(visits.length,1);assert.equal(visits[0]?.projectPath,output);assert.equal(visits[0]?.attributionSource,'orca-worktree');
+  assert.deepEqual(collector.store.humanDecisions(),[]);assert.equal(reviewViewGroups(visits,'queue').length,0);
+  assert.equal(reviewViewGroups(visits,'reviewed').length,1);
+  const monday=new Date(now*1000);monday.setHours(0,0,0,0);monday.setDate(monday.getDate()-(monday.getDay()+6)%7);
+  const date=`${monday.getFullYear()}-${String(monday.getMonth()+1).padStart(2,'0')}-${String(monday.getDate()).padStart(2,'0')}`;
+  assert.ok(weeklyReview(summary,date).projects.some(project=>project.project===output&&project.humanSeconds>0));
+  assert.deepEqual(collector.store.events(),original);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});

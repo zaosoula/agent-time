@@ -123,3 +123,41 @@ test('context checkbox state includes hidden visits and excludes split activity'
  const later=reviewContextGroups([...visits, ...buildAppReviewGroups([interval('new',60,65)])]).find(c=>c.label==='General activity'&&c.groups.length===3)!;
  assert.equal(later.key,context.key);
 });
+
+test('reconciliation only contains unresolved activity; automatic assignments need no confirmation',async()=>{
+ const {reviewViewGroups}=await import('../src/ui/review-apps.ts');
+ const groups=buildAppReviewGroups([
+  interval('pending',0,5),
+  interval('automatic',10,15,{workspaceId:'local::/SoundScape',attributionSource:'orca-worktree'}),
+  interval('manual',20,25,{workspaceId:'manual::/argos',userAttribution:'assigned'}),
+  interval('left',30,35,{userAttribution:'unassigned'}),
+  interval('conflict',40,45,{workspaceId:'local::/maybe',attributionSource:'conflict'}),
+ ]);
+ const before=JSON.stringify(groups);
+ assert.deepEqual(reviewViewGroups(groups,'queue').map(g=>g.start).sort((a,b)=>a-b),[0,40]);
+ assert.deepEqual(reviewViewGroups(groups,'reviewed').map(g=>g.projectPath).sort(),['/SoundScape','/argos']);
+ assert.equal(reviewViewGroups(groups,'all').length,5);
+ assert.equal(JSON.stringify(groups),before);
+});
+test('reconciliation defaults to Needs a project and migrates old All activity preferences once',async()=>{
+ const {initialReviewState}=await import('../src/ui/review-apps.ts');
+ for(const saved of [undefined,null,{},[],{viewMode:'all',filterText:'SoundScape',focused:'old'}])
+  assert.deepEqual(initialReviewState(saved),{viewMode:'queue',filterText:'',focused:''});
+ assert.deepEqual(initialReviewState({version:2,viewMode:'all',filterText:'Orca',focused:'new'}),{viewMode:'all',filterText:'Orca',focused:'new'});
+ assert.equal(initialReviewState({version:2,viewMode:'invalid'}).viewMode,'queue');
+});
+test('assignment labels and actions distinguish automatic attribution from a pending suggestion',async()=>{
+ const {reviewAssignmentLabel,reviewCanAssign}=await import('../src/ui/review-apps.ts');
+ const groups=buildAppReviewGroups([
+  interval('auto',0,5,{workspaceId:'local::/SoundScape',attributionSource:'orca-worktree'}),
+  interval('manual',10,15,{workspaceId:'manual::/SoundScape',userAttribution:'assigned'}),
+  interval('left',20,25,{userAttribution:'unassigned'}),interval('pending',30,35),
+  interval('conflict',40,45,{workspaceId:'local::/SoundScape',attributionSource:'conflict'}),
+ ]).sort((a,b)=>a.start-b.start);
+ assert.deepEqual(groups.map(reviewAssignmentLabel),['Automatically assigned · SoundScape','Assigned · SoundScape','Left unassigned','Needs a project','Conflicting matches']);
+ assert.equal(reviewCanAssign(groups[0]!,''),false);
+ assert.equal(reviewCanAssign(groups[0]!,'/SoundScape'),false);
+ assert.equal(reviewCanAssign(groups[0]!,'/other'),true);
+ assert.equal(reviewCanAssign(groups[4]!,'/SoundScape'),true);
+ assert.equal(reviewCanAssign(groups[2]!,'/SoundScape'),true);
+});
