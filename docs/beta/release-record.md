@@ -1,12 +1,17 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.41` candidate — 2026-11-10
+## `0.2.0-beta.41` published and verified — 2026-11-10
 
 Compact context groups replace the long default visit list. Separate visits with the same app/context, project, decision and attribution evidence share one review row; the original spans and source IDs remain available through View visits. Whole-group selection includes hidden eligible visits and preserves the existing 10,000-pair request limit. Split portions remain separate and cannot be overwritten by app/group bulk selection. Shared presentation state keeps the day summary and sidebar badge consistent with the visible group counts. CSV/legacy review consumers and persisted backlog data retain their existing representation.
 
 Local validation: 420 JavaScript tests, production typecheck/build and 30 focused UI/grouping/review checks passed. A 134-visit regression fixture renders one context row with zero raw visit rows until requested, preserving all spans, gaps and actual summed seconds. Isolated browser checks using real collector endpoints cover whole-group assignment and Undo, one-visit assignment separating projects and Undo restoring the group, 30-to-60 visit pagination, timeline reveal to visit 134, filter/date selection reset, Space selection and native picker behavior, and real intra-interval split portions excluded from app bulk selection. No capture, schema, storage or timing-accounting changes were made.
 
-Signing, publication and public-byte verification are pending this release run. Existing large-day ribbon rendering remains unchanged; this release reduces default visit-list rendering rather than claiming new ribbon performance or native desktop accessibility measurements. Installation on the owner's Mac is not claimed by the source/browser checks.
+Existing large-day ribbon rendering remains unchanged; this release reduces default visit-list rendering rather than claiming new ribbon performance or native desktop accessibility measurements. Installation on the owner's Mac is not claimed by the source/browser checks.
+
+
+[Release run 42823079475](https://github.com/zaosoula/agent-time/actions/runs/42823079475) passed candidate checks, signed/notarized macOS build and publication for exact source `011075641e3ad9015669a2e026665a9fc00912f4`. CI passed 420 JavaScript tests, 29 locked Rust tests, production typecheck/build, packaged sidecars and zero reported production dependency vulnerabilities.
+
+Independent public downloads match the staged manifest, updater signature and exact bytes: updater SHA-256 `db45f7c357366990c45968e8167880c82f5d7b8cbd4ae5f4104c0751256e2d36` (55,719,269 bytes); installer SHA-256 `1ab8f37ac65db58f96bb1f08dd8deda6ca2d56387599a877fc4537b34113b8f6` (55,514,191 bytes). The landing page offers beta.41. Identical staged app/DMG copies pass stapled-ticket and Gatekeeper checks (Notarized Developer ID); deep strict app signing passes, and the main executable is arm64 with bundle version beta.41. Public verification completed at 2026-11-10T13:24:58.966Z. Aggregate proof: `/private/tmp/agent-time-beta41-public/public-verification.json`. Temporary archive, installer and extracted-app copies were removed after verification. Publication is verified; installation on the owner's Mac was not performed as part of this change.
 
 ## `0.2.0-beta.40` published and verified — 2026-11-10
 
