@@ -1,5 +1,7 @@
+import {isStoragePressureNotice,type StoragePressureNotice} from './storage-pressure-status.ts';
+import type {PressureRecoveryResult} from './storage-pressure.ts';
 import {cleanupArchiveStaging} from './archive-storage.ts';
-import {storagePolicyDecision,quickStorageUsage,estimatedBytes} from './storage-policy.ts';
+import {storagePolicyDecision,quickStorageUsage,estimatedBytes,FREE_RESERVE_BYTES} from './storage-policy.ts';
 import { mkdirSync, existsSync, writeFileSync, readFileSync, unlinkSync, renameSync, lstatSync, statSync, statfsSync, readdirSync } from 'node:fs';
 import { join, isAbsolute, basename, resolve } from 'node:path';
 import {createHash} from 'node:crypto';
@@ -41,7 +43,7 @@ import {staticOrcaScopeReason} from './observation-retention.ts';
 import {addDays,localDate,localDayBounds,windowBounds} from './summary-window.ts';
 import {release as osRelease} from 'node:os';
 import {randomUUID} from 'node:crypto';
-import {clearStaleLock,ownsLock,writeLock} from './capture-lock.ts';
+import {clearStaleLock,ownsLock,writeLock,parseLock,lockOwnerAlive} from './capture-lock.ts';
 
 // The tray asks every few seconds; installation status reads configs and runtime files.
 const hookStatusTtlMs=30_000;
@@ -103,18 +105,97 @@ export class Collector {
   private careTimer:ReturnType<typeof setTimeout>|undefined;
   private starting=false;private startEpoch=0;private checkingStorage=false;
   private nextStorageCheck=0;private nextArchiveCare=0;
-  private careState:{at:number|null;error:string|null}={at:null,error:null};
+  private careState:{at:number|null;error:string|null;pressure?:StoragePressureNotice}={at:null,error:null};
+  private pressureQueued=false;private pressureRecovery:Promise<void>|undefined;
+  private storageResumeTimer:ReturnType<typeof setTimeout>|undefined;
+  private storageResumeCheck:Promise<void>|undefined;private closing=false;
+  private readStorageUsage(){return quickStorageUsage(this.output);}
+  private runPressureCompression(){return runStorageTask<PressureRecoveryResult>({op:'pressure',database:join(this.output,'events.sqlite'),output:this.output,now:Date.now()/1000});}
+  private releaseIdleLock(){
+    if(!this.running&&!this.starting&&!this.stopping&&!this.pressureQueued&&!this.pressureRecovery&&this.lockOwned){
+      const lock=join(this.output,'capture.lock');if(ownsLock(lock))unlinkSync(lock);this.lockOwned=false;
+    }
+  }
+  private storageCareStatus(){
+    const paused=this.pressureQueued||!!this.careState.pressure&&this.careState.pressure.phase!=='resumed'||existsSync(join(this.output,'storage-paused.json'));
+    if(paused&&!this.careState.pressure){try{
+      const path=join(this.output,'storage-paused.json');
+      if(statSync(path).size<16384){
+        const saved=JSON.parse(readFileSync(path,'utf8'));
+        if(isStoragePressureNotice(saved.pressure)){
+          const pressure:StoragePressureNotice={...saved.pressure};
+          if(!this.pressureQueued&&(pressure.phase==='queued'||pressure.phase==='compressing')){
+            const lock=join(this.output,'capture.lock');let active=false;
+            try{const owner=parseLock(readFileSync(lock,'utf8'));active=!!owner&&lockOwnerAlive(lock,owner);}catch{/* No active recovery owner. */}
+            if(!active)pressure.phase='failed';
+          }
+          if(pressure.phase==='ready'){
+            const usage=this.readStorageUsage();pressure.freeBytes=usage.freeBytes;
+            if(usage.truncated||usage.freeBytes===null||storagePolicyDecision(usage,this.surfaces.storageLimitMB)==='pause')pressure.phase='blocked';
+          }
+          this.careState.pressure=pressure;
+        }
+      }
+    }catch{/* Old pause markers remain supported. */}}
+    return {...this.careState,paused};
+  }
+  private persistPressure(pressure:StoragePressureNotice){
+    this.careState.pressure=pressure;
+    const reason='Capture paused to keep 1 GB of disk space free. Automatic history compression is running or has finished. Capture restarts when space is available.';
+    this.lastError=reason;
+    const path=join(this.output,'storage-paused.json'),temp=path+'.tmp';
+    try{writeFileSync(temp,JSON.stringify({reason,at:pressure.at,pressure}),{mode:0o600});renameSync(temp,path);}catch(error){this.careState.error=String(error);}
+  }
+  private queuePressure(freeBytes:number){
+    const saved=this.storageCareStatus().pressure,previous=saved?.phase==='resumed'?undefined:saved;
+    this.pressureQueued=true;
+    this.persistPressure({id:previous?.id??randomUUID(),reason:'disk-space',phase:'queued',autoResume:true,at:previous?.at??Date.now()/1000,freeBytes,savedBytes:0});
+  }
+  private beginPressureRecovery(){
+    if(!this.pressureQueued||this.pressureRecovery)return;
+    this.pressureRecovery=(async()=>{
+      await this.storageTask?.catch(()=>{});
+      if(!this.lockOwned||!ownsLock(join(this.output,'capture.lock')))throw new Error('Storage compression lost capture ownership');
+      const before=this.readStorageUsage();
+      this.persistPressure({...this.careState.pressure!,phase:'compressing'});
+      await this.exclusiveStorageTask(()=>this.runPressureCompression(),true);
+      const after=this.readStorageUsage(),safe=!after.truncated&&after.freeBytes!==null&&storagePolicyDecision(after,this.surfaces.storageLimitMB)!=='pause';
+      this.careState.at=Date.now()/1000;this.careState.error=null;
+      this.persistPressure({...this.careState.pressure!,phase:safe?'ready':'blocked',freeBytes:after.freeBytes,savedBytes:Math.max(0,before.managedBytes-after.managedBytes)});
+    })().catch(error=>{
+      this.careState.error=String(error);this.persistPressure({...this.careState.pressure!,phase:'failed'});
+    }).finally(()=>{this.pressureQueued=false;this.pressureRecovery=undefined;this.releaseIdleLock();this.scheduleStorageResume(0);});
+  }
+  private scheduleStorageResume(delay=10000){
+    clearTimeout(this.storageResumeTimer);
+    if(this.closing||!this.careState.pressure?.autoResume)return;
+    this.storageResumeTimer=setTimeout(()=>{
+      this.storageResumeCheck=this.resumeAfterStorage().catch(error=>{this.lastError=String(error);}).finally(()=>{this.storageResumeCheck=undefined;this.scheduleStorageResume();});
+    },delay).unref();
+  }
+  private async resumeAfterStorage(){
+    const pressure=this.careState.pressure;
+    if(this.closing||!pressure?.autoResume||this.running||this.starting||this.stopping||this.storageTask||this.pressureQueued||this.pressureRecovery||pendingReplacement(this.output))return;
+    const usage=this.readStorageUsage();
+    if(usage.truncated||usage.freeBytes===null||usage.freeBytes<=FREE_RESERVE_BYTES||storagePolicyDecision(usage,this.surfaces.storageLimitMB)==='pause')return;
+    try{
+      await this.start();
+      if(this.running)this.careState.pressure={...pressure,phase:'resumed',autoResume:false,freeBytes:usage.freeBytes};
+    }catch(error){this.lastError=String(error);}
+  }
   private scheduleStorageCare(delay=60000){clearTimeout(this.careTimer);if(this.running)this.careTimer=setTimeout(()=>{void this.performStorageCare().finally(()=>this.scheduleStorageCare());},delay).unref();}
   private async performStorageCare(forceArchives=false){
-    if(!this.lockOwned||this.storageTask||pendingReplacement(this.output))return;
-    try{await this.exclusiveStorageTask(()=>runStorageTask({op:'care',database:join(this.output,'events.sqlite'),output:this.output,now:Date.now()/1000,archives:forceArchives||Date.now()>=this.nextArchiveCare}));if(forceArchives||Date.now()>=this.nextArchiveCare)this.nextArchiveCare=Date.now()+86400000;this.careState={at:Date.now()/1000,error:null};}
-    catch(error){this.careState={at:Date.now()/1000,error:String(error)};}
+    if(!this.lockOwned||this.storageTask||this.pressureQueued||pendingReplacement(this.output))return;
+    try{await this.exclusiveStorageTask(()=>runStorageTask({op:'care',database:join(this.output,'events.sqlite'),output:this.output,now:Date.now()/1000,archives:forceArchives||Date.now()>=this.nextArchiveCare}));if(forceArchives||Date.now()>=this.nextArchiveCare)this.nextArchiveCare=Date.now()+86400000;this.careState={...this.careState,at:Date.now()/1000,error:null};}
+    catch(error){this.careState={...this.careState,at:Date.now()/1000,error:String(error)};}
   }
   private async ensureStorageCapacity():Promise<boolean>{
-    let usage=quickStorageUsage(this.output),decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);
-    if(decision!=='ok'&&!this.storageTask&&!pendingReplacement(this.output)){await this.performStorageCare(true);usage=quickStorageUsage(this.output);decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);}
+    let usage=this.readStorageUsage(),decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);
+    if(usage.freeBytes!==null&&usage.freeBytes<FREE_RESERVE_BYTES){this.queuePressure(usage.freeBytes);return false;}
+    if(decision!=='ok'&&!this.storageTask&&!pendingReplacement(this.output)){await this.performStorageCare(true);usage=this.readStorageUsage();decision=storagePolicyDecision(usage,this.surfaces.storageLimitMB);}
+    if(usage.freeBytes!==null&&usage.freeBytes<FREE_RESERVE_BYTES){this.queuePressure(usage.freeBytes);return false;}
     const path=join(this.output,'storage-paused.json');
-    if(decision!=='pause'&&!usage.truncated){if(existsSync(path))unlinkSync(path);return true;}
+    if(decision!=='pause'&&!usage.truncated){if(existsSync(path))unlinkSync(path);if(this.careState.pressure?.phase!=='resumed')this.careState.pressure=undefined;return true;}
     const reason=usage.truncated?'Storage measurement reached its safety limit. Clear the hook backlog before resuming.':usage.freeBytes!==null&&usage.freeBytes<1024**3?'Capture paused to keep 1 GB of disk space free. Free disk space, then resume.':'Capture paused at your storage budget. Increase the budget or remove a verified backup, then resume.';
     const temp=path+'.tmp';writeFileSync(temp,JSON.stringify({reason,at:Date.now()/1000}),{mode:0o600});renameSync(temp,path);this.lastError=reason;return false;
   }
@@ -137,6 +218,7 @@ export class Collector {
     // like foreign writes and invalidate every summary cache once a minute.
     this.usageReader=new UsageReader(this.store.database,undefined,this.reader);this.hookInstallation=new HookInstallation(output);this.mcpInstallation=new McpInstallation(output);this.claudeStatusLine=new ClaudeStatusLineInstallation(output);this.syncUsage();
     this.removeStaleExportTemporaries();
+    this.storageCareStatus();this.scheduleStorageResume();
   }
   private loadSettings(){
     const settings=join(this.output,'settings.json');
@@ -177,7 +259,7 @@ export class Collector {
   private syncUsage(){const s=this.surfaces;this.usageReader.configureProviders(Object.fromEntries(agents.map(agent=>[agent.id,s[agent.usageSetting]===true])));if(this.running&&s.tokenUsage&&agents.some(agent=>s[agent.usageSetting]===true))this.usageReader.start();else void this.usageReader.stop();}
   private orcaAvailable(){return this.reader!==callOrca||orcaCliAvailable();}
   private currentWorkingAgents(now=Date.now()/1000){return this.running?recentWorkingAgentCount(this.surfaces.orcaPolling?this.store.recent('orca',100):[],this.store.recent('hook',100).filter(event=>agents.some(agent=>agent.id===event.provider&&this.surfaces[agent.setting])),now):0;}
-  status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),workingAgents:this.currentWorkingAgents(),macos:this.macos,output:this.output,storageCare:{...this.careState,paused:existsSync(join(this.output,'storage-paused.json'))},startupIssues:[...this.startupIssues]};}
+  status(){const orcaAvailable=this.orcaAvailable();return {running:this.running,orcaAvailable,orcaPolling:this.surfaces.orcaPolling&&orcaAvailable,surfaces:{...this.surfaces},sources:sourceMetadata,lastPoll:this.lastPoll,lastError:this.lastError,eventCount:this.store.count(),workingAgents:this.currentWorkingAgents(),macos:this.macos,output:this.output,storageCare:this.storageCareStatus(),startupIssues:[...this.startupIssues]};}
   trayStatus(){
     const now=new Date(),date=localDate(now.getTime()/1000);
     // Token usage is read only when the user enabled it.
@@ -187,7 +269,7 @@ export class Collector {
     const hookWarning=outdated.length&&hooks?{key:hooks.runtimeVersion+':'+outdated.map(target=>target.id).sort().join(','),agents:[...new Set(outdated.map(target=>hooks.agents.find(agent=>agent.id===target.provider)?.name||target.provider))]}:null;
     const sourceWarning=this.running?this.captureHealth().sources.filter(source=>['stale','failed','repair-needed'].includes(source.state)).map(source=>source.name):[];
     const summary=this.daySummary(date,60000);
-    return {date,running:this.running,...dailyTotals(summary,now),workingAgents:this.currentWorkingAgents(now.getTime()/1000),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning,sourceWarning};
+    return {date,running:this.running,storageCare:this.storageCareStatus(),...dailyTotals(summary,now),workingAgents:this.currentWorkingAgents(now.getTime()/1000),tokensToday:usage.reduce((n,d)=>n+d.tokens,0),apiUsdToday:usage.reduce((n,d)=>n+d.usd,0),unpricedToday:usage.reduce((n,d)=>n+d.unpriced,0),hookWarning,sourceWarning};
   }
   private cachedHookStatus():HookInstallationStatus{
     if(this.hookStatusCache&&Date.now()-this.hookStatusCache.at<hookStatusTtlMs)return this.hookStatusCache.value;
@@ -244,12 +326,12 @@ export class Collector {
     this.invalidateSummaries();
     return result;
   }
-  private async exclusiveStorageTask<T>(run:()=>Promise<T>):Promise<T>{
-    if(this.storageTask)throw new Error('Another storage operation is still running');
+  private async exclusiveStorageTask<T>(run:()=>Promise<T>,pressure=false):Promise<T>{
+    if(this.storageTask||this.pressureQueued&&!pressure)throw new Error('Another storage operation is still running');
     const task=run();this.storageTask=task;
     try{return await task;}finally{this.storageTask=undefined;}
   }
-  storageUsage(){return {...storageUsage(this.output),storageLimitMB:this.surfaces.storageLimitMB,care:{...this.careState,paused:existsSync(join(this.output,'storage-paused.json'))}};}
+  storageUsage(){return {...storageUsage(this.output),storageLimitMB:this.surfaces.storageLimitMB,care:this.storageCareStatus()};}
   reclaimWal(){this.requireOwner();if(this.storageTask)throw new Error('Wait for the storage operation to finish before reclaiming space');this.store.checkpointWal();return this.storageUsage();}
   /** The verified copy and VACUUM run in a worker thread; this resolves when the copy is ready. */
   prepareStorageCompaction(){
@@ -660,13 +742,14 @@ export class Collector {
   manualNotes(date:string){return this.store.manualNotes(date);}
   addManualNote(input:Omit<ManualNote,'id'|'createdAt'>){this.requireOwner();return this.store.addManualNote(input);}
   removeManualNote(id:string){this.requireOwner();return this.store.removeManualNote(id);}
-  private requireOwner(){if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Edit manual notes in the app that owns capture');}
+  private requireOwner(){if(this.pressureQueued)throw new Error('Wait for automatic history compression to finish');if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Edit manual notes in the app that owns capture');}
   async start(durationSeconds?:number) {
     if(durationSeconds!==undefined&&(!Number.isFinite(durationSeconds)||durationSeconds<1||durationSeconds>86400))throw new Error('Duration must be 1–86400 seconds');
     if(this.running)return this.status();
     if(this.starting)throw new Error('Capture is already starting');
     if(this.stopping)throw new Error('Capture is stopping');
-    if(this.storageTask)throw new Error('Wait for the storage operation to finish before resuming capture');
+    if(this.storageTask||this.pressureQueued||this.pressureRecovery)throw new Error('Wait for the storage operation to finish before resuming capture');
+    if(this.careState.pressure?.phase==='resumed')this.careState.pressure=undefined;
     const lock=join(this.output,'capture.lock');
     clearStaleLock(lock,{unreadable:'Unreadable collector lock; inspect before removing',live:'Another collector owns this data directory'});
     writeLock(lock);this.lockOwned=true;this.starting=true;const epoch=++this.startEpoch;this.lastError=null;this.failedPoller=null;this.macError=null;
@@ -687,13 +770,14 @@ export class Collector {
       await this.tick();return this.status();
     }catch(error){
       this.running=false;this.activityProbe.stop();clearTimeout(this.careTimer);clearTimeout(this.deadline);
-      if(ownsLock(lock))unlinkSync(lock);
-      this.lockOwned=false;throw error;
-    }finally{this.starting=false;}
+      if(this.pressureQueued)this.beginPressureRecovery();
+      else{if(ownsLock(lock))unlinkSync(lock);this.lockOwned=false;}
+      throw error;
+    }finally{this.starting=false;this.releaseIdleLock();}
   }
   private async tick() {
     if(!this.running||this.checkingStorage)return;
-    if(Date.now()>=this.nextStorageCheck){this.nextStorageCheck=Date.now()+10000;this.checkingStorage=true;try{if(!await this.ensureStorageCapacity()){this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));await this.stop();return;}}finally{this.checkingStorage=false;}}
+    if(Date.now()>=this.nextStorageCheck){this.nextStorageCheck=Date.now()+10000;this.checkingStorage=true;try{if(!await this.ensureStorageCapacity()){try{this.store.put(makeEvent('capture','coverage',{data:{reason:this.lastError}}));}catch{/* Disk may already be full. */}try{await this.stop(true);}finally{this.beginPressureRecovery();}return;}}finally{this.checkingStorage=false;}}
     if(!this.running)return;
     this.inFlight=this.poll().catch(error=>{this.lastError=`Capture poll failed: ${String(error)}`;});
     await this.inFlight;this.inFlight=undefined;
@@ -742,12 +826,14 @@ export class Collector {
     }catch(error){this.lastError=String(error);this.failedPoller=null;this.noteCoverage('capture',this.lastError);}
     finally{this.endCoverageTick();}
   }
-  stop():Promise<ReturnType<Collector['status']>> {
+  stop(storagePause=false):Promise<ReturnType<Collector['status']>> {
+    if(!storagePause&&this.running&&this.careState.pressure?.autoResume){this.persistPressure({...this.careState.pressure,autoResume:false});clearTimeout(this.storageResumeTimer);}
     if(this.stopping)return this.stopping;
     if(!this.lockOwned)return Promise.resolve(this.status());
-    this.stopping=this.stopOwned().finally(()=>{this.stopping=undefined;});return this.stopping;
+    this.stopping=this.stopOwned().finally(()=>{this.stopping=undefined;this.releaseIdleLock();});return this.stopping;
   }
   private async stopOwned() {
+    const wasRunning=this.running;
     this.startEpoch++;
     this.running=false;clearTimeout(this.careTimer);clearTimeout(this.timer);clearTimeout(this.deadline);
     this.focusedTabs=[];this.focusedTabsAt=0;
@@ -755,10 +841,10 @@ export class Collector {
     this.activityProbe.stop();
     await this.usageReader.stop();
     await this.inFlight;
-    try{this.drainHooks();this.store.put(makeEvent('capture','capture_stop'));}
+    try{if(!this.pressureQueued)this.drainHooks();if(wasRunning||!this.pressureQueued)this.store.put(makeEvent('capture','capture_stop'));}
     catch(error){this.lastError=`Could not finish capture cleanly: ${String(error)}`;}
-    finally{if(this.lockOwned){const lock=join(this.output,'capture.lock');if(ownsLock(lock))unlinkSync(lock);this.lockOwned=false;}}
+    finally{if(this.lockOwned&&!this.pressureQueued){const lock=join(this.output,'capture.lock');if(ownsLock(lock))unlinkSync(lock);this.lockOwned=false;}}
     return this.status();
   }
-  async close(){this.linear.close();await this.stop();await this.storageTask?.catch(()=>{});await this.usageReader.close();this.store.close();}
+  async close(){this.closing=true;clearTimeout(this.storageResumeTimer);this.linear.close();await this.stop(true);await this.storageResumeCheck;await this.pressureRecovery;await this.storageTask?.catch(()=>{});await this.usageReader.close();this.store.close();}
 }

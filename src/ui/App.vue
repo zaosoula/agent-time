@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {storagePressureDetail} from '../capture/storage-pressure-status.ts';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui';
 import {
@@ -121,6 +122,9 @@ function settingsError(cause: unknown) {
 const dismissedBanners = ref<Record<string, boolean>>({});
 const hookBannerKey = computed(() => `hooks:${store.outdatedHooks.map((target) => target.id).join('|')}`);
 const sourceBannerKey = computed(() => `sources:${store.sourceProblems.map((source) => source.id).join('|')}`);
+const storagePressure = computed(()=>store.status?.storageCare?.paused?store.status.storageCare.pressure:undefined);
+const storageSettingsKey = ref(0);
+function openStorage(){sessionStorage.setItem('agent-time.settings-tab','data');storageSettingsKey.value++;navigate('settings');}
 const pollProblem = computed(() => store.pollError || store.status?.lastError || '');
 function retry() {
   void store.refreshStatus();
@@ -138,7 +142,8 @@ async function listenNavigation() {
     if (event.payload === 'hook-setup') {
       navigate('health');
       relaunchHookSetup();
-    } else if (['settings', 'today', 'usage', 'health', 'review'].includes(event.payload))
+    } else if(event.payload==='storage')openStorage();
+    else if (['settings', 'today', 'usage', 'health', 'review'].includes(event.payload))
       navigate(event.payload as Page);
   });
   const disposeRestart = await listen<string | null>('collector-restarted', (event) => {
@@ -330,6 +335,12 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
+        <div v-if="storagePressure" class="banner" role="alert" aria-label="Low disk space capture pause">
+          <CircleHelp :size="16" />
+          <span><strong>Capture paused for low disk space.</strong> {{ storagePressureDetail(storagePressure) }}</span>
+          <button class="btn btn-sm" @click="openStorage">Data &amp; backup</button>
+          <button v-if="storagePressure.phase==='ready'" class="btn btn-sm" :disabled="captureBusy" @click="toggleCapture">Resume capture</button>
+        </div>
         <div v-if="store.outdatedHooks.length && !dismissedBanners[hookBannerKey]" class="banner" role="alert">
           <CircleHelp :size="16" />
           <span>
@@ -369,6 +380,7 @@ onUnmounted(() => {
         <UsagePage v-else-if="store.page === 'usage'" :status="store.status" />
         <CaptureSettingsPage
           v-else-if="store.page === 'settings'"
+          :key="storageSettingsKey"
           :status="store.status"
           :busy="busy"
           @change="updateSettings"

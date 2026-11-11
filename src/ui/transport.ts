@@ -1,3 +1,4 @@
+import type {StoragePressureNotice} from '../capture/storage-pressure-status.ts';
 import type { Summary } from '../capture/events.ts';
 import type { CaptureSettings } from '../capture/settings.ts';
 import type {
@@ -47,6 +48,7 @@ export interface CaptureSourceInfo {
   usageSetting?: string;
 }
 export interface CaptureStatus {
+  storageCare?:{at:number|null;error:string|null;paused:boolean;pressure?:StoragePressureNotice};
   running: boolean;
   orcaAvailable: boolean;
   orcaPolling: boolean;

@@ -27,7 +27,7 @@ function loadJson(path:string):unknown{
  if(lstatSync(path).isSymbolicLink())throw new Error('Linear state path is a symlink');
  return JSON.parse(readFileSync(path,'utf8'));
 }
-export function keychainHelper(path:string,timeoutMs=10_000):Keychain {
+export function keychainHelper(path:string,timeoutMs=120_000):Keychain {
  return (operation,value)=>new Promise((resolve,reject)=>{
   const child=spawn(path,[operation],{stdio:['pipe','pipe','ignore']});
   const chunks:Buffer[]=[];let size=0,failed=false,timedOut=false;
@@ -82,7 +82,7 @@ function cleanProject(value:any):LinearProject|null{
 export class LinearConnection {
  private cachePath:string;private caches=new Map<string,Cache>();private tokens=new Map<string,TokenSet>();
  private keychain:Keychain;private fetcher:Fetcher;private openUrl:(url:string)=>Promise<void>;private redirectUri:string;
- private loaded=false;private loading:Promise<void>|undefined;private refreshing=new Map<string,Promise<string>>();private server:Server|null=null;private timeout:ReturnType<typeof setTimeout>|null=null;
+ private loaded=false;private loading:Promise<void>|undefined;private keychainFailure:Error|undefined;private refreshing=new Map<string,Promise<string>>();private server:Server|null=null;private timeout:ReturnType<typeof setTimeout>|null=null;
  private autoTimer:ReturnType<typeof setInterval>;private initialTimer:ReturnType<typeof setTimeout>;private lastAutoAttempt=0;
  private error:string|null=null;private errors=new Map<string,string>();
  constructor(output:string,keychain:Keychain,fetcher:Fetcher=fetch,openUrl:(url:string)=>Promise<void>=async url=>{await exec('/usr/bin/open',[url],{timeout:5000});},redirectUri=LINEAR_REDIRECT_URI){
@@ -101,13 +101,16 @@ export class LinearConnection {
    if(now-this.lastAutoAttempt<60*60)return;
    const due=[...this.tokens.keys()].filter(id=>!this.caches.has(id)||now-(this.caches.get(id)?.syncedAt||0)>=24*60*60);
    if(!due.length)return;this.lastAutoAttempt=now;
-   for(const id of due)try{await this.sync(id);}catch{/* Keep other workspaces available. */}
+   for(const id of due)try{await this.sync(id,false);}catch{/* Keep other workspaces available. */}
   }catch{/* Settings exposes the error. */}
  }
- private async loadTokens(){
+ private async loadTokens(retry=false){
   if(this.loaded)return;
+  if(retry&&this.keychainFailure){this.keychainFailure=undefined;this.error=null;}
+  if(this.keychainFailure)throw this.keychainFailure;
   // Concurrent status/sync calls share one Keychain read.
-  this.loading||=this.readTokens().finally(()=>{this.loading=undefined;});
+  // A failed or dismissed prompt is retried only by an explicit Linear action.
+  this.loading||=this.readTokens().catch(error=>{this.keychainFailure=error instanceof Error?error:new Error(String(error));throw this.keychainFailure;}).finally(()=>{this.loading=undefined;});
   return this.loading;
  }
  private async readTokens(){
@@ -125,7 +128,7 @@ export class LinearConnection {
  private async saveTokens(){await this.keychain(this.tokens.size?'write':'delete',this.tokens.size?JSON.stringify([...this.tokens.values()]):undefined);}
  private saveCaches(){privateJson(this.cachePath,[...this.caches.values()]);}
  async status():Promise<LinearStatus>{
-  await this.loadTokens();
+  try{await this.loadTokens();}catch{this.error='Linear could not access its saved connection in Keychain. Use Connect or Sync to try again.';}
   const workspaces=[...this.tokens.keys()].map(id=>({...this.caches.get(id)||{viewerName:'',workspaceId:id,workspaceName:'Linear workspace',projects:[],syncedAt:0},error:this.errors.get(id)||null}));
   const projects=workspaces.flatMap(workspace=>workspace.projects);
   return {phase:this.server?'connecting':workspaces.length?'connected':this.error?'error':'disconnected',clientId:LINEAR_CLIENT_ID,workspaces,projectCount:projects.length,projects,redirectUri:this.redirectUri,error:this.error};
@@ -160,7 +163,7 @@ export class LinearConnection {
  async connect(clientId=LINEAR_CLIENT_ID):Promise<LinearStatus>{
   if(!clientIdPattern.test(clientId))throw new Error('Invalid Linear OAuth client ID');
   if(this.server)throw new Error('Linear sign-in is already open');
-  await this.loadTokens();this.error=null;
+  await this.loadTokens(true);this.error=null;
   const verifier=randomBytes(32).toString('base64url');const state=randomBytes(32).toString('base64url');
   const challenge=createHash('sha256').update(verifier).digest('base64url');
   let consumed=false;
@@ -205,8 +208,8 @@ export class LinearConnection {
    return {isNew,workspaceName:viewer.organization.name};
   }catch(error){this.error=String(error);throw error;}
  }
- async sync(workspaceId?:string):Promise<LinearStatus>{
-  await this.loadTokens();if(!this.tokens.size)throw new Error('Connect Linear first');
+ async sync(workspaceId?:string,retryKeychain=true):Promise<LinearStatus>{
+  await this.loadTokens(retryKeychain);if(!this.tokens.size)throw new Error('Connect Linear first');
   const ids=workspaceId?[workspaceId]:[...this.tokens.keys()];
   for(const id of ids){
    if(!this.tokens.has(id))throw new Error('Unknown Linear workspace');
@@ -229,7 +232,7 @@ export class LinearConnection {
  }
  async disconnect(workspaceId?:string):Promise<LinearStatus>{
   if(this.server&&!workspaceId){this.finish();this.error=null;return this.status();}
-  this.finish();await this.loadTokens();
+  this.finish();await this.loadTokens(true);
   if(workspaceId&&!this.tokens.has(workspaceId))throw new Error('Unknown Linear workspace');
   if(workspaceId){this.tokens.delete(workspaceId);this.caches.delete(workspaceId);this.errors.delete(workspaceId);}
   else{this.tokens.clear();this.caches.clear();this.errors.clear();}

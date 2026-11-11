@@ -7,7 +7,7 @@ use crate::widget::WidgetPublisher;
 
 pub struct TrayState {
  status:MenuItem<tauri::Wry>,today:MenuItem<tauri::Wry>,detail:MenuItem<tauri::Wry>,tokens:MenuItem<tauri::Wry>,toggle:MenuItem<tauri::Wry>,timed_pause:MenuItem<tauri::Wry>,
- busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,widget:WidgetPublisher,last_summary:Mutex<Option<Value>>,
+ busy:AtomicBool,pub stopped:AtomicBool,last_warning:Mutex<Option<String>>,last_storage_warning:Mutex<Option<String>>,widget:WidgetPublisher,last_summary:Mutex<Option<Value>>,
  pause_until:Mutex<Option<SystemTime>>,pause_file:PathBuf,
  /// Last observed capture state; paused capture is polled less often.
  running:AtomicBool,
@@ -32,6 +32,25 @@ fn hook_warning_body(value:&Value,last:&mut Option<String>)->Option<String>{
  *last=Some(key.to_string());
  Some(format!("Update outdated hooks for {}. Agent time may be missing. Open Agent Time to repair.",names.join(", ")))
 }
+const STORAGE_NOTIFICATION_TITLE:&str="Capture paused: low disk space";
+const STORAGE_RESUMED_TITLE:&str="Capture restarted automatically";
+fn storage_warning_body(value:&Value,last:&mut Option<String>)->Option<String>{
+ let notice=&value["storageCare"]["pressure"];
+ let resumed=notice["phase"].as_str()==Some("resumed")&&value["running"].as_bool()==Some(true);
+ if !resumed&&(value["running"].as_bool()==Some(true)||value["storageCare"]["paused"].as_bool()!=Some(true)){*last=None;return None;}
+ if notice["reason"].as_str()!=Some("disk-space"){return None;}
+ let id=notice["id"].as_str().filter(|id|!id.is_empty())?;
+ let phase=notice["phase"].as_str()?;
+ let (bucket,body)=match phase{
+  "queued"|"compressing"=>("compressing","Less than 1 GB was available. Agent Time paused capture and is compressing stored history automatically."),
+  "ready"=>("ready","Automatic compression finished. Capture restarts automatically when space and your storage budget allow."),
+  "blocked"=>("blocked","Automatic compression finished, but storage is still full. Agent Time checks every 10 seconds and restarts capture when space is available."),
+  "failed"=>("failed","Automatic compression could not finish. Capture remains paused. Agent Time checks every 10 seconds and restarts capture when space is available."),
+  "resumed" if resumed=>("resumed","Capture paused for low disk space and history compression was attempted. Free space recovered and capture restarted automatically."),
+  _=>return None,
+ };
+ let key=format!("{id}:{bucket}");if last.as_ref()==Some(&key){return None;}*last=Some(key);Some(body.into())
+}
 fn duration(seconds:f64)->String {
  let seconds=seconds.max(0.0).round() as u64;
  if seconds<60{format!("{seconds}s")}else if seconds<3600{format!("{}m",seconds/60)}else{format!("{}h {}m",seconds/3600,(seconds%3600)/60)}
@@ -55,6 +74,10 @@ impl TrayState {
     if running{if let Ok(mut deadline)=self.pause_until.lock(){*deadline=None;}let _=std::fs::remove_file(&self.pause_file);}
     if let Some(body)=hook_warning_body(&value,&mut self.last_warning.lock().unwrap()){
      let _=app.notification().builder().title("Agent tracking may be idle").body(body).show();
+    }
+    if let Some(body)=storage_warning_body(&value,&mut self.last_storage_warning.lock().unwrap()){
+     let title=if running{STORAGE_RESUMED_TITLE}else{STORAGE_NOTIFICATION_TITLE};
+     let _=app.notification().builder().title(title).body(body).show();
     }
     let remaining=self.pause_until.lock().ok().and_then(|until|until.as_ref().and_then(|at|at.duration_since(SystemTime::now()).ok().map(|remaining|remaining.as_secs()/60+1)));
     let needs_attention=value["sourceWarning"].as_array().is_some_and(|sources|!sources.is_empty());
@@ -89,8 +112,9 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let on_notification=app.handle().clone();
  let _=app.notification().on_action(move |action|{if action.action_id()=="tap"{
   let update=action.notification().is_some_and(|notification|notification.id()==crate::updates::NOTIFICATION_ID || notification.title()==Some(crate::updates::NOTIFICATION_TITLE));
+  let storage=action.notification().is_some_and(|notification|matches!(notification.title(),Some(STORAGE_NOTIFICATION_TITLE)|Some(STORAGE_RESUMED_TITLE)));
   let hook=action.notification().is_some_and(|notification|notification.title()==Some("Agent tracking may be idle"));
-  open_page(&on_notification,if update{"today"}else if hook{"hook-setup"}else{"health"});
+  open_page(&on_notification,if update{"today"}else if hook{"hook-setup"}else if storage{"storage"}else{"health"});
  }});
  let status=MenuItem::with_id(app,"tray-status","Connecting to capture…",false,None::<&str>)?;
  let today=MenuItem::with_id(app,"tray-today","Today: —",false,None::<&str>)?;
@@ -114,7 +138,7 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
   .build(app)?;
  let pause_file=bridge.launch.output.join("pause-until");
  let pause_until=pause_deadline(&pause_file);
- let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,app_toggle:Mutex::new(None),busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file,running:AtomicBool::new(true),wake:(Mutex::new(false),Condvar::new())});
+ let state=Arc::new(TrayState{status,today,detail,tokens,toggle,timed_pause,app_toggle:Mutex::new(None),busy:AtomicBool::new(false),stopped:AtomicBool::new(false),last_warning:Mutex::new(None),last_storage_warning:Mutex::new(None),widget:WidgetPublisher::new()?,last_summary:Mutex::new(None),pause_until:Mutex::new(pause_until),pause_file,running:AtomicBool::new(true),wake:(Mutex::new(false),Condvar::new())});
  app.manage(state.clone());
  let handle=app.handle().clone();
  std::thread::spawn(move||{let mut last_refresh:Option<Instant>=None;while !state.stopped.load(Ordering::Acquire){
@@ -191,5 +215,23 @@ pub fn set_app_toggle(app:&tauri::App,item:MenuItem<tauri::Wry>){
  if let Some(state)=app.try_state::<Arc<TrayState>>(){
   let _=item.set_text(if state.running.load(Ordering::Acquire){"Pause Capture"}else{"Resume Capture"});
   if let Ok(mut slot)=state.app_toggle.lock(){*slot=Some(item);}
+ }
+}
+
+#[cfg(test)]mod storage_warning_tests{
+ use super::*;
+ #[test]fn storage_notifications_are_deduplicated_and_manual_pauses_stay_quiet(){
+  let mut last=None;
+  let mut value=json!({"running":false,"storageCare":{"paused":true,"pressure":{"id":"episode","reason":"disk-space","phase":"queued"}}});
+  assert!(storage_warning_body(&value,&mut last).unwrap().contains("compressing"));
+  value["storageCare"]["pressure"]["phase"]=json!("compressing");assert!(storage_warning_body(&value,&mut last).is_none());
+  value["storageCare"]["pressure"]["phase"]=json!("ready");assert!(storage_warning_body(&value,&mut last).unwrap().contains("restarts automatically"));assert!(storage_warning_body(&value,&mut last).is_none());
+  value["storageCare"]["pressure"]["phase"]=json!("blocked");assert!(storage_warning_body(&value,&mut last).unwrap().contains("every 10 seconds"));
+  value["storageCare"]["pressure"]["phase"]=json!("failed");assert!(storage_warning_body(&value,&mut last).unwrap().contains("could not finish"));
+  assert!(storage_warning_body(&json!({"running":false}),&mut last).is_none());
+  assert!(storage_warning_body(&value,&mut last).is_some());
+  value["running"]=json!(true);assert!(storage_warning_body(&value,&mut last).is_none());
+  value["storageCare"]["paused"]=json!(false);value["storageCare"]["pressure"]["phase"]=json!("resumed");
+  assert!(storage_warning_body(&value,&mut last).unwrap().contains("restarted automatically"));assert!(storage_warning_body(&value,&mut last).is_none());
  }
 }

@@ -589,7 +589,7 @@ async function saveSplit(group: HumanReviewGroup) {
                 <strong class="app-review-duration">{{ duration(group.seconds) }}</strong>
                 <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ reviewVisitTitle(group) }}</strong><small>{{ preciseClock(group.start) }}–{{ preciseClock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
                 <span class="review-state" :title="group.attributionReason||group.projectPath||undefined"><Check v-if="reviewIsAssigned(group)" :size="11" />{{ stateLabel(group) }}</span>
-                <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${group.label} at ${preciseClock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
+                <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${reviewVisitTitle(group)} at ${preciseClock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
               </div>
         <div
           v-for="item in store.notes.filter((note) => note.start >= group.start && note.end <= group.end)"
@@ -601,7 +601,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <div v-if="isOpen(group)" class="review-detail">
 <p v-if="reviewIsAssigned(group)" class="review-attribution-note">Already counted in {{ name(group.projectPath!) }}. No confirmation is needed.</p>
 <div v-if="!group.reviewSegment" class="review-single-actions">
-  <ProjectPicker :model-value="selected(group)" :paths="projectPaths" :label="`Project for ${group.label}`" @update:model-value="choices[id(group)]=$event;rulePreview=''" />
+  <ProjectPicker :model-value="selected(group)" :paths="projectPaths" :label="`Project for ${reviewVisitTitle(group)}`" @update:model-value="choices[id(group)]=$event;rulePreview=''" />
   <button class="btn btn-sm" :disabled="Boolean(pending)||!reviewCanAssign(group,selected(group))" @click="decide(group,'assigned')">{{ reviewIsAssigned(group)?'Change project':`Assign ${duration(group.seconds)}` }}</button>
   <button class="btn btn-sm" :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</button>
   <button v-if="group.userAttribution" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</button>
@@ -646,7 +646,7 @@ async function saveSplit(group: HumanReviewGroup) {
             <button class="btn btn-sm" @click="emit('note', group.start, group.end, group.label)">Add note</button>
           </div>
           <div v-if="splitDraft?.key === id(group)" class="human-review-split">
-            <strong>Divide {{ group.label }}</strong>
+            <strong>Divide {{ reviewVisitTitle(group) }}</strong>
             <label>
               Split at {{ clock(splitDraft.at) }}
               <input
@@ -655,7 +655,7 @@ async function saveSplit(group: HumanReviewGroup) {
                 :min="Math.ceil(splitDraft.start + 1)"
                 :max="Math.floor(splitDraft.end - 1)"
                 step="1"
-                :aria-label="`Split time for ${group.label}`"
+                :aria-label="`Split time for ${reviewVisitTitle(group)}`"
               />
             </label>
             <div>

@@ -13,6 +13,26 @@ async function unusedPort():Promise<number>{
 }
 const response=(value:unknown)=>new Response(JSON.stringify(value),{status:200,headers:{'Content-Type':'application/json'}});
 
+test('a dismissed Keychain read is shared and never retried by status or background polling',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-linear-prompt-'));let reads=0;
+ const linear=new LinearConnection(output,async operation=>{if(operation==='read'){reads++;if(reads===1)throw new Error('macOS Keychain operation timed out');}return null;});
+ try{
+  const statuses=await Promise.all([linear.status(),linear.status(),linear.status()]);
+  assert.equal(reads,1);assert.ok(statuses.every(status=>status.phase==='error'&&status.error?.includes('Keychain')));
+  for(let i=0;i<3;i++){await linear.status();await (linear as any).maybeSync();}
+  assert.equal(reads,1);
+  await assert.rejects(linear.sync(),/Connect Linear first/);assert.equal(reads,2);
+  assert.equal((await linear.status()).phase,'disconnected');
+ }finally{linear.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('Keychain authorization can take longer than ten seconds without restarting its prompt',async()=>{
+ const {keychainHelper}=await import('../src/capture/linear.ts');
+ const output=mkdtempSync(join(tmpdir(),'agent-time-keychain-typing-')),helper=join(output,'helper');
+ writeFileSync(helper,"#!/bin/sh\n/bin/sleep 11\nprintf '[]'\n",{mode:0o755});
+ try{assert.equal(await keychainHelper(helper)('read'),'[]');}finally{rmSync(output,{recursive:true,force:true});}
+});
+
 test('Linear PKCE connects with read scope, validates state and caches project Resources',async()=>{
  const output=mkdtempSync(join(tmpdir(),'agent-time-linear-')),port=await unusedPort(),redirect=`http://127.0.0.1:${port}/linear/callback`;
  let secret:string|null=null,authUrl='',queries:string[]=[];

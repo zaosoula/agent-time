@@ -54,6 +54,9 @@ impl LaunchSpec {
  }
 }
 struct RestartState {attempts:u8,window:Instant,closed:bool,restarting:bool}
+fn automatic_capture_allowed(output:&std::path::Path)->bool{
+ !output.join("storage-paused.json").exists()&&pause_deadline(&output.join("pause-until")).is_none()
+}
 fn pause_deadline(path:&std::path::Path)->Option<SystemTime>{
  let seconds=std::fs::read_to_string(path).ok()?.trim().parse::<u64>().ok()?;
  let deadline=UNIX_EPOCH.checked_add(Duration::from_secs(seconds))?;
@@ -72,7 +75,7 @@ const SHUTDOWN_STOP_TIMEOUT:Duration=Duration::from_secs(3);
 fn is_long_request(method:&str)->bool{
  matches!(method,
   "storage_compact_prepare"|"storage_restore_prepare"|"storage_reclaim"|"export_archive"
-  |"archive_import"|"archive_preview"|"tracking_cleanup"|"linear_sync"|"linear_connect")
+  |"archive_import"|"archive_preview"|"tracking_cleanup"|"linear_status"|"linear_sync"|"linear_connect"|"linear_disconnect")
 }
 fn request_timeout(method:&str)->Duration{
  if is_long_request(method){LONG_REQUEST_TIMEOUT}else{REQUEST_TIMEOUT}
@@ -179,7 +182,7 @@ impl Bridge {
    if let Ok(mut child)=self.child.lock(){stop_owned(&mut child);}
    return Err("Collector stopped for update or exit".into());
   }
-  if self.desired_running.load(Ordering::Acquire){
+  if self.desired_running.load(Ordering::Acquire)&&automatic_capture_allowed(&self.launch.output){
    self.send("start",json!({}),REQUEST_TIMEOUT).map_err(|error|format!("Collector restarted but capture could not start: {error}"))?;
   }
   Ok(())
@@ -237,9 +240,11 @@ impl Bridge {
  fn request(&self, method:&str, params:Value)->Result<Value,String> {
   validate_method(method,&params)?;
   self.ensure_live()?;
-  let result=self.send(method,params,request_timeout(method))?;
+  // A storage pause is temporary. Preserve start intent through recovery,
+  // including a crash between an internal resume and the next status poll.
   if method=="stop"{self.desired_running.store(false,Ordering::Release);}
   if method=="start"{self.desired_running.store(true,Ordering::Release);}
+  let result=self.send(method,params,request_timeout(method))?;
   Ok(result)
  }
  /// Stop the collector without ever respawning it: close the bridge first,
@@ -453,7 +458,7 @@ pub fn run(){
    app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
   }
   let bridge=Arc::new(Bridge::start(app).map_err(std::io::Error::other)?);
-  let init=bridge.clone();std::thread::spawn(move||{if init.desired_running.load(Ordering::Acquire){let _=init.request("start",json!({}));}});app.manage(bridge.clone());tray::install(app,bridge)?;
+  let init=bridge.clone();std::thread::spawn(move||{if init.desired_running.load(Ordering::Acquire)&&automatic_capture_allowed(&init.launch.output){let _=init.request("start",json!({}));}});app.manage(bridge.clone());tray::install(app,bridge)?;
   app.manage(updates::PendingUpdate::default());
   if option_env!("AGENT_TIME_BETA")==Some("1") { updates::start(app.handle().clone()); }
   let show=tauri::menu::MenuItem::with_id(app,"show","Show Agent Time",true,Some("CmdOrCtrl+1"))?;
@@ -569,6 +574,39 @@ mod process_tests {
 #[cfg(test)]
 mod restart_tests {
  use super::*;
+ #[test] fn automatic_storage_resume_survives_a_crash_before_the_next_status_poll(){
+  let directory=std::env::temp_dir().join(format!("agent-time-storage-resume-crash-{}",std::process::id()));
+  let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
+  let script=directory.join("collector.cjs");
+  std::fs::write(&script,r#"
+const fs=require('fs'),readline=require('readline'),root=process.argv[process.argv.indexOf('--output')+1],marker=root+'/storage-paused.json';let running=false;
+readline.createInterface({input:process.stdin}).on('line',line=>{const r=JSON.parse(line);if(r.method==='start'&&fs.existsSync(marker)){process.stdout.write(JSON.stringify({id:r.id,error:'low disk space'})+'\n');return;}if(r.method==='start')running=true;if(r.method==='stop')running=false;process.stdout.write(JSON.stringify({id:r.id,result:{running}})+'\n');});
+"#).unwrap();
+  let root=PathBuf::from(env!("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+  let launch=LaunchSpec{node:dev_node(&root),cli:script,output:directory.clone(),helper:directory.join("probe"),keychain:directory.join("keychain"),path:"/usr/bin:/bin".into()};
+  let bridge=Bridge::from_launch(launch).unwrap();
+  bridge.request("stop",json!({})).unwrap();
+  std::fs::write(directory.join("storage-paused.json"),"{}").unwrap();
+  assert!(bridge.request("start",json!({})).is_err());
+  assert_eq!(bridge.request("status",json!({})).unwrap()["running"],false);
+  assert!(bridge.desired_running.load(Ordering::Acquire));
+  // Compression has resumed capture and removed its marker, but the native
+  // bridge has not observed a running status yet when the collector exits.
+  std::fs::remove_file(directory.join("storage-paused.json")).unwrap();
+  {let mut child=bridge.child.lock().unwrap();kill_owned(&mut child);}
+  assert_eq!(bridge.request("status",json!({})).unwrap()["running"],true);
+  bridge.shutdown();let _=std::fs::remove_dir_all(directory);
+ }
+ #[test] fn storage_pause_survives_application_and_collector_restarts(){
+  let directory=std::env::temp_dir().join(format!("agent-time-storage-pause-{}",std::process::id()));
+  std::fs::create_dir_all(&directory).unwrap();
+  assert!(automatic_capture_allowed(&directory));
+  std::fs::write(directory.join("storage-paused.json"),"{}").unwrap();
+  assert!(!automatic_capture_allowed(&directory));
+  std::fs::remove_file(directory.join("storage-paused.json")).unwrap();
+  assert!(automatic_capture_allowed(&directory));
+  let _=std::fs::remove_dir_all(directory);
+ }
  #[test] fn pending_storage_startup_waits_for_first_reply_and_then_uses_normal_deadlines() {
   let directory=std::env::temp_dir().join(format!("agent-time-storage-startup-{}",std::process::id()));
   let _=std::fs::remove_dir_all(&directory);std::fs::create_dir_all(&directory).unwrap();
