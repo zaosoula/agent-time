@@ -300,3 +300,15 @@ test('repeated Orca polls retain one settled worker and one unchanged terminal',
   assert.equal(c.store.events().filter(e=>e.kind==='terminal').length,1);
  }finally{await c.close();rmSync(path,{recursive:true});}
 });
+
+test('opt-in cross-midnight task credit stays inside selected day while elapsed metadata keeps original start',async()=>{
+ const path=mkdtempSync(join(tmpdir(),'ade-counter-day-')),c=new Collector(path);
+ try{
+  c.updateSettings({macosActivity:false,orcaPolling:false,tokenUsage:false,countTaskCounters:true});
+  const first=new Date();first.setHours(0,0,0,0);const midnight=first.getTime()/1000,date=`${first.getFullYear()}-${String(first.getMonth()+1).padStart(2,'0')}-${String(first.getDate()).padStart(2,'0')}`;
+  const start=makeEvent('agent_report','task_start',{observedAt:midnight-3600,data:{name:'Night task',leaseSeconds:43200}});
+  c.store.put(start);c.store.put(makeEvent('agent_report','task_stop',{observedAt:midnight+60,data:{taskCounterId:start.eventId}}));
+  const summary=c.summaryForDate(date);assert.equal(summary.agentSeconds,60);
+  assert.ok(summary.intervals.every(i=>i.start>=midnight));assert.equal(c.reportedWork(date)[0].start,midnight-3600);
+ }finally{await c.close();rmSync(path,{recursive:true,force:true});}
+});

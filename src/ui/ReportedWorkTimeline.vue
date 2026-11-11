@@ -40,10 +40,10 @@ function laneStyle(item: ReportedWorkItem) {
   return { ...base, top: `${14 + (lanes.value.lane.get(item.id) ?? 0) * 8}px`, height: '6px' };
 }
 function describe(item: ReportedWorkItem) {
-  const scope = `${item.issueKey ? item.issueKey + ' · ' : ''}${item.provider || 'Agent'}${item.sessionId ? ' · session ' + item.sessionId.slice(-6) : ''}`;
+  const scope = `${item.project ? item.project + ' · ' : ''}${item.agentIdentity?.name || item.agentIdentity?.id || ''}${item.agentIdentity ? ' · ' : ''}${item.billable === true ? 'billable declaration · ' : item.billable === false ? 'internal · ' : ''}${item.parentTaskCounterId ? 'subtask · ' : ''}${item.usage?.cost !== undefined ? item.usage.cost + ' ' + item.usage.currency + ' (declared) · ' : ''}${item.issueKey ? item.issueKey + ' · ' : ''}${item.provider || 'Agent'}${item.sessionId ? ' · session ' + item.sessionId.slice(-6) : ''}`;
   return item.kind === 'context'
     ? `${clock(item.start)} · checkpoint: ${item.title} (${scope})`
-    : `${clock(item.start)}–${item.active ? 'now' : clock(item.end)} · timer: ${item.title} · ${elapsed((item.active ? props.now : item.end) - item.start)} (${scope})`;
+    : `${clock(item.start)}–${item.active ? 'now' : clock(item.end)} · ${item.status || 'timer'}: ${item.title} · ${elapsed((item.active ? props.now : item.end) - item.start)} (${scope})`;
 }
 const shown = computed(() => (expanded.value || props.compact ? visible.value : visible.value.slice(0, 6)));
 function placement(item: ReportedWorkItem) {
@@ -95,12 +95,12 @@ function placement(item: ReportedWorkItem) {
       <strong>Agent reported work</strong
       ><small>Task context and elapsed counters with no project on this day</small>
     </div>
-    <div v-for="item in shown" :key="item.id" class="reported-row">
+    <div v-for="item in shown" :key="item.id" class="reported-row" :title="describe(item)">
       <div class="reported-label">
         <Timer v-if="item.kind === 'counter'" :size="14" /><Flag v-else :size="14" /><span
           ><strong :title="item.title">{{ item.title }}</strong
           ><small
-            >{{ item.issueKey ? item.issueKey + ' · ' : '' }}{{ item.provider || 'Agent'
+            >{{ item.issueKey ? item.issueKey + ' · ' : '' }}{{ item.agentIdentity?.name || item.agentIdentity?.id || item.provider || 'Agent'
             }}{{ item.sessionId ? ' · session ' + item.sessionId.slice(-6) : '' }}</small
           ></span
         >
@@ -120,7 +120,7 @@ function placement(item: ReportedWorkItem) {
       <span class="reported-value"
         >{{
           item.kind === 'context' ? clock(item.start) : elapsed((item.active ? now : item.end) - item.start)
-        }}<small v-if="item.active">open counter</small></span
+        }}<small v-if="item.kind === 'counter'">{{ item.status || (item.active ? 'open counter' : 'reported') }}</small></span
       >
     </div>
     <button v-if="visible.length > 6" class="reported-more" @click="expanded = !expanded">

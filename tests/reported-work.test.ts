@@ -87,3 +87,51 @@ test('a timer stopped from the app ends then; a discarded one disappears',()=>{
  assert.deepEqual([stopped[0].end,stopped[0].active],[day+400,false]);
  assert.equal(reportedWorkForDay([start,report('s2','task_stop',day+400,{taskCounterId:'t1',stoppedBy:'user',discarded:true})],day,day+86400,day+5000).length,0);
 });
+
+test('task metadata survives reconciliation and usage is own-task declared data',()=>{
+ const events=[report('a','task_start',day,{name:'TVA',issueKey:'T-9716',project:'KANZen',agentIdentity:{id:'cto',name:'CTO'},parentTaskCounterId:'parent',billable:false,leaseSeconds:900}),report('b','task_stop',day+60,{taskCounterId:'a',usage:{inputTokens:100,outputTokens:20,cost:0.02,currency:'USD',source:'provider-response'}})];
+ const item=reportedWorkForDay(events,day,day+86400,day+100)[0];
+ assert.equal(item.project,'KANZen');assert.equal(item.issueKey,'T-9716');assert.equal(item.agentIdentity?.id,'cto');assert.equal(item.parentTaskCounterId,'parent');assert.equal(item.billable,false);assert.equal(item.usage?.cost,0.02);assert.equal(item.status,'completed');
+});
+
+test('expired leases stop at last confirmed activity; a late explicit stop recovers declared duration',()=>{
+ const start=report('a','task_start',day,{name:'Crash',leaseSeconds:900});
+ const heartbeat=report('h','task_heartbeat',day+600,{taskCounterId:'a'});
+ let item=reportedWorkForDay([start,heartbeat],day,day+86400,day+1600)[0];
+ assert.equal(item.active,false);assert.equal(item.status,'interrupted');assert.equal(item.end,day+600);
+ item=reportedWorkForDay([start,heartbeat,report('s','task_stop',day+1700,{taskCounterId:'a'})],day,day+86400,day+1800)[0];
+ assert.equal(item.status,'completed');assert.equal(item.end,day+1700);
+});
+
+test('parent and child counters on one native execution do not duplicate credit, distinct business agents stay distinct',()=>{
+ const summary=base();const same=[counter({id:'parent',sessionId:'s1'}),counter({id:'child',sessionId:'s1',parentTaskCounterId:'parent',start:100,end:500})];
+ assert.equal(creditTaskCounters(summary,same).agentSeconds,600);
+ const declared=[counter({id:'a',workspaceId:'/elsewhere',agentIdentity:{id:'cto'},start:1000,end:1060}),counter({id:'b',workspaceId:'/elsewhere',agentIdentity:{id:'cfo'},start:1000,end:1060})];
+ assert.equal(creditTaskCounters(summary,declared).agentSeconds,420);
+});
+
+test('parent and child sharing an unobserved native execution merge declared overlap',()=>{
+ const summary:Summary={intervals:[],sessions:[],unresolved:[],coverage:[],humanSeconds:0,agentSeconds:0,elapsedSeconds:0,childAgentSeconds:0};
+ const credited=creditTaskCounters(summary,[counter({id:'p',sessionId:'native',start:0,end:600}),counter({id:'c',sessionId:'native',parentTaskCounterId:'p',start:60,end:300})]);
+ assert.equal(credited.agentSeconds,600);assert.equal(credited.sessions.length,1);
+});
+
+test('late native session end cannot revive an expired lease',()=>{
+ const start=report('a','task_start',day,{name:'Crash',leaseSeconds:900});
+ const items=reportedWorkForDay([start],day,day+86400,day+7400,new Map([['claude:session-one',day+7300]]));
+ assert.equal(items[0].status,'interrupted');assert.equal(items[0].end,day);
+});
+
+test('a stop after midnight confirms the previous day instead of retrospectively expiring it',()=>{
+ const start=report('a','task_start',day-300,{name:'Cross midnight',leaseSeconds:900});
+ const stop=report('s','task_stop',day+100,{taskCounterId:'a'});
+ const item=reportedWorkForDay([start,stop],day-86400,day,day+2000)[0];
+ assert.equal(item.end,day);assert.equal(item.status,'completed');
+});
+
+test('native session end shortly after midnight confirms the prior-day counter',()=>{
+ const start=report('a','task_start',day-600,{name:'Night task',leaseSeconds:900});
+ const stop={...report('end','session_end',day+60,{}),source:'hook'};
+ const item=reportedWorkForDay([start,stop],day-86400,day,day+2000)[0];
+ assert.equal(item.end,day);assert.equal(item.status,'session-ended');
+});

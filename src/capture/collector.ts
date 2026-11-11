@@ -646,7 +646,8 @@ export class Collector {
     if(memo&&memo.day===day&&memo.resources===resources&&memo.counters===counters)return memo.value;
     const resourced=applyReportedResources(day,resources);
     // Counters are opt-in credit and stay open while running, so they are applied per read.
-    const value=reports.length?creditTaskCounters(resourced,reports):resourced;
+    const bounds=localDayBounds(date);
+    const value=reports.length?creditTaskCounters(resourced,reports.map(item=>({...item,start:Math.max(item.start,bounds.from),end:Math.min(item.end,bounds.to)}))):resourced;
     this.derivedMemo={day,resources,counters,value};
     return value;
   }
@@ -712,7 +713,7 @@ export class Collector {
     last.setDate(last.getDate()+1);
     const start=first.getTime()/1000,end=last.getTime()/1000;
     const now=Date.now()/1000;
-    return reportedWorkForDay(this.store.agentReports(start-86400,end),start,end,now,this.store.sessionEnds(start-86400,Math.max(end,now)+60));
+    return reportedWorkForDay(this.store.taskReportEvidence(start-86400,end+43200),start,end,now,this.store.sessionEnds(start-86400,Math.max(end,now)+60));
   }
   /**
    * Stop an agent-reported timer from the app, for timers an agent left open.

@@ -207,3 +207,101 @@ test('timeline merges overlapping human and agent activity into a both segment',
   store.close();
  }finally{rmSync(output,{recursive:true,force:true});}
 });
+
+test('explicit free ticket references and task metadata pass the spool without relaxing automatic page extraction',()=>{
+ const output=fixture();try{
+  const contextId=randomUUID();
+  for(const issueKey of ['T-9716','D-140','K-189','Client facture 2026/11']){
+   const event=writeReport(output,'work_context',randomUUID(),contextId,{issueKey,project:'KANZen',agentIdentity:{id:'cto',name:'CTO'},billable:false});assert.equal(validAgentReport(event),true);
+  }
+  const event=writeReport(output,'task_start',randomUUID(),contextId,{name:'TVA',issueKey:'T-9716',project:'KANZen',parentTaskCounterId:randomUUID(),leaseSeconds:900});
+  assert.equal(validAgentReport(event),true);
+  assert.equal(validAgentReport({...event,data:{...event.data,issueKey:'bad\nreference'}}),false);
+  assert.equal(validAgentReport({...event,data:{...event.data,leaseSeconds:Infinity}}),false);
+  const stop=writeReport(output,'task_stop',randomUUID(),contextId,{taskCounterId:event.eventId,usage:{inputTokens:120,outputTokens:20,cost:0.03,currency:'USD',source:'provider-response'},outcome:'failed'});
+  assert.equal(validAgentReport(stop),true);
+  assert.equal(validAgentReport({...stop,data:{...stop.data,usage:{cost:-1,currency:'USD',source:'provider-response'}}}),false);
+ }finally{rmSync(output,{recursive:true,force:true});}
+});
+
+test('task context snapshots survive retries and children; stops keep native identity and cannot close twice',async()=>{
+ const {writeTaskReport,taskHistory}=await import('../src/mcp/data.ts');
+ const output=fixture();try{
+  const contextId=randomUUID(),who={provider:'claude',sessionId:'native-cto',workspaceId:'/bureau'};
+  writeReport(output,'work_context',randomUUID(),contextId,{project:'KANZen',issueKey:'T-9716',agentIdentity:{id:'cto',name:'CTO'},billable:false},who);
+  const id=randomUUID(),start=writeTaskReport(output,'task_start',id,contextId,{name:'TVA'},who);
+  assert.equal(start.data?.project,'KANZen');assert.equal(start.data?.billable,false);assert.equal(start.data?.leaseSeconds,900);
+  writeReport(output,'work_context',randomUUID(),contextId,{project:'Interne',issueKey:'D-140'},who);
+  assert.deepEqual(writeTaskReport(output,'task_start',id,contextId,{name:'TVA'},who),start);
+  const child=writeTaskReport(output,'task_start',randomUUID(),randomUUID(),{name:'Verify',parentTaskCounterId:id,agentIdentity:{id:'cfo'}},{provider:'claude',sessionId:'native-cfo'});
+  assert.equal(child.data?.project,'KANZen');assert.equal((child.data?.agentIdentity as {id:string}).id,'cfo');
+  assert.throws(()=>writeTaskReport(output,'task_start',randomUUID(),contextId,{name:'Bad',parentTaskCounterId:randomUUID()},who),/Unknown parent/);
+  assert.throws(()=>writeTaskReport(output,'task_stop',randomUUID(),contextId,{taskCounterId:id},{sessionId:'another-native'}),/different native/);
+  const stopId=randomUUID(),stop=writeTaskReport(output,'task_stop',stopId,contextId,{taskCounterId:id,outcome:'failed',usage:{cost:0.02,currency:'USD',source:'agent-reported'}});
+  assert.equal(stop.sessionId,'native-cto');assert.equal(writeTaskReport(output,'task_stop',stopId,contextId,{taskCounterId:id,outcome:'failed',usage:{cost:0.02,currency:'USD',source:'agent-reported'}}).eventId,stopId);
+  assert.throws(()=>writeTaskReport(output,'task_stop',randomUUID(),contextId,{taskCounterId:id}),/already closed/);
+  const history=taskHistory(output,start.observedAt-1,Date.now()/1000+1,{issueKey:'T-9716'});
+  assert.equal(history.tasks.length,2);assert.equal(history.tasks.find(t=>t.id===id)?.status,'failed');assert.equal(history.tasks.find(t=>t.id===id)?.usageVerified,false);
+ }finally{rmSync(output,{recursive:true,force:true});}
+});
+
+test('leased counters renew, expire durably across server connections and can be finalized after a crash',async()=>{
+ const {writeTaskReport}=await import('../src/mcp/data.ts');const output=fixture();const store=new EventStore(join(output,'events.sqlite'));
+ try{
+  const at=Date.now()/1000,id=randomUUID(),contextId=randomUUID();
+  store.put(makeEvent('agent_report','task_start',{eventId:id,observedAt:at-2000,data:{requestId:id,contextId,name:'Crash',leaseSeconds:900}}));
+  const item=currentWork(output).tasks.find(t=>t.id===id);assert.equal(item?.status,'interrupted');assert.equal(item?.reportedElapsedSeconds,0);
+  assert.throws(()=>writeTaskReport(output,'task_heartbeat',randomUUID(),contextId,{taskCounterId:id}),/expired/);
+  writeTaskReport(output,'task_stop',randomUUID(),contextId,{taskCounterId:id,outcome:'cancelled'});
+  assert.equal(currentWork(output).tasks.some(t=>t.id===id),false);
+  const live=writeTaskReport(output,'task_start',randomUUID(),contextId,{name:'Alive'});
+  const heartbeat=writeTaskReport(output,'task_heartbeat',randomUUID(),contextId,{taskCounterId:live.eventId});assert.equal(validAgentReport(heartbeat),true);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('opt-in declared task gaps appear in MCP totals under their snapshotted project and free ticket',()=>{
+ const output=fixture(),store=new EventStore(join(output,'events.sqlite')),at=today();try{
+  const contextId=randomUUID(),id=randomUUID();
+  store.put(makeEvent('agent_report','task_start',{eventId:id,provider:'claude',sessionId:'s',workspaceId:'/bureau',observedAt:at,data:{contextId,name:'TVA',issueKey:'T-9716',project:'KANZen'}}));
+  store.put(makeEvent('agent_report','task_stop',{observedAt:at+60,data:{contextId,taskCounterId:id}}));
+  assert.equal(snapshot(output,at-1,at+120).summary.agentSeconds,0);
+  writeFileSync(join(output,'settings.json'),JSON.stringify({countTaskCounters:true}));
+  const s=snapshot(output,at-1,at+120);assert.equal(s.summary.agentSeconds,60);
+  assert.equal(timeForProject(s,'KANZen').agentRunningSeconds,60);assert.equal(timeForIssue(s,'T-9716').agentRunningSeconds,60);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('renewed counters older than 12 hours remain visible and keep their project metadata',async()=>{
+ const {taskHistory}=await import('../src/mcp/data.ts');const output=fixture(),store=new EventStore(join(output,'events.sqlite'));try{
+  const at=Date.now()/1000,id=randomUUID(),contextId=randomUUID();
+  store.put(makeEvent('agent_report','task_start',{eventId:id,observedAt:at-13*3600,data:{contextId,name:'Long task',project:'KANZen',issueKey:'K-189',leaseSeconds:43200}}));
+  store.put(makeEvent('agent_report','task_heartbeat',{observedAt:at-3600,data:{contextId,taskCounterId:id}}));
+  assert.equal(currentWork(output).tasks.find(t=>t.id===id)?.active,true);
+  assert.equal(taskHistory(output,at-1800,at+1).tasks.find(t=>t.id===id)?.project,'KANZen');
+  assert.equal(store.taskReportEvidence(at-7200,at+1).some(e=>e.eventId===id),true);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('opt-in counters started before the context lookback retain snapshot attribution',()=>{
+ const output=fixture(),store=new EventStore(join(output,'events.sqlite')),at=today();try{
+  const id=randomUUID(),contextId=randomUUID();
+  store.put(makeEvent('agent_report','task_start',{eventId:id,provider:'claude',sessionId:'s',workspaceId:'/bureau',observedAt:at-7200,data:{contextId,name:'TVA',project:'KANZen',issueKey:'T-9716'}}));
+  store.put(makeEvent('agent_report','task_stop',{observedAt:at+60,data:{contextId,taskCounterId:id}}));
+  writeFileSync(join(output,'settings.json'),JSON.stringify({countTaskCounters:true}));
+  const s=snapshot(output,at,at+120);assert.equal(timeForProject(s,'KANZen').agentRunningSeconds,60);assert.equal(timeForIssue(s,'T-9716').agentRunningSeconds,60);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('task queries use report indexes and never decode unrelated packed capture blocks',async()=>{
+ const {taskHistory}=await import('../src/mcp/data.ts');const {packEventHistory}=await import('../src/capture/packed-maintenance.ts');
+ const output=fixture(),store=new EventStore(join(output,'events.sqlite')),at=Date.now()/1000;try{
+  store.put(makeEvent('macos','activity',{observedAt:at-86400,data:{foregroundName:'Private app'}}));
+  packEventHistory(store.database,{now:at+86400,hotDays:0});
+  assert.ok(Number(store.database.prepare('SELECT count(*) n FROM at_event_blocks').get()?.n)>0);
+  const id=randomUUID(),contextId=randomUUID();store.put(makeEvent('agent_report','task_start',{eventId:id,observedAt:at-60,data:{contextId,name:'Task',project:'KANZen'}}));
+  // An unrelated corrupt activity block makes accidental capture replay observable.
+  store.database.exec("UPDATE at_event_blocks SET data=x'0102'");
+  assert.equal(taskHistory(output,at-2*86400,at+1).tasks[0]?.id,id);
+  assert.equal(currentWork(output).tasks[0]?.id,id);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});

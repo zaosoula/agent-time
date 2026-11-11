@@ -13,9 +13,9 @@ import {agentSessionKey} from '../capture/session-identity.ts';
 import {applyHumanDecisions,groupHumanReview,humanReviewState,type HumanDecision,type HumanSplit} from '../capture/human-review.ts';
 import {unobservedGaps} from '../capture/gaps.ts';
 import {projectPathFromWorktree} from '../capture/website-resolver.ts';
-import {creditTaskCounters,reportedWorkForDay} from '../capture/reported-work.ts';
+import {creditTaskCounters,reportedWorkForDay,hydrateTaskStarts} from '../capture/reported-work.ts';
 import {applyReportedResources,reportedResources} from '../capture/reported-resources.ts';
-import {issuePattern,uuidPattern,validAgentReport} from './report.ts';
+import {issuePattern,ticketPattern,uuidPattern,validAgentReport} from './report.ts';
 
 export const defaultDataDirectory=()=>process.env.ADE_CAPTURE_OUTPUT||join(homedir(),'Library','Application Support','studio.ezyo.agenttime');
 const now=()=>Date.now()/1000;
@@ -37,6 +37,13 @@ export function range(fromDate:string,toDate:string){
 function database(output:string,readOnly=true):DatabaseSync{
  const path=join(output,'events.sqlite');if(!existsSync(path))throw new Error('Agent Time has no captured data yet');
  return openEventDatabase(path,{readOnly});
+}
+// Reuse existing collector indexes; legacy read-only archives may not have them.
+const reportIndex=(db:DatabaseSync)=>db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='events_reports_at'").get()?'INDEXED BY events_reports_at':'';
+const endIndex=(db:DatabaseSync)=>db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name='events_session_ends_at'").get()?'INDEXED BY events_session_ends_at':'';
+function hydrateReports(db:DatabaseSync|null,events:CaptureEvent[]){
+ const read=db?.prepare('SELECT payload FROM events WHERE event_id=?');
+ return hydrateTaskStarts(events,id=>{const row=read?.get(id);return row?JSON.parse(String(row.payload)) as CaptureEvent:undefined;});
 }
 function pendingReports(output:string):CaptureEvent[]{
  const events:CaptureEvent[]=[],spool=join(output,'spool');
@@ -86,7 +93,8 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    const window=readWindowEvents(db,start,end,options.agentIdleThreshold);
    if(window.events.length>maxWindowEvents)throw new Error('Too many events for one day; use a shorter date range');
    readFrom=Math.min(readFrom,window.bounds.readFrom);
-   const events=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
+   const rawEvents=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
+   const events=options.countTaskCounters?hydrateReports(db,rawEvents):rawEvents;
    const decided=applyReportedResources(applyHumanDecisions(summarize(events,options),decisions,splits),resources);
    const summary=options.countTaskCounters?creditTaskCounters(decided,reportedWorkForDay(events,start,end,now())):decided;
    const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
@@ -105,10 +113,11 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    coverage.push(...summary.coverage.filter(inChunk));unresolved.push(...summary.unresolved.filter(inChunk));
    for(const session of summary.sessions){const previous=sessions.get(session.key);if(!previous||session.lastObservedAt>=previous.lastObservedAt)sessions.set(session.key,session);}
    // Keep only the evidence the attribution and coverage views read.
+   const creditedCounters=new Set(summary.intervals.filter(i=>i.attributionSource==='task-counter').flatMap(i=>i.sourceEventIds));
    for(const event of events){
     if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
     // Reported context keeps its earlier reach: an hour before the range.
-    if(event.source==='agent_report'){if(event.observedAt>=from-3600&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
+    if(event.source==='agent_report'){if((event.observedAt>=from-3600||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
     if(event.source!=='macos'||event.kind!=='activity'||event.observedAt<start||event.observedAt>=end)continue;
     const untrusted=event.data?.accessibilityTrusted===false;
     if(untrusted||!previousTrusted||hasIssueKeys(event))kept.set(event.eventId,event);
@@ -128,9 +137,9 @@ const projectOf=(i:Interval)=>{const path=i.workspaceId?.split('::').at(-1);retu
 const issueKeys=(value:unknown):string[]=>typeof value==='string'?[...new Set([...value.slice(0,512).matchAll(/\b([a-z][a-z0-9]{1,15}-[1-9][0-9]{0,8})\b/gi)].map(match=>match[1]!.toUpperCase()).filter(key=>issuePattern.test(key)))]:[];
 const workspaceIssueFromId=(workspaceId?:string)=>{const path=workspaceId?.split('::').at(-1);const keys=issueKeys(path?basename(path):'');return keys.length===1?keys[0]!:null;};
 const workspaceIssue=(i:Interval)=>workspaceIssueFromId(i.workspaceId);
-const agentInterval=(i:Interval)=>!i.child&&i.state==='grouped';
+const agentInterval=(i:Interval)=>!i.child&&(i.state==='grouped'||i.attributionSource==='task-counter'&&i.state==='running');
 /** Agent work for totals: main sessions and subagents. */
-const agentWorkInterval=(i:Interval)=>i.state==='grouped';
+const agentWorkInterval=(i:Interval)=>i.state==='grouped'||i.attributionSource==='task-counter'&&i.state==='running';
 const humanInterval=(i:Interval)=>i.state==='human';
 const spans=(items:Interval[])=>items.map(i=>[i.start,i.end] as [number,number]);
 const publicInterval=<T extends Interval>(i:T)=>{const {browserUrl,browserTitle,tabTitle,...safe}=i;return safe;};
@@ -147,10 +156,11 @@ function perDay(rows:ReturnType<typeof inRange>){
  for(const row of rows){let cursor=row.start;while(cursor<row.end){const date=dateOf(cursor),next=new Date(dateStart(date)*1000);next.setDate(next.getDate()+1);const end=Math.min(row.end,next.getTime()/1000);pieces.push({...row,start:cursor,end});cursor=end;}}
  return [...new Set(pieces.map(i=>dateOf(i.start)))].sort().map(date=>({date,...totals(pieces.filter(i=>dateOf(i.start)===date))}));
 }
-interface AttributionIndex {bySession:Map<string,CaptureEvent[]>;byProject:Map<string,CaptureEvent[]>;pageKeys:Map<string,string[]>;}
+interface AttributionIndex {byCounter:Map<string,CaptureEvent>;bySession:Map<string,CaptureEvent[]>;byProject:Map<string,CaptureEvent[]>;pageKeys:Map<string,string[]>;}
 function attributionIndex(events:CaptureEvent[]):AttributionIndex{
- const index:AttributionIndex={bySession:new Map(),byProject:new Map(),pageKeys:new Map()};
+ const index:AttributionIndex={byCounter:new Map(),bySession:new Map(),byProject:new Map(),pageKeys:new Map()};
  for(const event of events){
+  if(event.source==='agent_report'&&event.kind==='task_start')index.byCounter.set(event.eventId,event);
   if(event.source==='agent_report'&&event.kind==='work_context'){
    if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`,rows=index.bySession.get(key)||[];rows.push(event);index.bySession.set(key,rows);}
    if(typeof event.data?.project==='string'){const project=canonicalProject(event.data.project),rows=index.byProject.get(project)||[];rows.push(event);index.byProject.set(project,rows);}
@@ -182,19 +192,20 @@ function suggestedIssue(i:Interval,index:AttributionIndex):{issueKey:string;evid
  return keys.length===1?{issueKey:keys[0]!,evidence:[...candidates.filter(e=>e.data?.issueKey===keys[0]).map(e=>e.eventId),...i.sourceEventIds.filter(id=>index.pageKeys.get(id)?.includes(keys[0]!))]}:null;
 }
 function attribution(i:Interval,index:AttributionIndex){
- const context=contextFor(i,index),issueKey=context?.data?.issueKey;
+ const counter=i.attributionSource==='task-counter'?index.byCounter.get(i.sourceEventIds[0]||''):undefined;
+ const context=counter||contextFor(i,index),issueKey=context?.data?.issueKey;
  const observedProject=projectOf(i),reportedProject=typeof context?.data?.project==='string'?canonicalProject(context.data.project):null;
  const suggestion=suggestedIssue(i,index);
  const reportedKey=typeof issueKey==='string'?issueKey:null,pathKey=workspaceIssue(i),issueConflict=Boolean(reportedKey&&pathKey&&reportedKey!==pathKey);
- return {issueKey:issueConflict?null:reportedKey||pathKey,project:observedProject||reportedProject,
+ return {issueKey:issueConflict?null:reportedKey||pathKey,project:counter?(reportedProject||observedProject):(observedProject||reportedProject),
   suggestedIssueKey:suggestion?.issueKey||null,
-  confidence:issueConflict||context&&reportedProject&&observedProject&&reportedProject!==observedProject?'conflict':i.userAttribution==='assigned'?'manual':pathKey?'workspace-key':observedProject?'observed-project':context?'agent-reported':'unattributed',
+  confidence:counter?'agent-reported':issueConflict||context&&reportedProject&&observedProject&&reportedProject!==observedProject?'conflict':i.userAttribution==='assigned'?'manual':pathKey?'workspace-key':observedProject?'observed-project':context?'agent-reported':'unattributed',
   attributionRule:issueConflict?'conflicting-issue-signals':reportedKey?'agent-reported-session':pathKey?'orca-worktree-name':suggestion?'page-key-suggestion':'none',
   evidence:context?[...i.sourceEventIds,context.eventId]:suggestion?[...i.sourceEventIds,...suggestion.evidence]:i.sourceEventIds};
 }
 const inRange=(s:Snapshot)=>{const index=attributionIndex(s.events);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
 export function timeForIssue(s:Snapshot,issueKey:string){
- if(!issuePattern.test(issueKey))throw new Error('Invalid Linear issue key');
+ if(!ticketPattern.test(issueKey)||!issueKey.trim())throw new Error('Invalid ticket reference');
  const attributed=inRange(s),rows=attributed.filter(i=>i.issueKey===issueKey);
  const suggestions=attributed.filter(i=>i.state==='human'&&i.suggestedIssueKey===issueKey);
  const days=perDay(rows);
@@ -330,8 +341,8 @@ export function writeReport(output:string,kind:CaptureEvent['kind'],requestId:st
 }
 export function currentWork(output:string){
  const db=existsSync(join(output,'events.sqlite'))?database(output):null;try{
-  const rows=db?.prepare("SELECT payload FROM events WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at DESC LIMIT 2000").all(now()-43200)||[];
-  const reports=[...rows.map(r=>JSON.parse(String(r.payload)) as CaptureEvent),...pendingReports(output)].sort((a,b)=>a.observedAt-b.observedAt);
+  const rows=db?.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at DESC LIMIT 2001`).all(now()-43200)||[];
+  const reports=hydrateReports(db,[...rows.slice(0,2000).map(r=>JSON.parse(String(r.payload)) as CaptureEvent),...pendingReports(output)]).sort((a,b)=>a.observedAt-b.observedAt);
   const sessionEnds=new Map<string,number>();
   for(const row of db?.prepare(`SELECT payload FROM events ${db&&isPackedEventDatabase(db)?'INDEXED BY events_session_ends_at':''} WHERE observed_at>? AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at`).all(now()-43200)||[]){const event=JSON.parse(String(row.payload)) as CaptureEvent;if(event.provider&&event.sessionId)sessionEnds.set(`${event.provider}:${event.sessionId}`,event.observedAt);}
   const contexts=new Map<string,CaptureEvent>(),starts=new Map<string,CaptureEvent>(),stops=new Set<string>(),ports=new Map<number,CaptureEvent>();
@@ -342,8 +353,8 @@ export function currentWork(output:string){
    if(e.kind==='task_stop')stops.add(String(e.data?.taskCounterId));
    if(e.kind==='port_state')ports.set(Number(e.data?.port),e);
   }
-  return {contexts:[...contexts.values()].filter(e=>!e.provider||!e.sessionId||(sessionEnds.get(`${e.provider}:${e.sessionId}`)||0)<e.observedAt).map(e=>({contextId:e.data?.contextId,issueKey:e.data?.issueKey,project:e.data?.project,task:e.data?.task,reportedAt:e.observedAt,provider:e.provider,sessionId:e.sessionId})),
-   tasks:[...starts.values()].filter(e=>!stops.has(e.eventId)&&(!e.provider||!e.sessionId||(sessionEnds.get(`${e.provider}:${e.sessionId}`)||0)<e.observedAt)).map(e=>({taskCounterId:e.eventId,name:e.data?.name,issueKey:e.data?.issueKey,reportedElapsedSeconds:Math.round(now()-e.observedAt),measured:false})),
+  return {truncated:rows.length>2000,contexts:[...contexts.values()].filter(e=>!e.provider||!e.sessionId||(sessionEnds.get(`${e.provider}:${e.sessionId}`)||0)<e.observedAt).map(e=>({contextId:e.data?.contextId,issueKey:e.data?.issueKey,project:e.data?.project,task:e.data?.task,agentIdentity:e.data?.agentIdentity,billable:e.data?.billable,reportedAt:e.observedAt,provider:e.provider,sessionId:e.sessionId})),
+   tasks:reportedWorkForDay(reports,now()-43200,now()+1,now(),sessionEnds).filter(item=>item.kind==='counter'&&!stops.has(item.id)&&item.status!=='session-ended').map(item=>({...item,taskCounterId:item.id,name:item.title,reportedElapsedSeconds:Math.round(item.end-item.start),measured:false})),
    ports:[...ports.values()].map(e=>({port:e.data?.port,state:e.data?.state,verified:e.data?.verified,processId:e.data?.processId,reportedAt:e.observedAt}))};
  }finally{db?.close();}
 }
@@ -357,4 +368,52 @@ export function verifyPort(port:number):{verified:boolean;processId:number|null}
   if((error as {status?:number}).status===1)return {verified:true,processId:null};
   return {verified:false,processId:null};
  }
+}
+
+/** Task writes share native identity and snapshot context once, so later topic changes cannot move an existing counter. */
+export function writeTaskReport(output:string,kind:CaptureEvent['kind'],requestId:string,contextId:string,data:Record<string,unknown>,identity:{provider?:string;sessionId?:string;workspaceId?:string}={}):CaptureEvent{
+ if(kind==='task_start'){
+  const parent=data.parentTaskCounterId?readReport(output,String(data.parentTaskCounterId)):undefined;
+  if(data.parentTaskCounterId&&parent?.kind!=='task_start')throw new Error('Unknown parent task counter');
+  const db=existsSync(join(output,'events.sqlite'))?database(output):null;
+  let context:CaptureEvent|undefined;
+  try{const row=db?.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='work_context' AND json_extract(payload,'$.data.contextId')=? ORDER BY observed_at DESC LIMIT 1`).get(now()-43200,contextId);if(row)context=JSON.parse(String(row.payload));}finally{db?.close();}
+  for(const e of pendingReports(output))if(e.kind==='work_context'&&e.data?.contextId===contextId&&(!context||e.observedAt>=context.observedAt))context=e;
+  if(context&&(['provider','sessionId','workspaceId'] as const).some(key=>identity[key]&&context?.[key]&&identity[key]!==context[key]))context=undefined;
+  const inherited:Record<string,unknown>={};
+  for(const key of ['project','issueKey','agentIdentity','billable'] as const){const value=context?context.data?.[key]:(key!=='agentIdentity'?parent?.data?.[key]:undefined);if(value!==undefined&&(value!==null||key==='billable'))inherited[key]=value;}
+  // Reuse the original inherited snapshot on retries; explicit fields are still compared by writeReport.
+  const existing=readReport(output,requestId);
+  if(existing?.kind==='task_start')for(const key of ['project','issueKey','agentIdentity','billable'] as const)if(data[key]===undefined){delete inherited[key];if(existing.data?.[key]!==undefined)inherited[key]=existing.data[key];}
+  return writeReport(output,kind,requestId,contextId,{...inherited,...data,leaseSeconds:data.leaseSeconds??900},identity);
+ }
+ if(kind!=='task_stop'&&kind!=='task_heartbeat')throw new Error('Invalid task operation');
+ const start=readReport(output,String(data.taskCounterId));if(start?.kind!=='task_start')throw new Error('Unknown task counter');
+ for(const key of ['provider','sessionId','workspaceId'] as const)if(identity[key]&&start[key]&&identity[key]!==start[key])throw new Error('Task counter belongs to a different native session or workspace');
+ const existing=readReport(output,requestId);
+ if(!existing){
+  const db=existsSync(join(output,'events.sqlite'))?database(output):null;
+  const evidence:CaptureEvent[]=[start,...pendingReports(output).filter(e=>e.data?.taskCounterId===start.eventId)];
+  try{
+   for(const kind of ['task_stop','task_heartbeat']){const row=db?.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at>=? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')=? AND json_extract(payload,'$.data.taskCounterId')=? ORDER BY observed_at DESC LIMIT 1`).get(start.observedAt,kind,start.eventId);if(row)evidence.push(JSON.parse(String(row.payload)));}
+   if(start.provider&&start.sessionId){const row=db?.prepare(`SELECT payload FROM events ${endIndex(db)} WHERE observed_at>=? AND json_extract(payload,'$.kind')='session_end' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? ORDER BY observed_at LIMIT 1`).get(start.observedAt,start.provider,start.sessionId);if(row)evidence.push(JSON.parse(String(row.payload)));}
+  }finally{db?.close();}
+  const item=reportedWorkForDay(evidence,start.observedAt,now()+1,now())[0];
+  if(item&&['completed','failed','cancelled','session-ended'].includes(item.status||''))throw new Error('Task counter is already closed');
+  if(kind==='task_heartbeat'&&(!item||item.status==='interrupted'))throw new Error('Task counter expired; stop it and start a new counter');
+ }
+ return writeReport(output,kind,requestId,contextId,data,{provider:start.provider,sessionId:start.sessionId,workspaceId:start.workspaceId});
+}
+
+/** Reads reports only, with an explicit cap: never replay the capture database to list task metadata. */
+export function taskHistory(output:string,from:number,to:number,filter:{project?:string;issueKey?:string;agentId?:string}={}){
+ if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>31*86400)throw new Error('Invalid bounded task range');
+ const db=existsSync(join(output,'events.sqlite'))?database(output):null;
+ try{
+  const rows=db?.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at LIMIT 10001`).all(from-43200,to+43200)||[];
+  const ends=db?.prepare(`SELECT payload FROM events ${endIndex(db)} WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.kind')='session_end' ORDER BY observed_at LIMIT 10001`).all(from-43200,to+43200)||[];
+  const reports=new Map<string,CaptureEvent>();for(const row of [...rows.slice(0,10000),...ends.slice(0,10000)]){const e=JSON.parse(String(row.payload)) as CaptureEvent;reports.set(e.eventId,e);}for(const e of pendingReports(output))if(e.observedAt>=from-43200&&e.observedAt<to+43200)reports.set(e.eventId,e);
+  const tasks=reportedWorkForDay(hydrateReports(db,[...reports.values()]),from,to,now()).filter(item=>item.kind==='counter'&&(!filter.project||item.project===filter.project)&&(!filter.issueKey||item.issueKey===filter.issueKey)&&(!filter.agentId||item.agentIdentity?.id===filter.agentId));
+  return {tasks:tasks.slice(0,1000).map(item=>({...item,taskCounterId:item.id,reportedElapsedSeconds:Math.max(0,Math.round(item.end-Math.max(from,item.start))),usageVerified:false})),truncated:rows.length>10000||ends.length>10000||tasks.length>1000,measured:false,usageScope:'own-task-only',durationScope:'parent-inclusive; do not sum parent and child durations'};
+ }finally{db?.close();}
 }

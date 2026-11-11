@@ -1,3 +1,4 @@
+import {hydrateTaskStarts} from './reported-work.ts';
 import {archiveName,compressArchive,withReadableArchive,recordArchive,resolveArchivePath} from './archive-storage.ts';
 import {checkEventDatabase,openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
 import { DatabaseSync,backup } from 'node:sqlite';
@@ -162,6 +163,10 @@ export class EventStore {
     const result:CaptureEvent[]=[];
     for(const row of this.db.prepare("SELECT payload FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' ORDER BY observed_at,rowid").iterate(start,end))result.push(JSON.parse(String(row.payload)) as CaptureEvent);
     return result;
+  }
+  taskReportEvidence(start:number,end:number):CaptureEvent[]{
+    const reports=this.agentReports(start,end),read=this.db.prepare('SELECT payload FROM events WHERE event_id=?');
+    return hydrateTaskStarts(reports,id=>{const row=read.get(id);return row?JSON.parse(String(row.payload)) as CaptureEvent:undefined;});
   }
   lastEventRowid():number{return Number(this.db.prepare('SELECT COALESCE(MAX(rowid),0) rowid FROM events').get()?.rowid||0);}
   eventsAfterRowid(rowid:number):Array<{rowid:number;event:CaptureEvent}>{

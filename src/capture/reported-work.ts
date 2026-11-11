@@ -2,10 +2,22 @@ import type {CaptureEvent,Interval,Session,Summary} from './events.ts';
 import {minuteCreditSeconds} from './correlate.ts';
 import {agentSessionKey} from './session-identity.ts';
 
+/** Resolve only referenced starts, so long-running counters survive bounded history windows. */
+export function hydrateTaskStarts(events:CaptureEvent[],lookup:(id:string)=>CaptureEvent|undefined|null):CaptureEvent[]{
+ const seen=new Set(events.map(e=>e.eventId)),extra:CaptureEvent[]=[];
+ for(const event of events)if(event.source==='agent_report'&&['task_stop','task_heartbeat'].includes(event.kind)){
+  const id=String(event.data?.taskCounterId||'');if(!id||id.length>36||seen.has(id))continue;seen.add(id);
+  const start=lookup(id);if(start?.source==='agent_report'&&start.kind==='task_start')extra.push(start);
+ }
+ return [...extra,...events];
+}
+export interface AgentIdentity {id:string;name?:string;role?:string;}
+export interface TaskUsage {inputTokens?:number;outputTokens?:number;cachedInputTokens?:number;cost?:number;currency?:string;source:'agent-reported'|'provider-response';}
 export interface ReportedWorkItem {
  id:string;kind:'context'|'counter';title:string;issueKey?:string;project?:string;
  provider?:string;sessionId?:string;workspaceId?:string;
- start:number;end:number;active:boolean;
+ start:number;end:number;active:boolean;status?:'active'|'completed'|'failed'|'cancelled'|'session-ended'|'interrupted';
+ agentIdentity?:AgentIdentity;parentTaskCounterId?:string;billable?:boolean|null;usage?:TaskUsage;expiresAt?:number;
 }
 
 /** Declarations are context, never credited time. A context is a point; a counter is an elapsed span. */
@@ -15,25 +27,36 @@ export interface ReportedWorkItem {
  * A stop with `discarded` (from the app) removes the timer altogether.
  */
 export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number,now:number,sessionEnds:Map<string,number>=new Map()):ReportedWorkItem[]{
- const starts=new Map<string,CaptureEvent>(),stops=new Map<string,number>(),discarded=new Set<string>();
+ const starts=new Map<string,CaptureEvent>(),stops=new Map<string,CaptureEvent>(),heartbeats=new Map<string,number>(),discarded=new Set<string>();
  const contexts:ReportedWorkItem[]=[];
  for(const event of events){
-  if(event.source!=='agent_report'||event.observedAt>=end)continue;
+  if(event.source!=='agent_report'||event.observedAt>=end&&!['task_stop','task_heartbeat'].includes(event.kind))continue;
   if(event.kind==='task_start')starts.set(event.eventId,event);
-  else if(event.kind==='task_stop'){const id=String(event.data?.taskCounterId);if(event.data?.discarded===true)discarded.add(id);if(!stops.has(id))stops.set(id,event.observedAt);}
+  else if(event.kind==='task_stop'){const id=String(event.data?.taskCounterId);if(event.data?.discarded===true)discarded.add(id);if(!stops.has(id))stops.set(id,event);}
+  else if(event.kind==='task_heartbeat'){const id=String(event.data?.taskCounterId);heartbeats.set(id,Math.max(heartbeats.get(id)??0,event.observedAt));}
   else if(event.kind==='work_context'&&event.observedAt>=start){
    const title=String(event.data?.task||event.data?.issueKey||event.data?.project||'Work context');
-   contexts.push({id:event.eventId,kind:'context',title,issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,project:typeof event.data?.project==='string'?event.data.project:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:event.observedAt,active:false});
+   contexts.push({id:event.eventId,kind:'context',title,issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,project:typeof event.data?.project==='string'?event.data.project:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,billable:event.data?.billable as boolean|null|undefined,start:event.observedAt,end:event.observedAt,active:false});
   }
  }
+ // Session-end evidence is available in both app and MCP summary windows.
+ for(const event of events)if(event.kind==='session_end'&&event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;sessionEnds.set(key,Math.max(sessionEnds.get(key)??0,event.observedAt));}
  const counters:ReportedWorkItem[]=[];
  for(const event of starts.values()){
   if(discarded.has(event.eventId))continue;
   const sessionEnd=event.sessionId?sessionEnds.get(`${event.provider||''}:${event.sessionId}`):undefined;
   const endedWithSession=sessionEnd!==undefined&&sessionEnd>=event.observedAt?sessionEnd:undefined;
-  const stoppedAt=stops.get(event.eventId)??endedWithSession,until=Math.min(stoppedAt??now,end);
-  if(until<=start||event.observedAt>=end)continue;
-  counters.push({id:event.eventId,kind:'counter',title:String(event.data?.name||'Task counter'),issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:Math.max(event.observedAt,until),active:stoppedAt===undefined&&now<end});
+  const stop=stops.get(event.eventId),explicitEnd=stop&&stop.observedAt>=event.observedAt?stop.observedAt:undefined;
+  const confirmed=Math.max(event.observedAt,heartbeats.get(event.eventId)??event.observedAt);
+  // Legacy counters keep a generous 12h bound. New MCP counters renew a 15min lease.
+  const expiresAt=confirmed+Number(event.data?.leaseSeconds||43200);
+  const sessionClosure=endedWithSession!==undefined&&(endedWithSession<=expiresAt||explicitEnd!==undefined)?endedWithSession:undefined;
+  const stoppedAt=explicitEnd===undefined?sessionClosure:sessionClosure===undefined?explicitEnd:Math.min(explicitEnd,sessionClosure);
+  const interrupted=stoppedAt===undefined&&now>=expiresAt;
+  const until=Math.min(stoppedAt??(interrupted?confirmed:now),end);
+  const status:ReportedWorkItem['status']=stoppedAt!==undefined?(endedWithSession===stoppedAt?'session-ended':(stop?.data?.outcome as 'completed'|'failed'|'cancelled')||'completed'):interrupted?'interrupted':'active';
+  if(until<start||event.observedAt>=end)continue;
+  counters.push({id:event.eventId,kind:'counter',title:String(event.data?.name||'Task counter'),issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:Math.max(event.observedAt,until),active:status==='active'&&now<end,status,expiresAt,project:typeof event.data?.project==='string'?event.data.project:undefined,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,parentTaskCounterId:event.data?.parentTaskCounterId as string|undefined,billable:event.data?.billable as boolean|null|undefined,usage:stop?.data?.usage as TaskUsage|undefined});
  }
  return [...counters,...contexts].sort((a,b)=>b.start-a.start);
 }
@@ -71,11 +94,12 @@ export function creditTaskCounters(summary:Summary,items:ReportedWorkItem[]):Sum
  for(const counter of counters){
   const span:Range=[counter.start,counter.end],project=projectOf(counter.workspaceId);
   const roots=sessions.filter(session=>!session.child&&(!counter.provider||session.provider===counter.provider));
-  const peers=counter.sessionId?roots.filter(session=>session.sessionId===counter.sessionId):project?roots.filter(session=>sessionProjectOf(session)===project):[];
+  const declaredSessionId=counter.agentIdentity?`task-agent:${JSON.stringify([counter.provider||'',counter.agentIdentity.id,counter.workspaceId||''])}`:undefined;
+  const peers=counter.sessionId?roots.filter(session=>session.sessionId===counter.sessionId):declaredSessionId?roots.filter(session=>session.sessionId===declaredSessionId):project?roots.filter(session=>sessionProjectOf(session)===project):[];
   const overlap=(session:Session)=>agentRangesOf(session).reduce((sum,[s,e])=>sum+Math.max(0,Math.min(e,span[1])-Math.max(s,span[0])),0);
   let session=[...peers].sort((a,b)=>overlap(b)-overlap(a)||b.lastObservedAt-a.lastObservedAt)[0];
   if(!session){
-   session={key:`task-counter:${counter.id}`,sessionId:`task-counter:${counter.id}`,workspaceId:counter.workspaceId,cwd:counter.workspaceId,provider:counter.provider,title:counter.title,state:counter.active?'running':'stopped',lastObservedAt:counter.end,seconds:0,observedSeconds:0,child:false,proof:'reported'};
+   session={key:`task-counter:${counter.id}`,sessionId:counter.sessionId||declaredSessionId||`task-counter:${counter.id}`,workspaceId:counter.workspaceId,cwd:counter.workspaceId,provider:counter.provider,title:counter.title,state:counter.active?'running':'stopped',lastObservedAt:counter.end,seconds:0,observedSeconds:0,child:false,proof:'reported'};
    sessions.push(session);
   }
   const own=agentRangesOf(session);

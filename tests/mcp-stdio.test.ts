@@ -32,3 +32,28 @@ test('stdio MCP negotiates with legacy clients and exposes bounded local tools',
   assert.equal((replies.get(3)?.result as {content?:Array<{text:string}>})?.content?.[0]?.text.includes('"tasks":[]'),true);
  }finally{clearTimeout(timeout);child.kill();rmSync(output,{recursive:true,force:true});}
 });
+
+test('MCP client can declare free references, inherited projects, agents, child tasks and own-task costs',async()=>{
+ const {randomUUID}=await import('node:crypto');
+ const output=mkdtempSync(join(tmpdir(),'agent-time-mcp-task-client-'));
+ const child=spawn(process.execPath,['src/mcp/server.ts'],{cwd:process.cwd(),env:{...process.env,ADE_CAPTURE_OUTPUT:output},stdio:['pipe','pipe','pipe']});
+ let next=1;const pending=new Map<number,(reply:any)=>void>();
+ createInterface({input:child.stdout}).on('line',line=>{const reply=JSON.parse(line);pending.get(reply.id)?.(reply);});
+ const rpc=(method:string,params:unknown)=>new Promise<any>((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>{pending.delete(id);reject(new Error(`Timed out: ${method}`));},5000);pending.set(id,reply=>{clearTimeout(timer);pending.delete(id);resolve(reply);});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+ const call=async(name:string,args:Record<string,unknown>)=>{const reply=await rpc('tools/call',{name,arguments:args});assert.equal(reply.error,undefined);assert.notEqual(reply.result?.isError,true,JSON.stringify(reply));return JSON.parse(reply.result.content[0].text);};
+ try{
+  await rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'fixture',version:'1'}});child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+  await call('set_work_context',{project:'KANZen',issueKey:'T-9716',agentIdentity:{id:'cto',name:'CTO'},billable:true,provider:'claude',sessionId:'native-cto'});
+  const id=randomUUID();const task=await call('start_task',{requestId:id,name:'TVA',provider:'claude',sessionId:'native-cto'});
+  assert.equal(task.project,'KANZen');assert.equal(task.issueKey,'T-9716');assert.equal(task.measured,false);assert.equal(task.heartbeatEverySeconds,300);
+  const heartbeat=await call('heartbeat_task',{taskCounterId:task.taskCounterId});assert.equal(heartbeat.taskCounterId,id);
+  const sub=await call('start_task',{name:'Verify',parentTaskCounterId:id,agentIdentity:{id:'cfo'},provider:'claude',sessionId:'native-cfo'});
+  assert.equal(sub.project,'KANZen');assert.equal(sub.parentTaskCounterId,id);assert.equal(sub.agentIdentity.id,'cfo');
+  await call('stop_task',{taskCounterId:sub.taskCounterId,outcome:'failed'});
+  await call('stop_task',{taskCounterId:id,usage:{inputTokens:100,outputTokens:20,cost:0.02,currency:'USD',source:'provider-response'}});
+  const date=new Date(),localDate=`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
+  const history=await call('task_history',{fromDate:localDate,toDate:localDate,issueKey:'T-9716'});
+  assert.equal(history.tasks.length,2);assert.equal(history.tasks.find((t:any)=>t.id===id).usage.cost,0.02);assert.equal(history.tasks.find((t:any)=>t.id===id).billable,true);
+  const work=await call('current_work',{});assert.equal(work.tasks.length,0);
+ }finally{child.kill();rmSync(output,{recursive:true,force:true});}
+});
