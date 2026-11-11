@@ -1,6 +1,6 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.43` candidate — 2026-11-11
+## `0.2.0-beta.43` published and verified — 2026-11-11
 
 Known websites retain the same cleaned title in context groups and individual visits, including when the website title matches the app name. Repeated middle-dot title fragments are removed, and the page path appears where captured. Grouping keys, project evidence, source pairs and timing calculation are unchanged.
 
@@ -12,7 +12,7 @@ Linear Keychain requests allow two minutes for authorization instead of killing 
 
 Validation: 438 JavaScript tests, 32 native Rust tests, production typecheck/build, zero reported production dependency vulnerabilities and independent review pass. Regression coverage includes lossless bounded packing, missing-index/headroom/replacement guards, low-disk stop timing fence, ownership, persistence/worker failures, interrupted/relaunched recovery, later space recovery, manual pause, retained restart notifications, crash recovery and delayed Keychain authorization. Browser checks confirm both Culture Club Pro labels and visit paths plus the automatic-resume banner and Data & backup navigation. No actual low-disk recovery or Keychain approval was performed against the owner's database/account.
 
-Publication and installed-app verification are pending.
+[Release run 43079973485](https://github.com/zaosoula/agent-time/actions/runs/43079973485) passed checks, signed/notarized build and publication for exact source `baa9a66bc91104a76940e809dd246b66bb7cdfcc`. CI independently passed 438 JavaScript tests, 32 native tests, production typecheck/build and dependency audit with zero reported vulnerabilities. The public feed equals the staged manifest, its signature matches, and the landing page links to beta.43. Downloaded public updater archive (55,731,390 bytes) has SHA-256 `72f4e905b02a9db191e41bac2b84796cefc043e74f73f49f5a2bba05cd6d6eec`; installer (55,518,663 bytes) has SHA-256 `d6af73e5616855d564fb9135b274c59756ccdd0fa64d56d9b79624007e84462b`. Both hashes match the staged signed artifacts. The app and DMG pass stapled-ticket validation and Gatekeeper; the app passes deep strict signature verification, reports beta.43 / arm64, and all five changed capture modules match tested source. Proof: `/private/tmp/agent-time-beta43-public/public-verification.json`, `/private/tmp/agent-time-beta43-native-checks.json`, `/private/tmp/agent-time-beta43-packaged-proof.json` and CI logs. Temporary synthetic preview databases, native build outputs and downloaded verification copies were removed after checks. No live installation, real low-disk recovery or actual OS notification delivery is claimed.
 
 ## `0.2.0-beta.42` published and verified — 2026-11-10
 
