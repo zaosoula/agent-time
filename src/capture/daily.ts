@@ -1,4 +1,5 @@
 import type { CaptureEvent, Issue, Summary } from './events.ts';
+import {agentSessionKey,hasNativeSessionIdentity} from './session-identity.ts';
 import { groupIntervals, minuteCreditSeconds } from './correlate.ts';
 import { staticOrcaScopeReason } from './observation-retention.ts';
 export function dailyCaptureIssues(summary:Summary,from:number,to:number):Issue[] {
@@ -11,12 +12,12 @@ export function dailyTotals(summary:Summary,now=new Date()){
  const activity=intervals.filter(i=>hasGrouped?i.state==='grouped':i.state==='running'||i.state==='turn');
  const roots=new Map<string,Array<[number,number]>>();
  for(const i of activity.filter(i=>!i.child)){
-  const key=`${i.hostId}:${i.dispatchId?'dispatch:'+i.dispatchId:'session:'+i.sessionId}`;
+  const key=agentSessionKey(i);
   const ranges=roots.get(key)||[];ranges.push([i.start,i.end]);roots.set(key,ranges);
  }
  const children=new Map<string,Array<[number,number]>>();
  for(const i of activity.filter(i=>i.child)){
-  const key=JSON.stringify([i.hostId,i.sessionId,i.agentId]);
+  const key=agentSessionKey(i);
   const ranges=children.get(key)||[];ranges.push([i.start,i.end]);children.set(key,ranges);
  }
  const credit=(groups:Map<string,Array<[number,number]>>)=>[...groups.values()].reduce((sum,r)=>sum+minuteCreditSeconds(hasGrouped?r:groupIntervals(r)),0);
@@ -49,8 +50,8 @@ export function recentWorkingAgentCount(workers:CaptureEvent[],hooks:CaptureEven
  const workerDispatches=new Set(activeWorkers.map(event=>JSON.stringify([event.hostId??null,event.dispatchId])));
  const latestHooks=new Map<string,CaptureEvent>();
  for(const event of hooks.filter(recent).sort((a,b)=>b.observedAt-a.observedAt)){
-  if(!event.sessionId||!event.terminalHandle&&!event.dispatchId)continue;
-  const key=JSON.stringify([event.hostId??null,event.sessionId,event.agentId??null]);
+  if(!event.sessionId||!event.terminalHandle&&!event.dispatchId&&!hasNativeSessionIdentity(event))continue;
+  const key=agentSessionKey({...event,dispatchId:undefined,child:Boolean(event.agentId)});
   if(!latestHooks.has(key))latestHooks.set(key,event);
  }
  const hookCount=[...latestHooks.values()].filter(event=>event.kind==='tool_start'&&
@@ -67,11 +68,11 @@ export function summaryForDate(summary:Summary,date:string):Summary {
  const from=start.getTime()/1000,to=end.getTime()/1000;
  const intervals=summary.intervals.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(i.start,from),end:Math.min(i.end,to)}));
  const evidence=new Set(intervals.flatMap(i=>[
-  ...(i.sessionId?[JSON.stringify([i.hostId??null,'session',i.sessionId,i.child===true,i.agentId??null])]:[]),
+  ...(i.sessionId?[JSON.stringify([i.hostId??null,i.provider??null,'session',i.sessionId,i.child===true,i.agentId??null])]:[]),
   ...(i.dispatchId?[JSON.stringify([i.hostId??null,'dispatch',i.dispatchId,i.child===true,i.agentId??null])]:[]),
  ]));
  const sessions=summary.sessions.filter(s=>s.lastObservedAt>=from&&s.lastObservedAt<to||
-  Boolean(s.sessionId&&evidence.has(JSON.stringify([s.hostId??null,'session',s.sessionId,s.child===true,s.agentId??null])))||
+  Boolean(s.sessionId&&evidence.has(JSON.stringify([s.hostId??null,s.provider??null,'session',s.sessionId,s.child===true,s.agentId??null])))||
   Boolean(s.dispatchId&&evidence.has(JSON.stringify([s.hostId??null,'dispatch',s.dispatchId,s.child===true,s.agentId??null]))));
  const coverage=summary.coverage.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);
  const unresolved=summary.unresolved.filter(issue=>issue.observedAt!==undefined&&issue.observedAt>=from&&issue.observedAt<to);

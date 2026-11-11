@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtempSync,rmSync} from 'node:fs';
+import {mkdtempSync,rmSync,writeFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {randomUUID} from 'node:crypto';
@@ -13,6 +13,36 @@ import {importSpool} from '../src/capture/hooks.ts';
 
 const fixture=()=>mkdtempSync(join(tmpdir(),'agent-time-mcp-'));
 const today=()=>{const d=new Date();d.setHours(10,0,0,0);return d.getTime()/1000;};
+
+test('MCP project context reconciles its standalone session without claiming a peer or adding reported time',()=>{
+ const output=fixture(),store=new EventStore(join(output,'events.sqlite')),at=today();
+ try{
+  const context=makeEvent('agent_report','work_context',{provider:'claude',sessionId:'standalone-a',observedAt:at-1,data:{contextId:randomUUID(),project:'/tmp/standalone-project',issueKey:'EZYO-863',task:'Build'}});store.put(context);
+  for(const sessionId of ['standalone-a','standalone-b']){
+   put(store,'tool_start',at,{provider:'claude',hostId:'local',sessionId,data:{toolId:'one'}});
+   put(store,'tool_end',at+45,{provider:'claude',hostId:'local',sessionId,data:{toolId:'one'}});
+  }
+  const start=makeEvent('agent_report','task_start',{provider:'claude',sessionId:'standalone-a',observedAt:at,data:{contextId:randomUUID(),name:'Build'}});
+  store.put(start);store.put(makeEvent('agent_report','task_stop',{provider:'claude',sessionId:'standalone-a',observedAt:at+45,data:{contextId:start.data!.contextId,taskCounterId:start.eventId}}));
+  const s=snapshot(output,at-2,at+60);assert.equal(s.summary.agentSeconds,120);
+  assert.equal(timeForProject(s,'/tmp/standalone-project').agentRunningSeconds,60);
+  assert.equal(timeForIssue(s,'EZYO-863').agentRunningSeconds,60);
+  writeFileSync(join(output,'settings.json'),JSON.stringify({countTaskCounters:true}));
+  assert.equal(snapshot(output,at-2,at+60).summary.agentSeconds,120,'opt-in task counters cannot duplicate a measured standalone span');
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('MCP cumulative time scopes equal native session IDs by provider',()=>{
+ const output=fixture(),store=new EventStore(join(output,'events.sqlite')),at=today();
+ try{
+  for(const provider of ['claude','codex']){
+   put(store,'tool_start',at,{provider,hostId:'local',sessionId:'same',data:{toolId:'one'}});
+   put(store,'tool_end',at+45,{provider,hostId:'local',sessionId:'same',data:{toolId:'one'}});
+  }
+  const s=snapshot(output,at-1,at+60);assert.equal(s.summary.agentSeconds,120);
+  assert.equal(s.summary.agentWallSeconds,60);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
 const put=(store:EventStore,kind:string,at:number,fields:Record<string,unknown>={})=>store.put(makeEvent('hook',kind,{observedAt:at,monotonicAt:at,...fields}));
 
 test('agent declarations are idempotent, validated, and do not change measured totals',()=>{

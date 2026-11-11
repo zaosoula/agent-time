@@ -65,7 +65,7 @@ function reviewFingerprint(intervals:unknown[],issues:unknown[],notes:unknown[])
 const FINGERPRINT_VERSION='v2:';
 /** Stored after a failed legacy check so the costly check is never repeated. */
 /** Bump when the review snapshot logic changes, to drop cached snapshots. */
-const DAY_REVIEW_CACHE_VERSION='r2';
+const DAY_REVIEW_CACHE_VERSION='r3';
 const LEGACY_STALE_FINGERPRINT=`${FINGERPRINT_VERSION}legacy-stale`;
 
 export class Collector {

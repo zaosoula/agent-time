@@ -1,4 +1,5 @@
 import type {Interval,Session} from './events.ts';
+import {agentSessionKey} from './session-identity.ts';
 const object=(value:unknown):Record<string,any>=>value&&typeof value==='object'&&!Array.isArray(value)?value as Record<string,any>:{};
 export interface FocusedOrcaTab {workspaceId:string;tabId:string;leafId:string;terminalHandle:string;title:string;}
 function terminal(node:unknown,leafId:string):string|null{
@@ -24,10 +25,10 @@ export function resolveOrcaTab(label:string|undefined,index:FocusedOrcaTab[]):Fo
 export function humanIntervalsBySession(sessions:Session[],intervals:Interval[]):Map<string,Interval[]>{
  const bounds=new Map<string,[number,number]>();
  for(const i of intervals.filter(i=>i.state==='grouped'&&!i.child)){
-  const key=i.dispatchId?`dispatch:${i.hostId}:${i.dispatchId}`:`session:${i.hostId}:${i.sessionId}`;
+  const key=agentSessionKey(i);
   const range=bounds.get(key);bounds.set(key,range?[Math.min(range[0],i.start),Math.max(range[1],i.end)]:[i.start,i.end]);
  }
- const candidates=sessions.filter(s=>!s.child&&bounds.has(s.key)).map(s=>({session:s,bounds:bounds.get(s.key)!}));
+ const candidates=sessions.filter(s=>!s.child&&bounds.has(agentSessionKey(s))).map(s=>({session:s,bounds:bounds.get(agentSessionKey(s))!}));
  const assigned=new Map<string,Interval[]>();
  for(const i of intervals.filter(i=>i.state==='human'&&!i.userAttribution&&(i.terminalHandle||i.tabTitle))){
   const label=i.tabTitle?.trim().toLocaleLowerCase();

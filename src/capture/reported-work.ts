@@ -1,5 +1,6 @@
 import type {CaptureEvent,Interval,Session,Summary} from './events.ts';
 import {minuteCreditSeconds} from './correlate.ts';
+import {agentSessionKey} from './session-identity.ts';
 
 export interface ReportedWorkItem {
  id:string;kind:'context'|'counter';title:string;issueKey?:string;project?:string;
@@ -49,7 +50,7 @@ function subtract(range:Range,covered:Range[]):Range[]{
  if(cursor<range[1])out.push([cursor,range[1]]);
  return out;
 }
-const sessionKey=(item:{child?:boolean;dispatchId?:string;sessionId?:string})=>item.dispatchId?`dispatch:${item.dispatchId}`:`session:${item.sessionId??''}`;
+const sessionKey=agentSessionKey;
 const agentStates=new Set<Interval['state']>(['running','turn','grouped']);
 /** Project root of a workspace ID or path; Orca worktrees count as their repository. */
 const projectOf=(path:string|undefined)=>{const raw=path?.split('::').at(-1);return raw?.startsWith('/')?raw.split('/.orca/workspaces/')[0]!.replace(/\/+$/,'')||'/':undefined;};

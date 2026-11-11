@@ -23,3 +23,9 @@ test('indexed interval lookups preserve session, Dispatch, and subagent attribut
   assert.deepEqual(index.running.get(sessionIntervalKey(s))||[],intervals.filter(i=>i.state==='running'&&matches(i,s)));
  }
 });
+
+test('UI interval lookups keep providers and hosts separate for standalone sessions',()=>{
+ const intervals=[interval('grouped',{hostId:'a',provider:'claude',sessionId:'same'}),interval('grouped',{hostId:'b',provider:'claude',sessionId:'same'}),interval('grouped',{hostId:'a',provider:'codex',sessionId:'same'})];
+ const index=indexSessionIntervals(intervals);
+ for(const i of intervals)assert.deepEqual(index.grouped.get(sessionIntervalKey(session(i))),[i]);
+});

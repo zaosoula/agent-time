@@ -1,4 +1,5 @@
 import type { CaptureEvent, Interval, Issue, Session, Summary } from './events.ts';
+import {agentSessionKey,hasNativeSessionIdentity} from './session-identity.ts';
 import { workerSnapshotValidSeconds } from './observation-retention.ts';
 export function unionSeconds(intervals:Array<[number,number]>):number {
  const merged:Array<[number,number]>=[];
@@ -79,35 +80,38 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  /** Background shells by `key:taskId`, open from launch until their completion notice. `seen` is the latest Stop that listed it running. */
  const background=new Map<string,{event:CaptureEvent;session:Session;key:string;taskId:string;seen?:CaptureEvent}>();
  const turnStarts=new Map<string,CaptureEvent>(),activityAnchors=new Map<string,number[]>();
- const bindings=new Map<string,CaptureEvent>(),toolBindings=new Map<string,CaptureEvent>();
+ const bindings=new Map<string,CaptureEvent>(),toolBindings=new Map<string,CaptureEvent>(),promotedBindings=new Map<string,CaptureEvent>();
  const workerSnapshots=new Map<string,CaptureEvent[]>();let activityPrevious:CaptureEvent|undefined;
  const workerKey=(e:CaptureEvent)=>JSON.stringify([typeof e.hostId,e.hostId,typeof e.terminalHandle,e.terminalHandle]);
  for(const e of events)if(e.kind==='worker'){
   const key=workerKey(e),group=workerSnapshots.get(key)||[];group.push(e);workerSnapshots.set(key,group);
  }
  for(const group of workerSnapshots.values())group.sort((a,b)=>a.observedAt-b.observedAt);
- const identity=(e:CaptureEvent)=>`${e.hostId}:${e.sessionId}:${e.terminalHandle}`;
- const toolIdentity=(e:CaptureEvent)=>`${identity(e)}:${e.agentId||'root'}:${String(e.data?.toolId||'anonymous')}`;
+ const identity=(e:CaptureEvent)=>JSON.stringify([e.hostId??null,e.provider??null,e.sessionId??null,e.terminalHandle??null]);
+ const nativeIdentity=(e:CaptureEvent)=>agentSessionKey({...e,dispatchId:undefined,child:false});
+ const toolIdentity=(e:CaptureEvent)=>JSON.stringify([nativeIdentity(e),e.agentId??null,e.data?.toolId??'anonymous']);
  function getSession(key:string,e:CaptureEvent,child=false):Session {
   let s=sessions.get(key);
   // A hook may precede the first worker snapshot. Promote that provider session
   // once a bounded terminal observation supplies its Dispatch identity.
   if(!child&&e.dispatchId&&e.sessionId){
-   const standaloneKey=`session:${e.hostId}:${e.sessionId}`,standalone=sessions.get(standaloneKey);
+   const standaloneKey=agentSessionKey({...e,dispatchId:undefined,child:false}),standalone=sessions.get(standaloneKey);
    if(standalone){
     if(!s){s=standalone;s.key=key;sessions.set(key,s);}
     s.sessionId=e.sessionId;s.cwd ||= standalone.cwd;s.provider ||= standalone.provider;
-    s.runId=e.runId;s.taskId=e.taskId;s.dispatchId=e.dispatchId;s.workspaceId=e.workspaceId||s.workspaceId;
+    s.runId=e.runId;s.taskId=e.taskId;s.dispatchId=e.dispatchId;s.workspaceId=e.workspaceId||s.workspaceId;s.terminalHandle ||= e.terminalHandle;
+    promotedBindings.set(standaloneKey,e);
     s.lastObservedAt=Math.max(s.lastObservedAt,standalone.lastObservedAt);
-    const sessionKey=`${e.hostId}:${e.sessionId}`;
+    const sessionKey=standaloneKey;
     for(const i of standaloneIntervals.get(sessionKey)||[])if(!i.dispatchId){i.dispatchId=e.dispatchId;i.runId=e.runId;i.taskId=e.taskId;i.workspaceId=e.workspaceId;}
     standaloneIntervals.delete(sessionKey);
     for(const [id,a] of [...active])if(a.key===standaloneKey){active.delete(id);a.key=key;a.session=s;active.set(key+id.slice(standaloneKey.length),a);}
+    for(const item of provisional)if(item.key===standaloneKey){item.key=key;item.session=s;}
     for(const [id,b] of [...background])if(b.key===standaloneKey){background.delete(id);b.key=key;b.session=s;background.set(key+':'+b.taskId,b);}
     const turn=turnStarts.get(standaloneKey);if(turn){turnStarts.delete(standaloneKey);turnStarts.set(key,turn);}
     const oldFences=sessionFences.get(standaloneKey);if(oldFences){sessionFences.delete(standaloneKey);sessionFences.set(key,[...(sessionFences.get(key)||[]),...oldFences]);}
     const oldAnchors=activityAnchors.get(standaloneKey);if(oldAnchors){activityAnchors.delete(standaloneKey);activityAnchors.set(key,[...(activityAnchors.get(key)||[]),...oldAnchors]);}
-    for(const [id,b] of toolBindings)if(!b.dispatchId&&identity(b)===identity(e))toolBindings.set(id,applyBinding(b,e));
+    for(const [id,b] of toolBindings)if(!b.dispatchId&&nativeIdentity(b)===standaloneKey)toolBindings.set(id,applyBinding(b,e));
     sessions.delete(standaloneKey);
    }
   }
@@ -121,7 +125,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   const interval:Interval={start:start.observedAt,end:end.observedAt,state,proof,sourceEventIds:[start.eventId,end.eventId],hostId:s?.hostId,workspaceId:s?.workspaceId,sessionId:s?.sessionId,agentId:s?.agentId,provider:s?.provider,runId:s?.runId,taskId:s?.taskId,dispatchId:s?.dispatchId,child:s?.child};
   intervals.push(interval);
   // Index intervals a later Dispatch binding may promote, instead of rescanning all intervals.
-  if(!interval.child&&!interval.dispatchId&&interval.sessionId!==undefined){const key=`${interval.hostId}:${interval.sessionId}`,group=standaloneIntervals.get(key)||[];group.push(interval);standaloneIntervals.set(key,group);}
+  if(!interval.child&&!interval.dispatchId&&interval.sessionId!==undefined){const key=agentSessionKey(interval),group=standaloneIntervals.get(key)||[];group.push(interval);standaloneIntervals.set(key,group);}
  }
  function closeKey(key:string,e:CaptureEvent,bounded=true) {
   for(const [id,a] of active){if(a.key!==key)continue;
@@ -154,10 +158,16 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  function applyBinding(e:CaptureEvent,b:CaptureEvent):CaptureEvent {return {...e,workspaceId:b.workspaceId,runId:b.runId,taskId:b.taskId,dispatchId:b.dispatchId};}
  function resolve(e:CaptureEvent):CaptureEvent {
-  if(!e.terminalHandle||!e.sessionId)return e;
+  if(!e.sessionId)return e;
   const closing=['tool_end','response_stop','session_end','child_stop'].includes(e.kind);
   const originalTool=e.kind==='tool_end'?toolBindings.get(toolIdentity(e)):undefined;
-  if(originalTool)return applyBinding(e,originalTool);
+  if(originalTool&&(originalTool.dispatchId||!e.dispatchId))return applyBinding(e,originalTool);
+  if(!e.terminalHandle){
+   const key=nativeIdentity(e);
+   // A new invocation without Orca metadata does not inherit a previous run.
+   if(e.kind==='session_start'){promotedBindings.delete(key);return e;}
+   const promoted=promotedBindings.get(key);return promoted?applyBinding(e,promoted):e;
+  }
   const known=bindings.get(identity(e));
   // Late closures remain with their original session, even after the terminal hosts another Dispatch.
   if(known&&(!['session_start','prompt_submitted'].includes(e.kind)||closing))return applyBinding(e,known);
@@ -184,6 +194,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    if(changed('macosActivity'))activityPrevious=undefined;
    if(changed('orcaPolling'))workerPrevious.clear();
    const affected=(event:CaptureEvent)=>changed(event.provider?`${event.provider}Hooks`:'');
+   for(const [key,binding] of promotedBindings)if(affected(binding))promotedBindings.delete(key);
    for(const [id,a] of active)if(affected(a.event)){coverage.push({reason:'Tool timing interrupted by capture setting change',eventId:e.eventId});if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});a.session.state='unknown';active.delete(id);}
    for(const [key,c] of childLifecycle)if(affected(c)){coverage.push({reason:'Native child timing interrupted by capture setting change',eventId:e.eventId});childLifecycle.delete(key);}
    for(const [key,start] of turnStarts)if(affected(start)){coverage.push({reason:'Turn timing interrupted by capture setting change',eventId:e.eventId});turnStarts.delete(key);}
@@ -192,14 +203,15 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   }
   if(['sleep','capture_stop','capture_start'].includes(e.kind)){
    globalFences.push(e.observedAt);
-   activityPrevious=undefined;workerPrevious.clear();
+   activityPrevious=undefined;workerPrevious.clear();promotedBindings.clear();
    for(const a of active.values()){coverage.push({reason:'Active tool interrupted by capture/sleep boundary',eventId:e.eventId});if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});a.session.state='unknown';}
    for(const c of childLifecycle.values())coverage.push({reason:'Native child continuity interrupted by capture/sleep boundary',eventId:c.eventId});
    for(const start of turnStarts.values())coverage.push({reason:'Turn continuity interrupted by capture/sleep boundary',eventId:start.eventId});
    active.clear();childLifecycle.clear();turnStarts.clear();continue;
   }
   if(e.kind==='worker'){
-   const key=`dispatch:${e.hostId}:${e.dispatchId}`,s=getSession(key,e),prev=workerPrevious.get(key),done=settled(e);
+   const key=agentSessionKey({...e,child:false}),s=getSession(key,e),prev=workerPrevious.get(key),done=settled(e);
+   if(done||e.data?.takeover)for(const [native,binding] of promotedBindings)if(binding.hostId===e.hostId&&binding.dispatchId===e.dispatchId)promotedBindings.delete(native);
    if(done){closeKey(key,e);const turn=turnStarts.get(key);if(turn){unresolved.push({reason:'Turn ended without a response stop',eventId:turn.eventId});turnStarts.delete(key);}sessionFences.set(key,[...(sessionFences.get(key)||[]),e.observedAt]);}
    const fresh=e.data?.fresh===true&&e.data?.takeover!==true&&!done;
    if(fresh&&e.data?.state==='working')rememberActivity(key,e.observedAt);
@@ -253,9 +265,11 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    activityPrevious=e;continue;
   }
   if(e.source!=='hook')continue;
-  const child=Boolean(e.agentId),key=child?`child:${e.hostId}:${e.sessionId}:${e.agentId}`:e.dispatchId?`dispatch:${e.hostId}:${e.dispatchId}`:`session:${e.hostId}:${e.sessionId}`;
-  const s=getSession(key,e,child);s.sessionId=e.sessionId||s.sessionId;s.provider=e.provider||s.provider;s.cwd=e.cwd||s.cwd;s.workspaceId=e.workspaceId||s.workspaceId;s.proof=e.terminalHandle?'observed':'unresolved';
-  if(!e.terminalHandle&&!e.dispatchId){unresolved.push({reason:'Session has no verified terminal binding; cwd is insufficient',eventId:e.eventId});continue;}
+  if(!e.terminalHandle&&!e.dispatchId&&!hasNativeSessionIdentity(e)){unresolved.push({reason:'Hook has no complete native session identity or verified terminal binding; cwd is insufficient',eventId:e.eventId});continue;}
+  const child=Boolean(e.agentId),key=agentSessionKey({...e,child});
+  const s=getSession(key,e,child);s.sessionId=e.sessionId||s.sessionId;s.provider=e.provider||s.provider;s.cwd=e.cwd||s.cwd;s.workspaceId=e.workspaceId||s.workspaceId;s.proof='observed';
+  if(!child&&e.dispatchId&&['session_start','prompt_submitted','tool_start'].includes(e.kind))promotedBindings.set(nativeIdentity(e),e);
+  if(!child&&e.kind==='session_end')promotedBindings.delete(nativeIdentity(e));
   if(!e.sessionId){unresolved.push({reason:'Hook missing provider session ID',eventId:e.eventId});continue;}
   rememberActivity(key,e.observedAt);
   if(e.kind==='child_start'){childLifecycle.set(key,e);s.state='running';continue;}
@@ -301,7 +315,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  for(const start of turnStarts.values())unresolved.push({reason:'Open turn has no observed response stop; not extended to now',eventId:start.eventId});
  for(const anchors of activityAnchors.values())anchors.sort((a,b)=>a-b);
  const running=intervals.filter(i=>i.state==='running'),timed=intervals.filter(i=>i.state==='running'||i.state==='turn'),roots=new Map<string,Array<[number,number]>>(),children=new Map<string,Array<[number,number]>>(),observedRoots=new Map<string,Array<[number,number]>>(),observedChildren=new Map<string,Array<[number,number]>>();
- const intervalKey=(i:Interval)=>i.child?`child:${i.hostId}:${i.sessionId}:${i.agentId}`:i.dispatchId?`dispatch:${i.hostId}:${i.dispatchId}`:`session:${i.hostId}:${i.sessionId}`;
+ const intervalKey=agentSessionKey;
  const idleGaps=new Map<string,Array<[number,number]>>();
  const capped=(i:Interval,key:string):Array<[number,number]>=>{
   if(i.background)return [[i.start,i.end]];

@@ -115,9 +115,7 @@ export function summarySignature(summary: Summary): string {
   ].join(':');
 }
 
-const evidenceKey = (item: { hostId?: string; sessionId?: string; agentId?: string; child?: boolean }) =>
-  // `child` is normalised: sessions carry `false` while root intervals may omit it.
-  JSON.stringify([item.hostId ?? null, item.sessionId ?? null, item.agentId ?? null, Boolean(item.child)]);
+const evidenceKey = intervalSessionKey;
 
 function createStore() {
   watchWindowVisibility();
@@ -633,7 +631,7 @@ function createStore() {
         return (a.sessionId || a.key).localeCompare(b.sessionId || b.key) || (a.child ? 1 : 0) - (b.child ? 1 : 0);
       });
       // Index parents and children once instead of scanning the group for every row.
-      const familyKey = (session: Session) => JSON.stringify([session.hostId ?? null, session.sessionId ?? null]);
+      const familyKey = (session: Session) => JSON.stringify([session.hostId ?? null,session.provider??null, session.sessionId ?? null]);
       const parents = new Map<string, DaySession>(),
         children = new Map<string, DaySession[]>();
       for (const session of ordered) {

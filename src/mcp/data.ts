@@ -9,6 +9,7 @@ import {homedir} from 'node:os';
 import {makeEvent,type CaptureEvent,type Interval,type Issue,type Session,type Summary} from '../capture/events.ts';
 import {readWindowEvents} from '../capture/summary-window.ts';
 import {minuteCreditSeconds,summarize} from '../capture/correlate.ts';
+import {agentSessionKey} from '../capture/session-identity.ts';
 import {applyHumanDecisions,groupHumanReview,humanReviewState,type HumanDecision,type HumanSplit} from '../capture/human-review.ts';
 import {unobservedGaps} from '../capture/gaps.ts';
 import {projectPathFromWorktree} from '../capture/website-resolver.ts';
@@ -115,7 +116,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    }
   }
   const measured=totals(intervals),children=intervals.filter(i=>i.child&&i.state==='grouped'),byChild=new Map<string,Array<[number,number]>>();
-  for(const i of children){const key=JSON.stringify([i.hostId,i.sessionId,i.agentId]),group=byChild.get(key)||[];group.push([i.start,i.end]);byChild.set(key,group);}
+  for(const i of children){const key=agentSessionKey(i),group=byChild.get(key)||[];group.push([i.start,i.end]);byChild.set(key,group);}
   const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,agentWallSeconds:measured.agentWallSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
   const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(readFrom));
   return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,firstSeen};
@@ -136,7 +137,7 @@ const publicInterval=<T extends Interval>(i:T)=>{const {browserUrl,browserTitle,
 function totals(items:Interval[]){
  const human=items.filter(humanInterval),agent=items.filter(agentWorkInterval),bySession=new Map<string,Interval[]>();
  // Cumulative: every main session and every subagent counted in full, like the app's agent time.
- for(const interval of agent){const key=JSON.stringify([interval.hostId,interval.dispatchId||interval.sessionId,interval.child?interval.agentId??'subagent':null]);const group=bySession.get(key)||[];group.push(interval);bySession.set(key,group);}
+ for(const interval of agent){const key=agentSessionKey(interval);const group=bySession.get(key)||[];group.push(interval);bySession.set(key,group);}
  const humanActiveSeconds=minuteCreditSeconds(spans(human)),agentRunningSeconds=[...bySession.values()].reduce((sum,group)=>sum+minuteCreditSeconds(spans(group)),0),overlapMergedWallSeconds=minuteCreditSeconds(spans([...human,...agent]));
  const agentWallSeconds=minuteCreditSeconds(spans(agent));
  return {humanActiveSeconds,agentRunningSeconds,agentWallSeconds,overlapMergedWallSeconds,hours:{humanActive:(humanActiveSeconds/3600).toFixed(2),agentRunning:(agentRunningSeconds/3600).toFixed(2),agentWall:(agentWallSeconds/3600).toFixed(2),overlapMergedWall:(overlapMergedWallSeconds/3600).toFixed(2)}};

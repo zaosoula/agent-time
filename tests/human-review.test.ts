@@ -10,6 +10,20 @@ import {EventStore} from '../src/capture/store.ts';
 import {summaryForDate} from '../src/capture/daily.ts';
 import {reviewedCsv,weeklyReview} from '../src/capture/weekly.ts';
 
+test('pre-standalone review caches are invalidated without changing manual decisions',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'agent-time-native-review-cache-')),collector=new Collector(output);
+ try{
+  const at=new Date(2026,9,22,10).getTime()/1000;
+  for(const offset of [0,10])collector.store.put(makeEvent('macos','activity',{eventId:`native-human-${offset}`,observedAt:at+offset,monotonicAt:offset,data:{idleSeconds:0}}));
+  for(const [offset,kind] of [[0,'tool_start'],[10,'tool_end']] as const)collector.store.put(makeEvent('hook',kind,{hostId:'local',provider:'claude',sessionId:'native',observedAt:at+offset,data:{toolId:'one'}}));
+  collector.store.setHumanDecisions([['native-human-0','native-human-10']],'unassigned',null);const decisions=collector.store.humanDecisions();
+  collector.dayReviewStatus('2026-10-23');
+  collector.store.database.exec("UPDATE day_review_cache SET signature='r2'||substr(signature,3),snapshot=json_set(snapshot,'$.hasActivity',0) WHERE date='2026-10-22'");
+  assert.ok(collector.dayReviewStatus('2026-10-23').backlog.some(day=>day.date==='2026-10-22'));
+  assert.deepEqual(collector.store.humanDecisions(),decisions);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
 test('review summaries cached before deterministic event ordering are rebuilt without changing decisions',async()=>{
  const output=mkdtempSync(join(tmpdir(),'agent-time-review-old-cache-')),collector=new Collector(output);
  try{

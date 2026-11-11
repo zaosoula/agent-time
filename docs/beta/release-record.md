@@ -1,5 +1,17 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.44` candidate — 2026-11-11
+
+Measures native agent sessions launched outside Orca, including background `claude -p` executions. Explicit host, provider and native session identity now establish independent timing without an Orca terminal. Missing identities remain unverified; project directories are not used as agent identity. A shared identity function scopes native sessions and subagents by host/provider while keeping Orca Dispatch observations and hooks joined as one execution. App totals, live count, UI interval lookups, project/human links, task-counter overlap checks and MCP totals use consistent identities.
+
+Late native-to-Dispatch promotion preserves active tools, turns and provisional evidence, including closures without terminal metadata. Completed/taken-over workers and session/capture lifecycle boundaries release stale aliases. Existing waiting, idle caps, grouping, minute credit, captured endpoints and missing-evidence rules are retained. Stored events, native IDs, database schema, human decisions, splits, notes and hook configuration are unchanged. Versioned review caches are invalidated so old summaries are recomputed. Previously ignored historical agent activity can increase agent totals/session counts and reopen affected day-review status; it does not undo manual reconciliation. Missing historical child-start events cannot be invented.
+
+Existing MCP `set_work_context` declarations can attribute measured standalone-session work by provider/session identity. Tests verify the declaration does not claim a parallel peer's time, add measured time, or double-count a task counter when counter credit is enabled. Exact third-party MCP tool names remain unconfirmed; no external MCP integration or new credit policy is introduced. Cumulative execution time and concurrency describe native executions, not the number of virtual-office characters.
+
+Validation: 453 JavaScript tests, production typecheck/build, zero reported production dependency vulnerabilities and independent review pass. A read-only seven-day private-archive replay compares the previous release with the new reader: all human intervals and the existing Orca-only timing intervals are identical. Existing human/session attribution remains consistent, with a separate real-reducer regression for the association itself. The comparison uses bounded daily windows under a 512 MiB V8 heap limit; the combined baseline/candidate audit process peaked below 450 MiB RSS. Legacy SQLite and current packed storage are covered; original archive data and manual choices remain unchanged. A synthetic browser fixture shows 19 sessions, peak concurrency 19, 19 cumulative agent minutes and three project totals that sum correctly. No customer archive, private per-day activity or account configuration is published.
+
+Signed release publication and native artifact verification are pending.
+
 ## `0.2.0-beta.43` published and verified — 2026-11-11
 
 Known websites retain the same cleaned title in context groups and individual visits, including when the website title matches the app name. Repeated middle-dot title fragments are removed, and the page path appears where captured. Grouping keys, project evidence, source pairs and timing calculation are unchanged.

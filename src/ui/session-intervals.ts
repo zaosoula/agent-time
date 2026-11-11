@@ -1,22 +1,19 @@
 import type { Interval, Session } from '../capture/events.ts';
+import {agentSessionKey} from '../capture/session-identity.ts';
 
 // These identities mirror the session matching rules used by the timesheet:
 // children use provider session + agent, roots prefer Dispatch, and roots
 // without Dispatch use the provider session. Do not add cwd to these keys.
 export function sessionIntervalKey(
-  session: Pick<Session, 'child' | 'dispatchId' | 'sessionId' | 'agentId'>,
+  session: Pick<Session, 'child' | 'dispatchId' | 'sessionId' | 'agentId' | 'hostId' | 'provider'>,
 ): string {
-  if (session.child) return JSON.stringify(['child', session.sessionId ?? null, session.agentId ?? null]);
-  if (session.dispatchId) return JSON.stringify(['dispatch', session.dispatchId]);
-  return JSON.stringify(['session', session.sessionId ?? null]);
+  return agentSessionKey(session);
 }
 
 export function intervalSessionKey(
-  interval: Pick<Interval, 'child' | 'dispatchId' | 'sessionId' | 'agentId'>,
+  interval: Pick<Interval, 'child' | 'dispatchId' | 'sessionId' | 'agentId' | 'hostId' | 'provider'>,
 ): string {
-  if (interval.child) return JSON.stringify(['child', interval.sessionId ?? null, interval.agentId ?? null]);
-  if (interval.dispatchId) return JSON.stringify(['dispatch', interval.dispatchId]);
-  return JSON.stringify(['session', interval.sessionId ?? null]);
+  return agentSessionKey(interval);
 }
 
 export function indexSessionIntervals(intervals: Interval[]): {

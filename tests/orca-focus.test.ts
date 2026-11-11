@@ -2,7 +2,15 @@ import {test} from 'node:test';import assert from 'node:assert/strict';
 import {resolveOrcaTab,tabIndexFromTerminalList} from '../src/capture/orca-focus.ts';
 import * as focus from '../src/capture/orca-focus.ts';
 import type {Session,Interval} from '../src/capture/events.ts';
+import {makeEvent} from '../src/capture/events.ts';
+import {summarize} from '../src/capture/correlate.ts';
 const tab=(worktreeId:string,tabId:string,title:string,leafId:string,handle:string)=>({worktreeId,root:{tabs:[{tabId,title,activeLeafId:leafId,panes:{type:'terminal',handle,leafId}}]}});
+test('human attribution matches actual reducer session identities and preserves its source spans',()=>{
+ const fields={hostId:'local',provider:'claude',sessionId:'native',terminalHandle:'term',workspaceId:'ws'};
+ const events=[makeEvent('hook','tool_start',{...fields,observedAt:0,monotonicAt:0,data:{toolId:'one'}}),makeEvent('macos','activity',{...fields,observedAt:5,monotonicAt:5,data:{idleSeconds:0,tabId:'tab',foregroundBundleId:'com.stablyai.orca'}}),makeEvent('macos','activity',{...fields,observedAt:10,monotonicAt:10,data:{idleSeconds:0,tabId:'tab',foregroundBundleId:'com.stablyai.orca'}}),makeEvent('hook','tool_end',{...fields,observedAt:20,monotonicAt:20,data:{toolId:'one'}})];
+ const s=summarize(events),human=s.intervals.filter(i=>i.state==='human');
+ assert.equal(human.length,1);assert.deepEqual(focus.humanIntervalsForSession(s.sessions[0]!,s.sessions,s.intervals),human);
+});
 test('selected visible tab resolves to stable workspace, tab and active split leaf',()=>{
  const index=tabIndexFromTerminalList({ok:true,result:{visualLayouts:[tab('w1','tab-1','Write spec','leaf-1','term-1'),tab('w2','tab-2','Other tab','leaf-2','term-2')]}});
  assert.deepEqual(resolveOrcaTab('Write spec',index),{workspaceId:'w1',tabId:'tab-1',leafId:'leaf-1',terminalHandle:'term-1',title:'Write spec'});
