@@ -1,6 +1,9 @@
 import type {Interval} from '../capture/events.ts';
 import {groupHumanReview,humanReviewState,type HumanReviewGroup} from '../capture/human-review.ts';
 import {clampTimeRange,type TimeRange} from './timeline-viewport.ts';
+import brave from '../capture/sources/brave.browser.ts';
+import chrome from '../capture/sources/chrome.browser.ts';
+import safari from '../capture/sources/safari.browser.ts';
 
 export interface AppReviewGroup extends HumanReviewGroup {
   appKey:string;
@@ -49,6 +52,20 @@ export function buildAppReviewGroups(intervals:Interval[]):AppReviewGroup[]{
   flush();return result;
 }
 
+const browserBundles=new Set([brave.bundleId,chrome.bundleId,safari.bundleId]);
+const cleanTitle=(value:string)=>[...new Map(value.split('·').map(part=>part.trim()).filter(Boolean).map(part=>[part.toLocaleLowerCase(),part])).values()].join(' · ');
+export function reviewContextTitle(group:AppReviewGroup):string{
+  const label=cleanTitle(group.label),app=cleanTitle(group.appName);
+  let site=group.browserDomain||'';
+  if(!site){try{site=new URL(group.browserUrl||group.browserOrigin||'').hostname;}catch{/* No known website. */}}
+  if(label&&label!=='Unknown app'&&label!==app)return label;
+  if(site)return label&&label!=='Unknown app'&&!browserBundles.has(group.bundleId||'')?label:site;
+  return 'General activity';
+}
+export function reviewVisitTitle(group:AppReviewGroup):string{
+  const title=reviewContextTitle(group);return title==='General activity'?'Visit':title;
+}
+
 /** Summaries may cover separate visits. Keep their actual spans only in groups. */
 export function reviewContextGroups(groups:AppReviewGroup[]):ReviewContextGroup[]{
   const contexts=new Map<string,ReviewContextGroup>();
@@ -56,7 +73,7 @@ export function reviewContextGroups(groups:AppReviewGroup[]):ReviewContextGroup[
     const key=`context:${group.key}`;
     let context=contexts.get(key);
     if(!context){
-      context={key,label:group.label===group.appName?'General activity':group.label,groups:[],seconds:0};
+      context={key,label:reviewContextTitle(group),groups:[],seconds:0};
       contexts.set(key,context);
     }
     context.groups.push(group);context.seconds+=group.seconds;

@@ -17,7 +17,7 @@ import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
-import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
+import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
 
 const emit = defineEmits<{
   note: [start: number, end: number, label: string];
@@ -516,10 +516,6 @@ function toggleOpen(group: HumanReviewGroup) {
   openRows.value[id(group)] = !isOpen(group);
   if (!openRows.value[id(group)] && splitDraft.value?.key === id(group)) splitDraft.value = null;
 }
-function title(group: HumanReviewGroup) {
-  const parts = group.label.split(' · ');
-  return parts.filter((part, index) => parts.indexOf(part) === index).join(' · ');
-}
 function shortDetail(group: HumanReviewGroup) {
   const detail = group.detail || '';
   if(detail===(group as AppReviewGroup).bundleId)return '';
@@ -532,7 +528,7 @@ function shortDetail(group: HumanReviewGroup) {
   } catch {
     /* Not a URL. */
   }
-  return detail === group.label || detail === title(group) ? '' : detail;
+  return detail === group.label || detail === reviewContextTitle(group as AppReviewGroup) ? '' : detail;
 }
 function rowState(group: HumanReviewGroup) {
   return group.userAttribution ? 'decided' : humanReviewState(group);
@@ -582,7 +578,7 @@ async function saveSplit(group: HumanReviewGroup) {
               <div :id="`review-${context.key}`" class="review-row review-context" :class="{focused:focused===context.key,picked:contextMeta.get(context.key)!.checked}" tabindex="0" data-review-context @focus="focused=context.key">
                 <div class="review-main">
                   <strong class="app-review-duration">{{ duration(context.seconds) }}</strong>
-                  <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
+                  <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="shortDetail(context.groups[0]!)"> · {{ shortDetail(context.groups[0]!) }}</template><template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
                   <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="reviewIsAssigned(context.groups[0]!)" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
                   <label class="review-app-check"><input type="checkbox" :checked="contextMeta.get(context.key)!.checked" :indeterminate="contextMeta.get(context.key)!.partial" :disabled="Boolean(pending)||!contextMeta.get(context.key)!.eligible.length" :aria-label="`Select ${context.label} group in ${app.label}`" @change="selectContext(context,($event.target as HTMLInputElement).checked)" /></label>
                 </div>
@@ -591,7 +587,7 @@ async function saveSplit(group: HumanReviewGroup) {
             <article v-for="group in visits(context)" :id="`review-${id(group)}`" :key="id(group)" class="review-row review-visit" :class="[rowState(group),{focused:focused===id(group),open:isOpen(group),picked:selectedGroups[id(group)]}]" tabindex="0" data-review-visit @focus="focused=id(group)">
               <div class="review-main">
                 <strong class="app-review-duration">{{ duration(group.seconds) }}</strong>
-                <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ group.label===app.label?'Visit':title(group) }}</strong><small>{{ preciseClock(group.start) }}–{{ preciseClock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
+                <button class="review-what" type="button" :aria-expanded="isOpen(group)" :title="group.detail" @click="toggleOpen(group)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isOpen(group)}" /><span><strong>{{ reviewVisitTitle(group) }}</strong><small>{{ preciseClock(group.start) }}–{{ preciseClock(group.end) }}<template v-if="shortDetail(group)"> · {{ shortDetail(group) }}</template><template v-if="group.reviewSegment"> · Part {{ group.reviewSegment }} the split</template></small></span></button>
                 <span class="review-state" :title="group.attributionReason||group.projectPath||undefined"><Check v-if="reviewIsAssigned(group)" :size="11" />{{ stateLabel(group) }}</span>
                 <label v-if="!group.reviewSegment" class="review-app-check"><input v-model="selectedGroups[id(group)]" type="checkbox" :disabled="Boolean(pending)" :aria-label="`Select ${group.label} at ${preciseClock(group.start)} for bulk assignment`" /></label><span v-else class="review-app-check" aria-label="Split activity; edit through Change split" />
               </div>

@@ -161,3 +161,23 @@ test('assignment labels and actions distinguish automatic attribution from a pen
  assert.equal(reviewCanAssign(groups[4]!,'/SoundScape'),true);
  assert.equal(reviewCanAssign(groups[2]!,'/SoundScape'),true);
 });
+
+test('website context and visit names stay consistent when the page title matches the app',async()=>{
+ const {reviewContextTitle,reviewVisitTitle,reviewContextGroups}=await import('../src/ui/review-apps.ts');
+ const visits=buildAppReviewGroups([
+  interval('page',0,5,{foregroundName:'Culture Club Pro',foregroundBundleId:'webapp.culture',browserDomain:'pro.culture-club.app',browserUrl:'https://pro.culture-club.app/admin/statistics',browserTitle:'Culture Club Pro · Culture Club Pro'}),
+  interval('site',20,25,{foregroundName:'Culture Club Pro',foregroundBundleId:'webapp.culture',browserDomain:'pro.culture-club.app'}),
+ ]);
+ const before=JSON.stringify(visits),contexts=reviewContextGroups(visits);
+ assert.equal(contexts.length,2);assert.deepEqual(contexts.map(c=>c.label),['Culture Club Pro','Culture Club Pro']);
+ assert.deepEqual(visits.map(reviewContextTitle),['Culture Club Pro','Culture Club Pro']);
+ assert.deepEqual(visits.map(reviewVisitTitle),['Culture Club Pro','Culture Club Pro']);
+ assert.equal(JSON.stringify(visits),before);assert.equal(visits.filter(v=>v.browserUrl).length,1);
+});
+test('a known browser site uses its domain, while app-only activity stays general',async()=>{
+ const {reviewContextTitle,reviewVisitTitle}=await import('../src/ui/review-apps.ts');
+ const browser=buildAppReviewGroups([interval('b',0,5,{foregroundName:'Brave',foregroundBundleId:'com.brave.Browser',browserDomain:'example.com'})])[0]!;
+ const general=buildAppReviewGroups([interval('o',10,15)])[0]!;
+ assert.equal(reviewContextTitle(browser),'example.com');assert.equal(reviewVisitTitle(browser),'example.com');
+ assert.equal(reviewContextTitle(general),'General activity');assert.equal(reviewVisitTitle(general),'Visit');
+});
