@@ -108,3 +108,12 @@ test('support diagnostics are read-only and reject caller-selected paths',async(
  assert.deepEqual(await dispatchRequest({id:'diagnostics',method:'diagnostics',params:{}},controller),{id:'diagnostics',result:{databaseBytes:1234}});
  assert.ok('error' in await dispatchRequest({id:'diagnostics',method:'diagnostics',params:{path:'/private/work'}},controller));
 });
+
+test('billing protocol restricts destinations, dates, pagination and awaits asynchronous reports',async()=>{
+ const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),billingProjects:()=>({projects:[]}),billingReport:async()=>({report:{reportId:'fixture'}})};
+ assert.deepEqual(await dispatchRequest({id:'b',method:'billing_projects',params:{}},c),{id:'b',result:{projects:[]}});
+ assert.ok('error' in await dispatchRequest({id:'b',method:'billing_projects',params:{path:'/elsewhere'}},c));
+ const params={project:'caex',fromDate:'2026-11-01',toDate:'2026-11-10'};
+ assert.deepEqual(await dispatchRequest({id:'r',method:'billing_report',params},c),{id:'r',result:{report:{reportId:'fixture'}}});
+ for(const extra of [{path:'/elsewhere'},{fromDate:'2026-02-30'},{cursor:'1'},{format:'exe'}])assert.ok('error' in await dispatchRequest({id:'r',method:'billing_report',params:{...params,...extra}},c));
+});

@@ -17,6 +17,7 @@ import TrackingCleanup from './TrackingCleanup.vue';
 import PrivacyExclusions from './PrivacyExclusions.vue';
 import ArchiveExport from './ArchiveExport.vue';
 import StorageUsage from './StorageUsage.vue';
+import BillingSettings from './BillingSettings.vue';
 import WebsiteRules from './WebsiteRules.vue';
 import LinearConnection from './LinearConnection.vue';
 import {
@@ -36,6 +37,7 @@ const tabs = [
   { id: 'agents', title: 'Agents', icon: Bot },
   { id: 'sources', title: 'Sources', icon: Layers3 },
   { id: 'projects', title: 'Projects & rules', icon: FolderKanban },
+  { id: 'billing', title: 'Billing', icon: FolderKanban },
   { id: 'privacy', title: 'Privacy', icon: Lock },
   { id: 'data', title: 'Data & backup', icon: Database },
   { id: 'advanced', title: 'Advanced', icon: Wrench },
@@ -143,7 +145,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
           <component :is="tab.icon" :size="16" /><span>{{ tab.title }}</span>
         </TabsTrigger>
       </TabsList>
-      <p>Changes are saved automatically.</p>
+      <p>General preferences save automatically. Save billing edits in their form.</p>
     </nav>
     <div class="settings-document">
       <TabsContent value="general" class="settings-panel">
@@ -509,6 +511,10 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
           <LinearConnection />
           <WebsiteRules />
         </section>
+      </TabsContent>
+
+      <TabsContent value="billing" class="settings-panel">
+        <BillingSettings />
       </TabsContent>
 
       <TabsContent value="privacy" class="settings-panel">

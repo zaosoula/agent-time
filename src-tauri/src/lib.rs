@@ -75,7 +75,7 @@ const SHUTDOWN_STOP_TIMEOUT:Duration=Duration::from_secs(3);
 fn is_long_request(method:&str)->bool{
  matches!(method,
   "storage_compact_prepare"|"storage_restore_prepare"|"storage_reclaim"|"export_archive"
-  |"archive_import"|"archive_preview"|"tracking_cleanup"|"linear_status"|"linear_sync"|"linear_connect"|"linear_disconnect")
+  |"billing_report"|"archive_import"|"archive_preview"|"tracking_cleanup"|"linear_status"|"linear_sync"|"linear_connect"|"linear_disconnect")
 }
 fn request_timeout(method:&str)->Duration{
  if is_long_request(method){LONG_REQUEST_TIMEOUT}else{REQUEST_TIMEOUT}
@@ -297,7 +297,9 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
  let source_setting=|key:&str|key.len()<=64&&key!="browserTracking"&&key.bytes().all(|b|b.is_ascii_alphanumeric())&&(key.starts_with("browser")&&key.as_bytes().get(7).map(|b|b.is_ascii_uppercase()).unwrap_or(false)||key.ends_with("Hooks")||key.ends_with("TokenUsage")||key.ends_with("Polling"));
  match method {
-  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"linear_status"|"review_history" if p.is_empty()=>Ok(()),
+  "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"billing_projects"|"linear_status"|"review_history" if p.is_empty()=>Ok(()),
+  "billing_project_save" if p.keys().all(|k|k=="project"||k=="expectedRevision") && p.get("project").map(|v|v.is_object()&&v.to_string().len()<=262144).unwrap_or(false) && p.get("expectedRevision").map(|v|v.as_u64().is_some()).unwrap_or(true)=>Ok(()),
+  "billing_report" if p.keys().all(|k|["project","fromDate","toDate","format","detail","reportId","cursor"].contains(&k.as_str())) && p.get("project").and_then(Value::as_str).map(|s|!s.trim().is_empty()&&s.len()<=4096).unwrap_or(false) && ["fromDate","toDate"].iter().all(|k|p.get(*k).and_then(Value::as_str).map(|s|s.len()==10&&s.bytes().enumerate().all(|(i,b)|if i==4||i==7{b==b'-'}else{b.is_ascii_digit()})).unwrap_or(false)) && p.get("format").map(|v|v.as_str().map(|s|["json","csv","markdown"].contains(&s)).unwrap_or(false)).unwrap_or(true) && p.get("detail").map(|v|v.as_str().map(|s|["summary","daily"].contains(&s)).unwrap_or(false)).unwrap_or(true) && p.get("reportId").map(|v|v.as_str().map(|s|s.len()==36&&s.bytes().all(|b|b.is_ascii_hexdigit()||b==b'-')).unwrap_or(false)).unwrap_or(true) && p.get("cursor").map(|v|p.contains_key("reportId")&&v.as_str().map(|s|!s.is_empty()&&s.len()<=7&&s.bytes().all(|b|b.is_ascii_digit())).unwrap_or(false)).unwrap_or(true)=>Ok(()),
   "linear_sync"|"linear_disconnect" if p.is_empty() || p.len()==1 && p.get("workspaceId").and_then(Value::as_str).map(linear_workspace).unwrap_or(false)=>Ok(()),
   "review_undo" if p.len()==1+usize::from(p.contains_key("date")) && optional_date(p) && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.chars().all(|c|c.is_ascii_hexdigit()||c=='-')).unwrap_or(false)=>Ok(()),
   "human_group_split" if p.len()>=2 && p.len()<=5 && optional_date(p) && p.get("splitAt").and_then(Value::as_f64).map(f64::is_finite).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=500&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false) && ["beforeProject","afterProject"].iter().all(|key|p.get(*key).map(|value|value.as_str().is_some()).unwrap_or(true)) && p.keys().all(|key|["pairs","splitAt","beforeProject","afterProject","date"].contains(&key.as_str()))=>Ok(()),
@@ -795,3 +797,11 @@ mod audit_protocol_tests {
   assert_eq!(request_timeout("status"),REQUEST_TIMEOUT);
  }
 }
+
+#[cfg(test)]mod billing_protocol_tests{use super::*;#[test]fn billing_requests_are_restricted(){
+ assert!(validate_method("billing_projects",&json!({})).is_ok());assert!(validate_method("billing_projects",&json!({"path":"/tmp"})).is_err());
+ assert!(validate_method("billing_report",&json!({"project":"caex","fromDate":"2026-11-01","toDate":"2026-11-30","detail":"daily"})).is_ok());
+ assert!(validate_method("billing_report",&json!({"project":"caex","fromDate":"2026-11-01","toDate":"2026-11-30","path":"/tmp"})).is_err());
+ assert!(validate_method("billing_report",&json!({"project":"caex","fromDate":"2026-11-01","toDate":"2026-11-30","cursor":"1"})).is_err());
+ assert!(validate_method("billing_project_save",&json!({"project":{},"expectedRevision":1})).is_ok());assert!(validate_method("billing_project_save",&json!({"project":{},"expectedRevision":-1})).is_err());
+}}

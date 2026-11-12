@@ -79,14 +79,17 @@ function chunks(from:number,to:number):Array<[number,number]>{
  * sessions keep their start and end), but Mac activity only around the day, so
  * memory stays near one day of samples and 30-day ranges work.
  */
-export function snapshot(output:string,from:number,to:number):Snapshot{
+export function snapshot(output:string,from:number,to:number,readOptions:{countTaskCounters?:boolean;billingEvidence?:boolean;persistedOnly?:boolean;database?:DatabaseSync;settings?:ReturnType<typeof snapshotSettings>}={}):Snapshot{
  if(!Number.isFinite(from)||!Number.isFinite(to)||to<=from||to-from>31*86400)throw new Error('Invalid bounded time range');
- const db=database(output);
+ const db=readOptions.database||database(output);
  try{
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
-  const options=snapshotSettings(output),pending=pendingReports(output);
-  const resources=reportedResources([...Array.from(db.prepare(`SELECT payload FROM events ${isPackedEventDatabase(db)?'INDEXED BY events_resources_at':''} WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource'`).iterate(now()-31*86400),row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
+  const options={...(readOptions.settings||snapshotSettings(output)),...(readOptions.countTaskCounters!==undefined?{countTaskCounters:readOptions.countTaskCounters}:{})},pending=readOptions.persistedOnly?[]:pendingReports(output);
+  const resourceFrom=readOptions.billingEvidence?from-31*86400:now()-31*86400,resourceTo=readOptions.billingEvidence?to+31*86400:Infinity;
+  const resourceRows=db.prepare(`SELECT payload FROM events ${isPackedEventDatabase(db)?'INDEXED BY events_resources_at':''} WHERE observed_at>? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource' LIMIT 20001`).all(resourceFrom,resourceTo);
+  if(resourceRows.length>20000)throw new Error('Too many resource mappings for a bounded summary; use explicit project attribution');
+  const resources=reportedResources([...resourceRows.map(row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
   const intervals:Interval[]=[],coverage:Issue[]=[],unresolved:Issue[]=[],sessions=new Map<string,Session>(),firstSeen=new Map<string,number>();
   const kept=new Map<string,CaptureEvent>();let previousTrusted=true;let readFrom=Infinity;
   for(const [start,end] of chunks(from,to)){
@@ -117,6 +120,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
    for(const event of events){
     if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
     // Reported context keeps its earlier reach: an hour before the range.
+    if(readOptions.billingEvidence&&(event.source==='capture'||['sleep','wake','screen_locked','screen_unlocked','session_locked','session_unlocked'].includes(event.kind)||event.source==='hook'&&event.kind==='prompt_submitted')){kept.set(event.eventId,event);continue;}
     if(event.source==='agent_report'){if((event.observedAt>=from-3600||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
     if(event.source!=='macos'||event.kind!=='activity'||event.observedAt<start||event.observedAt>=end)continue;
     const untrusted=event.data?.accessibilityTrusted===false;
@@ -129,7 +133,7 @@ export function snapshot(output:string,from:number,to:number):Snapshot{
   const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,agentWallSeconds:measured.agentWallSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
   const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(readFrom));
   return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,firstSeen};
- }finally{db.close();}
+ }finally{if(!readOptions.database)db.close();}
 }
 const hasIssueKeys=(event:CaptureEvent)=>[event.data?.browserUrl,event.data?.browserTitle,event.data?.orcaSelectedTabTitle,event.data?.tabTitle].some(value=>issueKeys(value).length>0);
 const canonicalProject=(value:string)=>{const path=value.includes('::')?value.split('::').at(-1)||value:value;return isAbsolute(path)?projectPathFromWorktree(path):path;};
@@ -151,7 +155,7 @@ function totals(items:Interval[]){
  const agentWallSeconds=minuteCreditSeconds(spans(agent));
  return {humanActiveSeconds,agentRunningSeconds,agentWallSeconds,overlapMergedWallSeconds,hours:{humanActive:(humanActiveSeconds/3600).toFixed(2),agentRunning:(agentRunningSeconds/3600).toFixed(2),agentWall:(agentWallSeconds/3600).toFixed(2),overlapMergedWall:(overlapMergedWallSeconds/3600).toFixed(2)}};
 }
-function perDay(rows:ReturnType<typeof inRange>){
+function perDay(rows:ReturnType<typeof attributedIntervals>){
  const pieces:typeof rows=[];
  for(const row of rows){let cursor=row.start;while(cursor<row.end){const date=dateOf(cursor),next=new Date(dateStart(date)*1000);next.setDate(next.getDate()+1);const end=Math.min(row.end,next.getTime()/1000);pieces.push({...row,start:cursor,end});cursor=end;}}
  return [...new Set(pieces.map(i=>dateOf(i.start)))].sort().map(date=>({date,...totals(pieces.filter(i=>dateOf(i.start)===date))}));
@@ -203,24 +207,25 @@ function attribution(i:Interval,index:AttributionIndex){
   attributionRule:issueConflict?'conflicting-issue-signals':reportedKey?'agent-reported-session':pathKey?'orca-worktree-name':suggestion?'page-key-suggestion':'none',
   evidence:context?[...i.sourceEventIds,context.eventId]:suggestion?[...i.sourceEventIds,...suggestion.evidence]:i.sourceEventIds};
 }
-const inRange=(s:Snapshot)=>{const index=attributionIndex(s.events);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
+export const attributedIntervals=(s:Snapshot)=>{const index=attributionIndex(s.events);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
 export function timeForIssue(s:Snapshot,issueKey:string){
  if(!ticketPattern.test(issueKey)||!issueKey.trim())throw new Error('Invalid ticket reference');
- const attributed=inRange(s),rows=attributed.filter(i=>i.issueKey===issueKey);
+ const attributed=attributedIntervals(s),rows=attributed.filter(i=>i.issueKey===issueKey);
  const suggestions=attributed.filter(i=>i.state==='human'&&i.suggestedIssueKey===issueKey);
  const days=perDay(rows);
  return {issueKey,...totals(rows),days,intervals:rows.slice(0,500).map(publicInterval),moreIntervals:rows.length>500,
   suggestedHumanSeconds:totals(suggestions).humanActiveSeconds,suggestedHumanIntervals:suggestions.slice(0,100).map(publicInterval),moreSuggestedHumanIntervals:suggestions.length>100,
   captureCoverage:coverage(s),attribution:'Agent-reported issue context is advisory; measured time is not a billing approval',truncatedBefore:s.truncatedBefore};
 }
-export function timeForProject(s:Snapshot,project:string){
+export function timeForProject(s:Snapshot,project:string){return timeForProjectSet(s,[project],project);}
+export function timeForProjectSet(s:Snapshot,projects:string[],project:string){
  if(!project||project.length>512)throw new Error('Invalid project');
- const normalized=canonicalProject(project),rows=inRange(s).filter(i=>i.project===normalized);
+ const normalized=canonicalProject(project),accepted=new Set(projects.map(canonicalProject)),rows=attributedIntervals(s).filter(i=>i.project!==null&&accepted.has(i.project));
  const issues=[...new Set(rows.map(i=>i.issueKey||'Unmatched'))].sort().map(issueKey=>({issueKey,...totals(rows.filter(i=>(i.issueKey||'Unmatched')===issueKey))}));
  return {project:normalized,...totals(rows),issues,days:perDay(rows),captureCoverage:coverage(s),truncatedBefore:s.truncatedBefore};
 }
 export function timeline(s:Snapshot,project?:string){
- const normalized=project?canonicalProject(project):undefined,rows=inRange(s).filter(i=>!normalized||i.project===normalized);
+ const normalized=project?canonicalProject(project):undefined,rows=attributedIntervals(s).filter(i=>!normalized||i.project===normalized);
  const measured=rows.filter(i=>humanInterval(i)||agentInterval(i));
  const boundaries=measured.flatMap((row,index)=>[{at:row.start,index,open:true},{at:row.end,index,open:false}]).sort((a,b)=>a.at-b.at||Number(a.open)-Number(b.open));
  const active=new Set<number>(),segments:Array<{start:number;end:number;state:'human'|'agent'|'both';agentCount:number;projects:string[];issueKeys:string[];sourceEventIds:string[]}>=[];

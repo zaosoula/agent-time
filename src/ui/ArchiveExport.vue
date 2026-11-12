@@ -24,7 +24,8 @@ const conflictCount = () =>
       preview.value.splitConflicts +
       preview.value.reviewActionConflicts +
       preview.value.dayReviewConflicts +
-      preview.value.usageConflicts
+      preview.value.usageConflicts +
+      preview.value.billingConflicts
     : 0;
 async function refresh() {
   archives.value = await archiveTransport.list();
@@ -213,7 +214,8 @@ onMounted(() => {
         Archive: {{ preview.archiveEvents }} events. Adds {{ preview.newEvents }} events,
         {{ preview.newNotes }} notes, {{ preview.newDecisions }} decisions, {{ preview.newSplits }} splits,
         {{ preview.newReviewActions }} history actions, {{ preview.newDayReviews }} day reviews and
-        {{ preview.newUsageEvents }} usage records. Conflicts: {{ conflictCount() }}.
+        {{ preview.newUsageEvents }} usage records, {{ preview.newBillingProjects }} billing projects and
+        {{ preview.newBillingReports }} saved reports. Conflicts: {{ conflictCount() }}.
       </p>
       <small v-if="preview && conflictCount()" role="alert"
         >The archive disagrees with current data. Missing-record restore is blocked; inspect the selected file

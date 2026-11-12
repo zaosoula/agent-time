@@ -1,3 +1,6 @@
+import {runBillingReport} from './billing-worker.ts';
+import {BillingStore,validateBillingProject} from './billing-store.ts';
+import {billingProjects,billingForProject,validateBillingRequest} from './billing-service.ts';
 import {isStoragePressureNotice,type StoragePressureNotice} from './storage-pressure-status.ts';
 import type {PressureRecoveryResult} from './storage-pressure.ts';
 import {cleanupArchiveStaging} from './archive-storage.ts';
@@ -708,6 +711,9 @@ export class Collector {
     if(!token){token=`${this.summaryEpoch}-${++this.summaryTokenCount}`;this.summaryTokens.set(summary,token);}
     return since===token?{unchanged:true,token}:{...summary,token};
   }
+  billingProjects(){return billingProjects(this.output);}
+  saveBillingProject(project:unknown,expectedRevision?:number){return new BillingStore(this.store.database).saveProject(validateBillingProject(project),expectedRevision);}
+  billingReport(request:unknown){return runBillingReport(this.output,validateBillingRequest(request));}
   reportedWork(date:string){
     const first=new Date(`${date}T00:00:00`),last=new Date(first);
     last.setDate(last.getDate()+1);

@@ -1,3 +1,4 @@
+import {ensureBillingSchema,previewBillingArchive,importBillingArchive} from './billing-store.ts';
 import {hydrateTaskStarts} from './reported-work.ts';
 import {archiveName,compressArchive,withReadableArchive,recordArchive,resolveArchivePath} from './archive-storage.ts';
 import {checkEventDatabase,openEventDatabase,createPackedEventSchema,insertEventRow,isPackedEventDatabase} from './event-database.ts';
@@ -12,7 +13,7 @@ import {readWindowEvents} from './summary-window.ts';
 
 export interface ManualNote {id:string;start:number;end:number;project:string;note:string;createdAt:number;}
 export interface ReviewAction {id:string;at:number;count:number;mode:'assigned'|'unassigned'|'clear'|'split';projectPath:string|null;undoneAt:number|null;canUndo:boolean;eventIds:string[];}
-export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;}
+export interface ArchivePreview {id:string;archiveEvents:number;newEvents:number;eventConflicts:number;newNotes:number;noteConflicts:number;newDecisions:number;decisionConflicts:number;newSplits:number;splitConflicts:number;newReviewActions:number;reviewActionConflicts:number;newDayReviews:number;dayReviewConflicts:number;newUsageEvents:number;usageConflicts:number;newBillingProjects:number;newBillingReports:number;billingConflicts:number;}
 export function validateManualNote(value:unknown):Omit<ManualNote,'id'|'createdAt'>{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid manual note');
  const item=value as Record<string,unknown>;
@@ -32,6 +33,7 @@ export class EventStore {
       closeSync(openSync(path, 'a', 0o600)); chmodSync(path, 0o600);
     }
     this.db = openEventDatabase(path);
+    ensureBillingSchema(this.db);
     if(!this.db.prepare("SELECT 1 FROM sqlite_master WHERE name='events'").get())createPackedEventSchema(this.db);
     this.db.exec(`PRAGMA journal_mode=WAL; PRAGMA busy_timeout=3000; CREATE TABLE IF NOT EXISTS events (event_id TEXT PRIMARY KEY, observed_at REAL NOT NULL, payload TEXT NOT NULL); CREATE INDEX IF NOT EXISTS events_observed_at ON events(observed_at); CREATE INDEX IF NOT EXISTS events_hooks ON events(observed_at) WHERE json_extract(payload,'$.source')='hook'; CREATE INDEX IF NOT EXISTS events_source_recent ON events(json_extract(payload,'$.source')); CREATE TABLE IF NOT EXISTS observation_signatures (identity TEXT PRIMARY KEY, signature TEXT NOT NULL); CREATE TABLE IF NOT EXISTS human_decisions (start_event_id TEXT NOT NULL, end_event_id TEXT NOT NULL, mode TEXT NOT NULL CHECK(mode IN ('assigned','unassigned')), project_path TEXT, decided_at REAL NOT NULL, PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS human_splits (start_event_id TEXT NOT NULL,end_event_id TEXT NOT NULL,split_at REAL NOT NULL,before_path TEXT,after_path TEXT,PRIMARY KEY(start_event_id,end_event_id)); CREATE TABLE IF NOT EXISTS review_actions (id TEXT PRIMARY KEY, at REAL NOT NULL, mode TEXT NOT NULL, project_path TEXT, before_json TEXT NOT NULL, after_json TEXT NOT NULL, undone_at REAL); CREATE INDEX IF NOT EXISTS review_actions_at ON review_actions(at DESC); CREATE TABLE IF NOT EXISTS day_reviews (date TEXT PRIMARY KEY,completed_at REAL NOT NULL,fingerprint TEXT NOT NULL); CREATE TABLE IF NOT EXISTS day_review_cache (date TEXT PRIMARY KEY,signature TEXT NOT NULL,snapshot TEXT NOT NULL); CREATE TABLE IF NOT EXISTS manual_notes (id TEXT PRIMARY KEY,start REAL NOT NULL,end REAL NOT NULL,project TEXT NOT NULL,note TEXT NOT NULL,created_at REAL NOT NULL); CREATE INDEX IF NOT EXISTS manual_notes_start ON manual_notes(start)`);
     this.db.exec("CREATE INDEX IF NOT EXISTS events_reports_at ON events(observed_at) WHERE json_extract(payload,'$.source')='agent_report'");
@@ -390,7 +392,7 @@ export class EventStore {
       this.db.exec('BEGIN IMMEDIATE');
       try{
       const preview=this.previewAttachedArchive(id,hasUsage);
-      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.splitConflicts||preview.reviewActionConflicts||preview.dayReviewConflicts||preview.usageConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
+      if(preview.eventConflicts||preview.noteConflicts||preview.decisionConflicts||preview.splitConflicts||preview.reviewActionConflicts||preview.dayReviewConflicts||preview.usageConflicts||preview.billingConflicts)throw new Error('Archive conflicts with current evidence or review decisions; no data was changed');
       for(const row of this.db.prepare('SELECT event_id,observed_at,payload FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)').iterate()){
         const event=JSON.parse(String(row.payload)) as CaptureEvent;
         validateEvent(event);
@@ -412,6 +414,7 @@ export class EventStore {
           this.db.exec('CREATE TABLE IF NOT EXISTS main.usage_events (id TEXT PRIMARY KEY, timestamp REAL NOT NULL, payload TEXT NOT NULL)');
           this.db.exec('INSERT OR IGNORE INTO main.usage_events SELECT id,timestamp,payload FROM archive.usage_events');
         }
+        importBillingArchive(this.db);
         this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
       return {addedEvents:preview.newEvents,addedNotes:preview.newNotes,addedDecisions:preview.newDecisions};
       }catch(error){if(this.db.isTransaction)this.db.exec('ROLLBACK');throw error;}
@@ -424,7 +427,7 @@ export class EventStore {
     const hasSplits=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='human_splits'").get());
     const hasDayReviews=Boolean(this.db.prepare("SELECT name FROM archive.sqlite_master WHERE type='table' AND name='day_reviews'").get());
     let eventConflicts=0;for(const row of this.db.prepare('SELECT m.payload current,a.payload archived FROM archive.events a JOIN main.events m ON m.event_id=a.event_id').iterate())if(row.current!==row.archived)eventConflicts++;
-    return {id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
+    return {...previewBillingArchive(this.db),id,archiveEvents:count('SELECT count(*) n FROM archive.events'),
       newEvents:count('SELECT count(*) n FROM archive.events a WHERE NOT EXISTS (SELECT 1 FROM main.events m WHERE m.event_id=a.event_id)'),
       eventConflicts,
       newNotes:count('SELECT count(*) n FROM archive.manual_notes a WHERE NOT EXISTS (SELECT 1 FROM main.manual_notes m WHERE m.id=a.id)'),

@@ -19,7 +19,7 @@ Run `codex mcp list` or `claude mcp list` to check that the server is configured
 
 ## Tools and trust
 
-The read tools are `time_for_issue`, `time_for_project`, `timeline`, `sessions`, `coverage`, `unattributed`, `explain_attribution`, `current_work`, and `task_history`. Date ranges are local calendar dates, inclusive, with a 30-day bound. Large ranges may need to be split. Results retain source event IDs, attribution confidence, and coverage caveats; browser URLs, page titles, and terminal titles are omitted from MCP replies.
+The read tools are `time_for_issue`, `time_for_project`, `timeline`, `sessions`, `coverage`, `unattributed`, `explain_attribution`, `current_work`, and `task_history`. Date ranges are local calendar dates and inclusive. Most detailed evidence tools retain a 30-day bound; `time_for_project` and billing aggregates support full months and longer ranges using bounded daily reads. Large ranges may need to be split. Results retain source event IDs, attribution confidence, and coverage caveats; browser URLs, page titles, and terminal titles are omitted from MCP replies.
 
 The declaration tools are `set_work_context`, `start_task`, `heartbeat_task`, `stop_task`, `report_resource`, and `report_port_state`. An agent can report its current task, ticket reference, project, business agent identity, or local TCP port. `start_task` returns a `taskCounterId` for `stop_task`. Each write accepts an optional stable UUID `requestId` so the agent can retry without creating another event. A port claim is checked against the local listener; an open listener is context, not proof of active work.
 
@@ -71,3 +71,8 @@ Finish with `stop_task` even on failure. Optional `outcome` is `completed`, `fai
 `current_work` shows open and interrupted counters. `task_history` accepts a local date range plus optional exact `project`, `issueKey` and business `agentId` filters; it returns completed, failed, interrupted and active declarations, parent links and usage. Its elapsed seconds are clipped to the requested range; usage belongs to the whole task and must not be summed again across daily queries. These results remain separate from observed totals and from invoice approval.
 
 After updating Agent Time, restart existing agent/MCP connections so the refreshed tool catalog and heartbeat instructions are loaded. The OfficeKit report consumer must still read context/counter reports instead of relying only on its working directory; these extensions cannot change external OfficeKit code.
+
+
+## Project billing (beta 46)
+
+Configure billable projects and policy versions in **Settings → Billing**. SQLite is canonical; multiple repositories/workspaces can share one deduplicated production clock. `billing_projects` lists the configured identities. `billing_for_project` calculates compact, saved financial summaries with daily pagination or local CSV/Markdown exports. Raw captured intervals, commercial rounding, declared counters, unknown fees and coverage are kept distinct. See [Project billing](billing.md) for policy, pricing, evidence and API details.

@@ -57,3 +57,20 @@ test('MCP client can declare free references, inherited projects, agents, child 
   const work=await call('current_work',{});assert.equal(work.tasks.length,0);
  }finally{child.kill();rmSync(output,{recursive:true,force:true});}
 });
+
+test('MCP billing resolves database projects, supports long summaries and exports saved reports',async()=>{
+ const {EventStore}=await import('../src/capture/store.ts');const {BillingStore}=await import('../src/capture/billing-store.ts');
+ const output=mkdtempSync(join(tmpdir(),'agent-time-mcp-billing-'));const store=new EventStore(join(output,'events.sqlite'));
+ new BillingStore(store.database).saveProject({id:'client',name:'Client',aliases:['short'],sources:{repositories:['/fixture/client'],workspaceIds:[],reportedProjects:[]},timezone:'Europe/Paris',policies:[{id:'v1',effectiveFrom:'2026-01-01',basis:'overlapMergedWall',currency:'EUR',hourlyRate:'100',agentOnlyHourlyRate:null,agentWeight:'1',rounding:{minutes:1,mode:'nearest',scope:'period'},dailyCapMinutes:null,presenceWindowMinutes:null,aiFees:{mode:'none'}}]});
+ const child=spawn(process.execPath,['src/mcp/server.ts'],{cwd:process.cwd(),env:{...process.env,ADE_CAPTURE_OUTPUT:output},stdio:['pipe','pipe','pipe']});
+ let next=1;const pending=new Map<number,(reply:any)=>void>();createInterface({input:child.stdout}).on('line',line=>{const r=JSON.parse(line);pending.get(r.id)?.(r);});
+ const rpc=(method:string,params:unknown)=>new Promise<any>((resolve,reject)=>{const id=next++;const timer=setTimeout(()=>reject(new Error(method+' timed out')),10000);pending.set(id,r=>{clearTimeout(timer);pending.delete(id);resolve(r);});child.stdin.write(JSON.stringify({jsonrpc:'2.0',id,method,params})+'\n');});
+ const call=async(name:string,args:unknown)=>{const r=await rpc('tools/call',{name,arguments:args});assert.equal(r.error,undefined);assert.notEqual(r.result?.isError,true,JSON.stringify(r));return JSON.parse(r.result.content[0].text);};
+ try{
+ await rpc('initialize',{protocolVersion:'2025-06-18',capabilities:{},clientInfo:{name:'fixture',version:'1'}});child.stdin.write(JSON.stringify({jsonrpc:'2.0',method:'notifications/initialized'})+'\n');
+ assert.equal((await call('billing_projects',{})).projects[0].id,'client');
+ const result=await call('billing_for_project',{project:'short',fromDate:'2026-10-01',toDate:'2026-10-31',detail:'daily'});assert.equal(result.report.days.length,31);assert.equal(result.report.projectSnapshot,undefined);
+ const exported=await call('billing_for_project',{project:'short',fromDate:'2026-10-01',toDate:'2026-10-31',reportId:result.report.reportId,format:'markdown'});assert.ok(exported.export.path.endsWith('.md'));
+ const summary=await call('time_for_project',{project:'short',fromDate:'2026-10-01',toDate:'2026-11-01',view:'summary'});assert.equal(summary.days.length,31);assert.equal(summary.moreDays,true);
+ }finally{child.kill();store.close();rmSync(output,{recursive:true,force:true});}
+});
