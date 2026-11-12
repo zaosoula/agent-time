@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.50` release candidate — 2026-11-12
+
+Includes billing preparation/loading feedback (`dc85eef`) and in-memory page retention (`7f0e499`). Release owner requested publication in this session. Billing retains historical work context needed for presence rules and exact host/tie ordering; counting and commercial rounding logic is unchanged. Cache is limited to eight live pages; work continues off-screen, drafts/scroll/zoom remain available, and hidden dialogs release their focus traps.
+
+Implementation evidence:585 JavaScript tests and33 native tests passed for the performance slice;40 focused UI tests plus production typecheck/build passed for page retention, including pending-job completion through all eight pages, Teleport cleanup and discarded-request retries. Browser checks used synthetic data and verified one report completes while on Home, retained draft/selected tab, one project-list load/report request, restored search/zoom and exact608.5px scroll, and a note draft surviving navigation without covering the destination. Live history/settings were not modified. The real-history benchmark used a disposable consistent SQLite copy (~1.44 million events):11-day report25839ms,23 progress updates; single-day preparation2336ms versus an original probe exceeding66s. These are local measurements, not latency guarantees.
+
+Publication pending signed CI build, complete candidate gates and independent public artifact/feed verification. No customer installation is claimed.
+
 ## `0.2.0-beta.49` published and verified — 2026-11-12
 
 Adds configurable activity counting: one started minute per contiguous eligible block or actual seconds, independent of final commercial rounding. New policy versions default to minutes; existing omitted modes retain seconds. Editing another field of an older rule explicitly preserves the mode shown in the editor. Raw capture metrics and existing immutable policy/report payloads are preserved. The UI, daily reports and exports disclose counting mode, raw eligible time and counting credit separately from commercial rounding. Exclusions/presence apply before counting, cross-midnight blocks share one credit within a policy revision, and weights, rates and caps apply afterward. Fractional boundaries cannot add an extra commercial minute or create a negative adjustment that prevents saving.
