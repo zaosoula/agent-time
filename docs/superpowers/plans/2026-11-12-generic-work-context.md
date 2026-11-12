@@ -46,8 +46,10 @@ Own mcp/server.ts, report.ts, data.ts, capture/reported-work.ts, capture/billing
 - [x] Verify real stdio MCP and fresh review.
 
 ### Integration and release
-- [ ] Full suite/typecheck/build/audit, independent whole-change review, installed-hook and synthetic UI/API proof.
-- [ ] Document generic setup/API and limits; bump coherent next beta; publish under standing authorization.
-- [ ] Verify public files, packaged hooks/MCP/IPC, signing/notarization, record evidence, clean task-only fixtures.
+- [x] Full suite/typecheck/build/audit, independent whole-change review, installed-hook and synthetic UI/API proof.
+- [x] Document generic setup/API and limits; bump coherent next beta; publish under standing authorization.
+- [x] Verify public files, packaged hooks/MCP/IPC, signing/notarization, record evidence, clean task-only fixtures.
 
 Local integration: 558 tests passed before the final two review regressions; affected billing/integration suites (13 tests), generic MCP (16 tests) and final review (29 tests) passed afterward. Production build/typecheck and dependency audit passed. Local native-only build requires generated packaged sidecars; the signed release CI must complete native checks before publication.
+
+Release complete: beta48 source 12b724d, run 43134740150; CI 560 JS and 33 native tests, real packaged MCP/copied-hook/context and billing IPC proofs, public hashes/signatures/notarization verified. Evidence in docs/beta/release-record.md.
