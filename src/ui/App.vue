@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import LoadingStatus from './LoadingStatus.vue';
 import {storagePressureDetail} from '../capture/storage-pressure-status.ts';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui';
@@ -369,6 +370,7 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
+        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'outcomes'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
         <TodayPage
           v-if="store.page === 'today' || store.page === 'sessions'"
           :busy="busy"

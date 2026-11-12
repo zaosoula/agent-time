@@ -105,7 +105,29 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
    const native=new Map<string,CaptureEvent>();
    for(const event of window.events)if(event.provider&&event.sessionId&&(event.source==='hook'||event.source==='orca'))native.set(agentSessionKey({...event,child:Boolean(event.agentId)}),event);
    if(native.size>500)metadataTruncated=true;
-   for(const [key,item] of [...native].slice(0,500))if(!hydrated.has(key)){
+   // Billing needs old work context for prompt-presence fallback, but not launcher
+   // identity anchors. Read report history once, not once per native session: on
+   // compressed stores each separate scan otherwise decompresses the same blocks.
+   if(readOptions.billingEvidence){
+    const entries=[...native].slice(0,500).filter(([key])=>!hydrated.has(key));
+    const wanted=new Map<string,Map<string,CaptureEvent[]>>();
+    for(const [key,item] of entries){
+     hydrated.add(key);const session=JSON.stringify([item.provider,item.sessionId]),hosts=wanted.get(session)||new Map<string,CaptureEvent[]>();
+     if(!hosts.has(item.hostId||''))hosts.set(item.hostId||'',[]);wanted.set(session,hosts);
+    }
+    if(wanted.size)for(const row of db.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at<? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='work_context' ORDER BY observed_at DESC`).iterate(window.bounds.readFrom)){
+     const event=JSON.parse(String(row.payload)) as CaptureEvent,hosts=wanted.get(JSON.stringify([event.provider,event.sessionId]));if(!hosts)continue;
+     for(const [host,events] of hosts)if((event.hostId==null||event.hostId===host)&&events.length<129)events.push(event);
+    }
+    // Preserve the legacy per-native insertion order at equal timestamps. Prompt
+    // presence currently uses that order even across hosts of the same session.
+    for(const [,item] of entries){
+     const events=wanted.get(JSON.stringify([item.provider,item.sessionId]))!.get(item.hostId||'')!;
+     if(events.length>128)metadataTruncated=true;
+     for(const event of events.slice(0,128))kept.set(event.eventId,event);
+    }
+   }
+   for(const [key,item] of [...native].slice(0,500))if(!readOptions.billingEvidence&&!hydrated.has(key)){
     hydrated.add(key);
     const identitySql="json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND coalesce(json_extract(payload,'$.hostId'),'')=? AND coalesce(json_extract(payload,'$.agentId'),'')=?";
     const args=[item.provider!,item.sessionId!,item.hostId||'',item.agentId||''];

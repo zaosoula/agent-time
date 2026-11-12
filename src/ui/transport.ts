@@ -274,7 +274,7 @@ export interface DayReviewStatus {
   }>;
 }
 export const dayReviewTransport = {
-  status: (date: string) => request<DayReviewStatus>('day_review_status', { date }),
+  status: (date: string, includeBacklog = true) => request<DayReviewStatus>('day_review_status', { date, ...(includeBacklog ? {} : { includeBacklog: false }) }),
   mark: (date: string) => request<DayReviewStatus>('day_review_mark', { date }),
 };
 export async function openAccessibilitySettings() {

@@ -1,11 +1,33 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, onUnmounted, ref } from 'vue';
 import type { BillingProject, BillingPolicy, BillingReport } from '../capture/billing-types.ts';
 import { request } from './transport.ts';
 import { humanizeError } from './errors.ts';
+import LoadingStatus from './LoadingStatus.vue';
+import type { BillingProgress } from '../capture/billing-progress.ts';
 import { toast } from './toast.ts';
 
 const projects = ref<BillingProject[]>([]), knownSources = ref<string[]>([]);
+const progress = ref<BillingProgress | null>(null);
+const reportOperation = ref('Preparing report');
+const progressLabel = computed(() => progress.value?.phase === 'saving' ? 'Saving your report' : progress.value?.date ? `Checking activity for ${progress.value.date}` : reportOperation.value);
+const progressDetail = computed(() => progress.value?.totalDays ? `${progress.value.completedDays} of ${progress.value.totalDays} days checked. You can use other sections while this report runs.` : 'Reports run in the background. Large histories can take longer.');
+let progressTimer: ReturnType<typeof setTimeout> | undefined;
+let reportAttempt = 0;
+function stopProgress() { clearTimeout(progressTimer); progressTimer = undefined; }
+function watchProgress(progressId: string, attempt: number) {
+  const poll = async () => {
+    try {
+      const next = await request<BillingProgress | null>('billing_report_progress', { progressId });
+      if (attempt !== reportAttempt) return;
+      if (next) progress.value = next;
+    } catch { /* The report request owns errors; a missed progress update is harmless. */ }
+    if (attempt === reportAttempt && reporting.value) progressTimer = setTimeout(poll, 750);
+  };
+  progressTimer = setTimeout(poll, 400);
+}
+onUnmounted(() => { reportAttempt++; stopProgress(); });
+
 const loading = ref(true), saving = ref(false), reporting = ref(false), error = ref('');
 const draft = ref<BillingProject | null>(null), policy = ref<BillingPolicy | null>(null);
 const original = ref<BillingProject | null>(null);
@@ -102,19 +124,22 @@ async function save() {
 type ReportResponse = { report: DisplayReport; nextCursor: string | null; export?: { path: string; format: string } };
 async function loadReport(more = false, format: 'json' | 'csv' | 'markdown' = 'json') {
   if (!canReport.value || reporting.value) return;
-  reporting.value = true; error.value = '';
+  reporting.value = true; error.value = ''; progress.value = null;
+  const attempt = ++reportAttempt, progressId = crypto.randomUUID();
+  reportOperation.value = more ? 'Loading saved report days' : format !== 'json' ? 'Preparing export' : 'Preparing report';
+  watchProgress(progressId, attempt);
   try {
     if (!fromDate.value || !toDate.value || fromDate.value > toDate.value) throw new Error('Choose a valid period with the start date before the end date.');
     const saved = more || format !== 'json' ? report.value : null;
     const result = await request<ReportResponse>('billing_report', { project: original.value!.id,
-      fromDate: saved?.fromDate || fromDate.value, toDate: saved?.toDate || toDate.value, format, detail: 'daily',
+      fromDate: saved?.fromDate || fromDate.value, toDate: saved?.toDate || toDate.value, format, detail: 'daily', progressId,
       ...(saved ? { reportId: saved.reportId } : {}), ...(more && cursor.value ? { cursor: cursor.value } : {}) });
     if (format === 'json') {
       report.value = more && report.value ? { ...result.report, days: [...report.value.days, ...result.report.days] } : result.report;
       cursor.value = result.nextCursor; exportPath.value = '';
     } else exportPath.value = result.export?.path || '';
   } catch (cause) { error.value = humanizeError(cause); }
-  finally { reporting.value = false; }
+  finally { if (attempt === reportAttempt) { reporting.value = false; stopProgress(); } }
 }
 async function copyExportPath() {
   try { await navigator.clipboard.writeText(exportPath.value); toast.success('Export path copied.'); }
@@ -130,7 +155,7 @@ onMounted(refresh);
     <header class="heading"><div><h2>Project billing</h2><p>Group related work and calculate a reproducible billing report. Saved reports keep their original rules.</p></div>
       <button class="btn" :disabled="loading || saving || reporting" @click="selectProject()">New project</button></header>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
-    <p v-if="loading" role="status" class="muted">Loading billing projects…</p>
+    <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
     <div v-else class="project-picker"><label for="billing-project">Billable project</label><select id="billing-project" :value="original?.id || ''" :disabled="saving || reporting" @change="selectProject(projects.find((item) => item.id === ($event.target as HTMLSelectElement).value))">
       <option value="">{{ projects.length ? 'Choose a project…' : 'No projects yet — create your first project' }}</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
     </select><button class="btn btn-sm" :disabled="saving || reporting" @click="refresh">Refresh</button></div>
@@ -168,6 +193,7 @@ onMounted(refresh);
       </form>
       <section v-if="canReport" class="report-section"><h3>Billing report</h3><p class="hint">Reports use saved project settings. Save your edits before generating a new report.</p>
         <form class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reporting" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reporting" /></label><button class="btn primary" :disabled="reporting || saving">{{ reporting ? 'Working…' : 'Generate report' }}</button></form>
+        <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
           <p class="hint">Activity counting: {{ (report.countingModes ?? ['seconds']).map(countingLabel).join(' · ') }}. Commercial rounding follows the saved policy for each day.</p>

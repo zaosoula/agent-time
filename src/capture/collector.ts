@@ -1,4 +1,4 @@
-import {runBillingReport} from './billing-worker.ts';
+import {BillingReports} from './billing-worker.ts';
 import {BillingStore,validateBillingProject} from './billing-store.ts';
 import {billingProjects,billingForProject,validateBillingRequest} from './billing-service.ts';
 import {isStoragePressureNotice,type StoragePressureNotice} from './storage-pressure-status.ts';
@@ -493,10 +493,10 @@ export class Collector {
     }
     return {date,completedAt:saved?.completedAt||null,stale,hasActivity:day.intervals.length>0,pendingGroups:pending.length,capturedGroups:captured.length,unmatchedSeconds:unmatched.reduce((total,group)=>total+group.seconds,0),conflicts:conflicts.length,gaps:gaps.length,fingerprint};
   }
-  dayReviewStatus(date:string){
+  dayReviewStatus(date:string,includeBacklog=true){
     localDayBounds(date);
     const current=this.dayReviewSnapshot(date),backlog=[];
-    for(let days=1;days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
+    for(let days=1;includeBacklog&&days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
     const {fingerprint:_,...view}=current;return {...view,backlog};
   }
   markDayReview(date:string){
@@ -720,9 +720,11 @@ export class Collector {
     if(!token){token=`${this.summaryEpoch}-${++this.summaryTokenCount}`;this.summaryTokens.set(summary,token);}
     return since===token?{unchanged:true,token}:{...summary,token};
   }
+  private billingReports?:BillingReports;
+  billingReportProgress(id:string){return this.billingReports?.progress(id)||null;}
   billingProjects(){return billingProjects(this.output);}
   saveBillingProject(project:unknown,expectedRevision?:number){return new BillingStore(this.store.database).saveProject(validateBillingProject(project),expectedRevision);}
-  billingReport(request:unknown){return runBillingReport(this.output,validateBillingRequest(request));}
+  billingReport(request:unknown){return (this.billingReports??=new BillingReports(this.output)).run(validateBillingRequest(request));}
   reportedWork(date:string){
     const first=new Date(`${date}T00:00:00`),last=new Date(first);
     last.setDate(last.getDate()+1);

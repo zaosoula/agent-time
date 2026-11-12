@@ -117,3 +117,19 @@ test('billing protocol restricts destinations, dates, pagination and awaits asyn
  assert.deepEqual(await dispatchRequest({id:'r',method:'billing_report',params},c),{id:'r',result:{report:{reportId:'fixture'}}});
  for(const extra of [{path:'/elsewhere'},{fromDate:'2026-02-30'},{cursor:'1'},{format:'exe'}])assert.ok('error' in await dispatchRequest({id:'r',method:'billing_report',params:{...params,...extra}},c));
 });
+
+test('billing progress is read-only, bounded by a UUID, and does not accept caller-selected paths',async()=>{
+ const progressId='12345678-1234-1234-1234-123456789abc';
+ const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),billingReportProgress:(id:string)=>id===progressId?{phase:'reading',completedDays:1,totalDays:3}:null};
+ assert.deepEqual((await dispatchRequest({id:'p',method:'billing_report_progress',params:{progressId}},c)).result,{phase:'reading',completedDays:1,totalDays:3});
+ for(const params of [{},{progressId:'../file'},{progressId,path:'/elsewhere'},{progressId:progressId.replaceAll('-','x')}])assert.ok('error' in await dispatchRequest({id:'p',method:'billing_report_progress',params},c));
+});
+
+test('home can request current review status without computing the historical backlog',async()=>{
+ let called:unknown;const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),dayReviewStatus:(date:string,includeBacklog=true)=>{called={date,includeBacklog};return called;},markDayReview:()=>({})};
+ const params={date:'2026-11-10',includeBacklog:false};
+ assert.deepEqual((await dispatchRequest({id:'d',method:'day_review_status',params},c)).result,params);
+ await dispatchRequest({id:'d',method:'day_review_status',params:{date:params.date}},c);assert.deepEqual(called,{date:params.date,includeBacklog:true});
+ for(const method of ['day_review_status','day_review_mark'])assert.ok('error' in await dispatchRequest({id:'d',method,params:{...params,includeBacklog:'no'}},c));
+ assert.ok('error' in await dispatchRequest({id:'d',method:'day_review_mark',params},c));
+});

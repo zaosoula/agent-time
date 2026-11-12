@@ -122,6 +122,7 @@ function createStore() {
 
   // ---- Navigation and selection -------------------------------------------------------------
   const page = ref<Page>('today');
+  const settingsSection = ref('general');
   const project = ref('all');
   const search = ref('');
   const selectedDate = ref(dateString(new Date()));
@@ -168,6 +169,7 @@ function createStore() {
 
   /** Collector version of the summary on screen; polls skip the download while it is current. */
   let summaryToken: string | undefined;
+  let reportedWorkInflight: Promise<void> | undefined;
   function storeSummary(next: Summary, date: string) {
     summaryToken = undefined;
     const key = `${date}|${summarySignature(next)}`;
@@ -189,12 +191,13 @@ function createStore() {
     // While visible but unfocused, a full summary every minute is enough.
     const due = !background || summaryKey.split('|')[0] !== date || Date.now() - summaryFetchedAt >= 60_000;
     try {
-      const [next, reports] = await Promise.all([
-        due
-          ? transport.summarySince(date, background, summaryKey.split('|')[0] === date ? summaryToken : undefined)
-          : Promise.resolve(null),
-        reportedWorkTransport.list(date).catch(() => null),
-      ]);
+      const nextRequest = due
+        ? transport.summarySince(date, background, summaryKey.split('|')[0] === date ? summaryToken : undefined)
+        : Promise.resolve(null);
+      if (!reportedWorkInflight) reportedWorkInflight = reportedWorkTransport.list(date).then(reports => {
+        if (revision === summaryRevision && date === selectedDate.value) reportedWork.value = markRaw(reports);
+      }).catch(() => { /* Optional declarations must not delay measured activity. */ }).finally(() => { reportedWorkInflight = undefined; });
+      const next = await nextRequest;
       if (revision !== summaryRevision || date !== selectedDate.value) return;
       if (next && 'unchanged' in next) {
         summaryFetchedAt = Date.now();
@@ -204,7 +207,6 @@ function createStore() {
         storeSummary(rest as Summary, date);
         summaryToken = token;
       }
-      if (reports) reportedWork.value = markRaw(reports);
       pollError.value = '';
     } catch (cause) {
       if (revision === summaryRevision && !isRetryableError(cause)) pollError.value = humanizeError(cause);
@@ -255,7 +257,7 @@ function createStore() {
   async function loadDayReview() {
     const date = selectedDate.value;
     try {
-      const value = await dayReviewTransport.status(date);
+      const value = await dayReviewTransport.status(date, page.value === 'review');
       if (date === selectedDate.value) dayReview.value = value;
     } catch {
       /* The review page shows review errors when the user acts. */
@@ -284,18 +286,19 @@ function createStore() {
     hooks: createPoller(loadHooks, () => (visible() ? 30_000 : null)),
     usage: createPoller(loadUsage, () => (visible() && page.value === 'usage' ? 60_000 : null)),
     websites: createPoller(loadWebsiteProjects, () =>
-      visible() && page.value === 'settings' ? 30_000 : null,
+      visible() && page.value === 'settings' && settingsSection.value === 'projects' ? 30_000 : null,
     ),
-    dayReview: createPoller(loadDayReview, () => (visible() ? 60_000 : null)),
+    dayReview: createPoller(loadDayReview, () => (visible() && summaryLoaded.value && ['today', 'review'].includes(page.value) ? 60_000 : null)),
   };
   const syncPollers = () => {
     for (const poller of Object.values(pollers)) poller.sync();
   };
-  watch([windowVisible, windowFocused, page], syncPollers);
+  watch([windowVisible, windowFocused, page, settingsSection, summaryLoaded], syncPollers);
   // Pollers that just became enabled run immediately on sync. Health is always polled (slowly), so
   // opening its page asks for a fresh snapshot instead of waiting up to 30 seconds.
   watch(page, (next) => {
     if (windowVisible.value && next === 'health') void pollers.health.refresh();
+    if (windowVisible.value && summaryLoaded.value && next === 'review') void pollers.dayReview.refresh();
   });
   // Coming back into view: refresh straight away rather than waiting for the next tick.
   watch(windowVisible, (shown) => {
@@ -337,7 +340,6 @@ function createStore() {
     dayReview.value = null;
     notes.value = [];
     reportedWork.value = [];
-    void loadDayReview();
     void loadNotes();
     void pollers.summary.refresh();
   });
@@ -757,6 +759,7 @@ function createStore() {
   return {
     // navigation
     page,
+    settingsSection,
     project,
     search,
     selectedDate,

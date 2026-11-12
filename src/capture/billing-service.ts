@@ -1,3 +1,5 @@
+import type {BillingProgress} from './billing-progress.ts';
+import {validBillingProgressId} from './billing-progress.ts';
 import {PeriodTimeCredits} from '../mcp/time-credit.ts';
 import {projectPathFromWorktree} from './website-resolver.ts';
 import {existsSync,mkdirSync,lstatSync,writeFileSync,renameSync,rmSync} from 'node:fs';
@@ -13,15 +15,16 @@ import {agentSessionKey} from './session-identity.ts';
 import type {BillingProject,BillingReport,BillingDayInput,BillingSpan} from './billing-types.ts';
 import type {CaptureEvent} from './events.ts';
 
-export interface BillingRequest {project:string;fromDate:string;toDate:string;format?:'json'|'csv'|'markdown';detail?:'summary'|'daily';reportId?:string;cursor?:string;}
+export interface BillingRequest {project:string;fromDate:string;toDate:string;format?:'json'|'csv'|'markdown';detail?:'summary'|'daily';reportId?:string;cursor?:string;progressId?:string;}
 export type BillingPublicReport=Omit<BillingReport,'projectSnapshot'>;
 export interface BillingReply {report:BillingPublicReport;nextCursor:string|null;export?:{path:string;format:string;sha256:string};}
 function open(output:string,readOnly=true){const path=join(output,'events.sqlite');if(!existsSync(path))throw new Error('No captured database; open Agent Time and configure a billing project first');return openEventDatabase(path,{readOnly});}
 export function validateBillingRequest(value:unknown):BillingRequest{
  if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid billing request');const p=value as Record<string,unknown>;
- if(Object.keys(p).some(k=>!['project','fromDate','toDate','format','detail','reportId','cursor'].includes(k))||typeof p.project!=='string'||!p.project.trim()||p.project.length>4096||typeof p.fromDate!=='string'||typeof p.toDate!=='string')throw new Error('Invalid billing project or period');
+ if(Object.keys(p).some(k=>!['project','fromDate','toDate','format','detail','reportId','cursor','progressId'].includes(k))||typeof p.project!=='string'||!p.project.trim()||p.project.length>4096||typeof p.fromDate!=='string'||typeof p.toDate!=='string')throw new Error('Invalid billing project or period');
  validateBillingDate(p.fromDate);validateBillingDate(p.toDate);if(p.fromDate>p.toDate)throw new Error('Invalid billing period');
  if(p.format!==undefined&&!['json','csv','markdown'].includes(String(p.format))||p.detail!==undefined&&!['summary','daily'].includes(String(p.detail))||p.reportId!==undefined&&(typeof p.reportId!=='string'||! /^[a-f0-9-]{36}$/i.test(p.reportId))||p.cursor!==undefined&&(typeof p.cursor!=='string'||! /^\d{1,7}$/.test(p.cursor)||!p.reportId))throw new Error('Invalid billing format, report ID or page cursor');
+ if(p.progressId!==undefined&&!validBillingProgressId(p.progressId))throw new Error('Invalid billing progress ID');
  return p as unknown as BillingRequest;
 }
 export function billingProjects(output:string){
@@ -98,7 +101,7 @@ function reply(report:BillingReport,request:BillingRequest,output:string):Billin
  }
  return response;
 }
-export function billingForProject(output:string,value:BillingRequest):BillingReply{
+export function billingForProject(output:string,value:BillingRequest,onProgress?:(progress:BillingProgress)=>void):BillingReply{
  const request=validateBillingRequest(value),db=open(output,false);
  try{
   const store=new BillingStore(db),project=store.resolveProject(request.project);
@@ -107,12 +110,19 @@ export function billingForProject(output:string,value:BillingRequest):BillingRep
   const settings=snapshotSettings(output),asOf=Date.now()/1000;
   // A read transaction pins events and review decisions while capture keeps writing through WAL.
   db.exec('BEGIN');let report:BillingReport;
-  try{const projects=store.listProjects();const frozenProject=store.resolveProject(project.id);function* inputs(){for(const date of billingDateRange(request.fromDate,request.toDate))yield dayInput(output,db,frozenProject,projects,date,settings,asOf);}
+  try{const projects=store.listProjects();const frozenProject=store.resolveProject(project.id);
+   const totalDays=(Date.parse(request.toDate+'T00:00:00Z')-Date.parse(request.fromDate+'T00:00:00Z'))/86400000+1;let completedDays=0;
+   function* inputs(){for(const date of billingDateRange(request.fromDate,request.toDate)){
+    onProgress?.({phase:'reading',completedDays,totalDays,date});
+    yield dayInput(output,db,frozenProject,projects,date,settings,asOf);
+    onProgress?.({phase:'calculating',completedDays:++completedDays,totalDays,date});
+   }}
    report=calculateBilling(frozenProject,inputs(),{fromDate:request.fromDate,toDate:request.toDate});
    const input={eventRowid:db.prepare('SELECT coalesce(max(rowid),0) n FROM events').get()?.n,settings,projectRevision:frozenProject.revision};
    const revisionHash=createHash('sha256').update(JSON.stringify(input));
    for(const table of ['human_decisions','human_splits'])for(const row of db.prepare(`SELECT * FROM ${table} ORDER BY start_event_id,end_event_id`).iterate())revisionHash.update(JSON.stringify(row));
    report.inputRevision=revisionHash.digest('hex');db.exec('COMMIT');
+   onProgress?.({phase:'saving',completedDays,totalDays});
   }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error;}
   const {reportId:_id,createdAt:_at,inputRevision:_revision,...content}=report;
   const contentHash=createHash('sha256').update(JSON.stringify(content)).digest('hex');

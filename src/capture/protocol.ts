@@ -1,3 +1,4 @@
+import {validBillingProgressId} from './billing-progress.ts';
 import {validateBillingProject} from './billing-store.ts';
 import {validateBillingRequest} from './billing-service.ts';
 import { object } from './orca.ts';
@@ -5,8 +6,8 @@ import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {MAX_DECISION_PAIRS,validateManualNote,type ManualNote} from './store.ts';
-interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string):unknown;markDayReview?(date:string):unknown;}
-interface Controller {billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
+interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string,includeBacklog?:boolean):unknown;markDayReview?(date:string):unknown;}
+interface Controller {billingReportProgress?(id:string):unknown;billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
 interface Controller {reportedWork?(date:string):unknown;stopReportedTimer?(taskCounterId:string,discard?:boolean):unknown;}
 interface Controller {claudeStatusLineStatus?():unknown;installClaudeStatusLine?(targetId:string):unknown;removeClaudeStatusLine?(targetId:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;versionedSummary?(date:string,maxAgeMs?:number,since?:string):unknown;weeklyReview?(startDate:string):unknown;workOutcomes?(date:string):Promise<unknown>;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;mcpStatus?():unknown;installMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;removeMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
@@ -17,6 +18,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
   try{
     if(typeof id!=='string'||id.length>128)throw new Error('Invalid request ID');
     const params=object(request.params);
+    if(request.method==='billing_report_progress'){
+      if(!controller.billingReportProgress||Object.keys(params).length!==1||!validBillingProgressId(params.progressId))throw new Error('Invalid billing progress request');
+      return {id,result:controller.billingReportProgress(params.progressId)};
+    }
     if(request.method==='billing_projects'){
       if(!controller.billingProjects||Object.keys(params).length)throw new Error('Invalid billing project list request');
       return {id,result:controller.billingProjects()};
@@ -58,10 +63,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
       return {id,result:controller.setHumanGroupSplit(params.pairs as Array<[string,string]>,params.splitAt as number,params.beforeProject as string|undefined,params.afterProject as string|undefined,params.date as string|undefined)};
     }
     if(request.method==='day_review_status'||request.method==='day_review_mark'){
-      if(Object.keys(params).length!==1||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date))throw new Error('Invalid review date');
+      if(Object.keys(params).some(key=>key!=='date'&&(request.method!=='day_review_status'||key!=='includeBacklog'))||params.includeBacklog!==undefined&&typeof params.includeBacklog!=='boolean'||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date))throw new Error('Invalid review date');
       const handler=request.method==='day_review_status'?controller.dayReviewStatus:controller.markDayReview;
       if(!handler)throw new Error('Daily review unavailable');
-      return {id,result:handler.call(controller,params.date)};
+      return {id,result:request.method==='day_review_status'?controller.dayReviewStatus!(params.date,params.includeBacklog as boolean|undefined):controller.markDayReview!(params.date)};
     }
     if(request.method==='linear_connect'){
       if(!controller.linearConnect||Object.keys(params).length!==1||typeof params.clientId!=='string')throw new Error('Invalid Linear connection request');

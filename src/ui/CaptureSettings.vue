@@ -18,6 +18,8 @@ import PrivacyExclusions from './PrivacyExclusions.vue';
 import ArchiveExport from './ArchiveExport.vue';
 import StorageUsage from './StorageUsage.vue';
 import BillingSettings from './BillingSettings.vue';
+import { useStore } from './store.ts';
+const store = useStore();
 import WebsiteRules from './WebsiteRules.vue';
 import LinearConnection from './LinearConnection.vue';
 import {
@@ -45,7 +47,13 @@ const tabs = [
 const tabKey = 'agent-time.settings-tab';
 const savedTab = sessionStorage.getItem(tabKey);
 const active = ref<string>(tabs.some((tab) => tab.id === savedTab) ? savedTab! : 'general');
-watch(active, (value) => sessionStorage.setItem(tabKey, value));
+const visitedTabs = ref(new Set([active.value]));
+store.settingsSection.value = active.value;
+watch(active, (value) => {
+  visitedTabs.value.add(value);
+  store.settingsSection.value = value;
+  sessionStorage.setItem(tabKey, value);
+});
 const agents = computed(() => props.status?.sources.filter((source) => source.kind === 'agent') || []);
 const pollers = computed(() => props.status?.sources.filter((source) => source.kind === 'poller') || []);
 const providers = computed(() => agents.value.map((source) => source.id));
@@ -148,7 +156,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
       <p>General preferences save automatically. Save billing edits in their form.</p>
     </nav>
     <div class="settings-document">
-      <TabsContent value="general" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('general')" value="general" class="settings-panel">
         <section class="settings-section">
           <h2>General</h2>
           <p class="section-intro">How Agent Time starts and when it stops counting.</p>
@@ -264,7 +272,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent value="agents" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('agents')" value="agents" class="settings-panel">
         <HookSetup mode="settings">
           <template #global-controls>
             <div class="control-list">
@@ -364,7 +372,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </HookSetup>
       </TabsContent>
 
-      <TabsContent value="sources" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('sources')" value="sources" class="settings-panel">
         <section class="settings-section">
           <h2>Sources</h2>
           <p class="section-intro">Where Agent Time looks for activity besides agent hooks.</p>
@@ -501,7 +509,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent value="projects" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('projects')" value="projects" class="settings-panel">
         <section class="settings-section">
           <h2>Projects &amp; rules</h2>
           <p class="section-intro">
@@ -513,11 +521,11 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent value="billing" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('billing')" value="billing" class="settings-panel">
         <BillingSettings />
       </TabsContent>
 
-      <TabsContent value="privacy" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('privacy')" value="privacy" class="settings-panel">
         <section class="settings-section">
           <h2>Privacy</h2>
           <p class="section-intro">
@@ -527,7 +535,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent value="data" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('data')" value="data" class="settings-panel">
         <section class="settings-section">
           <h2>Data &amp; backup</h2>
           <p class="section-intro">Storage used on this Mac, archives and restores.</p>
@@ -538,7 +546,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent value="advanced" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('advanced')" value="advanced" class="settings-panel">
         <section class="settings-section">
           <h2>Advanced</h2>
           <p class="section-intro">Setup and troubleshooting.</p>
