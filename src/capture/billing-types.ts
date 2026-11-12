@@ -16,7 +16,7 @@ export interface BillingProject {
 export interface BillingSpan {start:number;end:number;kind:'human'|'agent';sessionKey?:string;projectId?:string|null;reported?:boolean;}
 export interface BillingUsage {id:string;at:number;cost:string|null;currency?:string;source:string;verified:boolean;projectId?:string;taskCounterId?:string;}
 export interface BillingDayInput {
- date:string;start:number;end:number;spans:BillingSpan[];excluded:Array<{start:number;end:number;reason:string}>;
+ date:string;start:number;end:number;spans:BillingSpan[];excluded:Array<{start:number;end:number;reason:string;appliesTo?:'all'|'human'}>;
  humanMessages:number[];presenceEvidenceAvailable:boolean;usage:BillingUsage[];usageComplete:boolean;coverageComplete:boolean;
 }
 export interface BillingMetrics {humanActiveSeconds:number;agentWallSeconds:number;agentOnlyWallSeconds:number;agentRunningSeconds:number;overlapMergedWallSeconds:number;excludedSeconds:number;unknownSeconds:number;crossProjectOverlapSeconds:number;}

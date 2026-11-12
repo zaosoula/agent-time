@@ -40,13 +40,13 @@ function exclusions(events:CaptureEvent[],start:number,end:number){
  for(const e of [...events].sort((a,b)=>a.observedAt-b.observedAt)){
   if(e.observedAt>end)break;
   if(e.kind==='capture_stop')stopped=e.observedAt;
-  if(e.kind==='capture_start'&&stopped!==undefined){result.push({start:stopped,end:e.observedAt,reason:'capture paused'});stopped=undefined;}
+  if(e.kind==='capture_start'&&stopped!==undefined){result.push({start:stopped,end:e.observedAt,reason:'capture paused',appliesTo:'human'});stopped=undefined;}
   if(e.kind==='sleep')asleep=e.observedAt;
   if(e.kind==='wake'&&asleep!==undefined){result.push({start:asleep,end:e.observedAt,reason:'sleep'});asleep=undefined;}
   if(['screen_locked','session_locked'].includes(e.kind))locked=e.observedAt;
   if(['screen_unlocked','session_unlocked'].includes(e.kind)&&locked!==undefined){result.push({start:locked,end:e.observedAt,reason:'locked'});locked=undefined;}
  }
- for(const [at,reason] of [[stopped,'capture paused'],[asleep,'sleep'],[locked,'locked']] as const)if(at!==undefined)result.push({start:at,end,reason});
+ for(const [at,reason] of [[stopped,'capture paused'],[asleep,'sleep'],[locked,'locked']] as const)if(at!==undefined)result.push({start:at,end,reason,...(reason==='capture paused'?{appliesTo:'human' as const}:{})});
  return result.filter(x=>x.end>start&&x.start<end).map(x=>({...x,start:Math.max(start,x.start),end:Math.min(end,x.end)}));
 }
 function plainDecimal(value:number):string{
@@ -85,9 +85,24 @@ function dayInput(output:string,db:DatabaseSync,project:BillingProject,projects:
  const sampleQuery=isPackedEventDatabase(db)?'SELECT observed_at FROM events WHERE observed_at>=? AND observed_at<? AND activity_sample=1 ORDER BY observed_at':"SELECT observed_at FROM events WHERE observed_at>=? AND observed_at<? AND json_extract(payload,'$.source')='macos' AND json_extract(payload,'$.kind')='activity' ORDER BY observed_at";
  let first:number|undefined,last:number|undefined;const observationGaps:BillingDayInput['excluded']=[];
  for(const row of db.prepare(sampleQuery).iterate(start,end)){const at=Number(row.observed_at);first??=at;if(last!==undefined&&at-last>300)observationGaps.push({start:last,end:at,reason:'No macOS observations; unverified capture gap'});last=at;}
+ // Missing Mac samples are expected while human capture is deliberately paused.
+ // Keep the full gap for human coverage, but do not re-exclude native agent work
+ // inside an explicit pause. Unexplained parts of the gap still exclude both.
+ const knownExclusions=exclusions(data.events,start,end);
+ const pauses=knownExclusions.filter(c=>c.appliesTo==='human').sort((a,b)=>a.start-b.start);
+ const scopedGaps=observationGaps.flatMap(gap=>{
+  const parts:BillingDayInput['excluded']=[];let cursor=gap.start;
+  for(const pause of pauses){
+   if(pause.end<=cursor)continue;if(pause.start>=gap.end)break;
+   if(pause.start>cursor)parts.push({...gap,start:cursor,end:pause.start});
+   const end=Math.min(gap.end,pause.end);
+   parts.push({...gap,start:Math.max(cursor,pause.start),end,appliesTo:'human'});cursor=end;
+  }
+  if(cursor<gap.end)parts.push({...gap,start:cursor});return parts;
+ });
  const samples={first,last};
  const evidenceCoverage=coverage(data);const covered=typeof samples?.first==='number'&&typeof samples?.last==='number'&&Number(samples.first)<=start+300&&Number(samples.last)>=end-300&&!evidenceCoverage.issues.length&&!evidenceCoverage.permissionPeriods.length&&!observationGaps.length&&!attributionConflict;
- return {date,start,end,spans,excluded:[...exclusions(data.events,start,end),...observationGaps],humanMessages,presenceEvidenceAvailable:humanMessages.length>0,usage,usageComplete:false,coverageComplete:covered};
+ return {date,start,end,spans,excluded:[...knownExclusions,...scopedGaps],humanMessages,presenceEvidenceAvailable:humanMessages.length>0,usage,usageComplete:false,coverageComplete:covered};
 }
 function reply(report:BillingReport,request:BillingRequest,output:string):BillingReply{
  const offset=Number(request.cursor||0);if(offset>report.days.length)throw new Error('Invalid billing cursor');
