@@ -78,3 +78,15 @@ test('unobserved Mac gaps are excluded rather than billed from autonomous agent 
  const result=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'});assert.equal(result.report.totals.billableSeconds,0);assert.equal(result.report.totals.excludedSeconds,600);assert.equal(result.report.quality.complete,false);
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });
+
+test('long-range measured totals preserve pre-billing minute credit across midnight',async()=>{
+ const {projectTimeForRange}=await import('../src/capture/billing-service.ts');const {snapshot,timeForProject}=await import('../src/mcp/data.ts');const {output,store}=fixture();try{
+ const midnight=billingDayStart('2026-11-10','Europe/Paris');
+ store.put(makeEvent('agent_report','work_context',{observedAt:midnight-4*3600,provider:'claude',sessionId:'one',data:{project:'/fixture/caex',issueKey:'T-1'}}));
+ for(const [kind,at] of [['tool_start',midnight-1],['tool_end',midnight+1]] as const)store.put(makeEvent('hook',kind,{observedAt:at,provider:'claude',hostId:'fixture',sessionId:'one',cwd:'/fixture/caex',data:{toolId:'t'}}));
+ const before=timeForProject(snapshot(output,midnight-86400,midnight+86400),'/fixture/caex');
+ const next=projectTimeForRange(output,{project:'caex',fromDate:'2026-11-09',toDate:'2026-11-10',view:'details'});
+ assert.equal(before.agentRunningSeconds,60);assert.equal(next.agentRunningSeconds,before.agentRunningSeconds);assert.equal(next.agentWallSeconds,before.agentWallSeconds);assert.equal(next.overlapMergedWallSeconds,before.overlapMergedWallSeconds);
+ assert.equal(next.issues?.[0]?.agentRunningSeconds,before.issues[0]?.agentRunningSeconds);assert.deepEqual(next.issues?.map(i=>i.issueKey),before.issues.map(i=>i.issueKey));
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});

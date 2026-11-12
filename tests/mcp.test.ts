@@ -47,18 +47,18 @@ const put=(store:EventStore,kind:string,at:number,fields:Record<string,unknown>=
 
 test('agent declarations are idempotent, validated, and do not change measured totals',()=>{
  const output=fixture();try{
-  const store=new EventStore(join(output,'events.sqlite')),at=today(),id=randomUUID(),contextId=randomUUID();
+  const store=new EventStore(join(output,'events.sqlite')),at=Date.now()/1000-120,id=randomUUID(),contextId=randomUUID();
   const who={provider:'codex',sessionId:'session-a',workspaceId:'test::/tmp/project'};
   put(store,'prompt_submitted',at,{...who,hostId:'local',terminalHandle:'terminal-a'});
   put(store,'response_stop',at+60,{...who,hostId:'local',terminalHandle:'terminal-a'});
-  const before=snapshot(output,at-1,at+120);
+  const before=snapshot(output,at-1,at+180);
   const event=writeReport(output,'work_context',id,contextId,{issueKey:'EZYO-863',project:'/tmp/project',task:'Implement MCP'},who);
   assert.equal(writeReport(output,'work_context',id,contextId,{issueKey:'EZYO-863',project:'/tmp/project',task:'Implement MCP'},who).eventId,id);
   assert.throws(()=>writeReport(output,'work_context',id,contextId,{issueKey:'EZYO-1',project:'/tmp/project',task:'Other'},who),/different declaration/);
   assert.equal(validAgentReport(event),true);
   assert.equal(validAgentReport({...event,data:{...event.data,prompt:'secret'}}),false);
   assert.equal(importSpool(join(output,'spool'),store,validAgentReport).length,0);
-  const after=snapshot(output,at-1,at+120);
+  const after=snapshot(output,at-1,at+180);
   assert.equal(after.summary.agentSeconds,before.summary.agentSeconds);
   assert.equal(timeForIssue(after,'EZYO-863').agentRunningSeconds,0,'a declaration after a completed turn cannot retroactively claim it');
   store.close();

@@ -51,5 +51,6 @@ Files: src/ui/BillingSettings.vue; src/ui/CaptureSettings.vue; focused UI tests.
 ### Integration and release
 - [x] Fresh independent engine/storage/integration reviews; findings fixed; 504-test initial JS suite plus latest focused regressions, build and audit pass. Native CI remains a release gate.
 - [x] Document config/API and implementation rulings.
-- [ ] Publish next beta using existing release workflow.
-- [ ] Verify public bytes, packaged API/IPC, signature/notarization; record evidence; clean task-only artifacts.
+- [x] Published and verified beta46, including 511 JavaScript and 33 native tests.
+- [x] Verified beta46 public bytes, packaged API/IPC, signature/notarization and browser workflow.
+- [ ] Publish the narrow compatibility patch for period-wide midnight credit and 12-hour context retention; record final evidence and clean task-only artifacts.

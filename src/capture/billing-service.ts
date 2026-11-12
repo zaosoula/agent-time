@@ -1,3 +1,4 @@
+import {PeriodTimeCredits} from '../mcp/time-credit.ts';
 import {projectPathFromWorktree} from './website-resolver.ts';
 import {existsSync,mkdirSync,lstatSync,writeFileSync,renameSync,rmSync} from 'node:fs';
 import {join} from 'node:path';
@@ -130,20 +131,23 @@ export function projectTimeForRange(output:string,request:{project:string;fromDa
  if(request.toDate>billingLocalDate(Date.now()/1000,configured?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone))throw new Error('Future time dates are unavailable');
  const suffix=request.project.split('::').at(-1)!,nativeProject=suffix.startsWith('/')?projectPathFromWorktree(suffix):request.project;
  const timezone=configured?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,days:Array<Record<string,unknown>>=[];
- const totals={humanActiveSeconds:0,agentRunningSeconds:0,agentWallSeconds:0,overlapMergedWallSeconds:0};let known=Boolean(configured),truncatedBefore=false;let issueCount=0,coverageIssueCount=0,dayCount=0;const issuesByKey=new Map<string,Record<string,unknown>>();const captureCoverage={issues:[] as unknown[],gaps:[] as unknown[],permissionPeriods:[] as unknown[],moreIssues:false,morePermissionPeriods:false,truncatedBefore:false};
+ const periodCredit=new PeriodTimeCredits(),issueCredits=new Map<string,PeriodTimeCredits>();let known=Boolean(configured),truncatedBefore=false;let issueCount=0,coverageIssueCount=0,dayCount=0;const issuesByKey=new Map<string,ReturnType<PeriodTimeCredits['totals']>&{issueKey:string}>();const captureCoverage={issues:[] as unknown[],gaps:[] as unknown[],permissionPeriods:[] as unknown[],moreIssues:false,morePermissionPeriods:false,truncatedBefore:false};
  for(const date of billingDateRange(request.fromDate,request.toDate)){
   const start=billingDayStart(date,timezone),end=billingDayStart(nextBillingDate(date),timezone),s=snapshot(output,start,end);
   const rows=attributedIntervals(s);const paths=configured?[...new Set(rows.filter(i=>sourceProject(projects,{workspaceId:i.workspaceId,project:i.project})?.id===configured!.id).flatMap(i=>i.project?[i.project]:[]))]:[nativeProject];
   if(!configured&&rows.some(i=>i.project===nativeProject))known=true;
-  const item=timeForProjectSet(s,paths,configured?.id||nativeProject);for(const key of Object.keys(totals) as Array<keyof typeof totals>)totals[key]+=item[key];
+  const item=timeForProjectSet(s,paths,configured?.id||nativeProject),selected=rows.filter(i=>i.project!==null&&paths.includes(i.project));periodCredit.add(selected,end);
   coverageIssueCount+=item.captureCoverage.issues.length;issueCount+=item.issues.length;truncatedBefore ||=item.truncatedBefore;
   if(request.view!=='summary'){
-   for(const issue of item.issues){let previous=issuesByKey.get(issue.issueKey);if(!previous&&issuesByKey.size>=500)continue;if(!previous){previous={issueKey:issue.issueKey,humanActiveSeconds:0,agentRunningSeconds:0,agentWallSeconds:0,overlapMergedWallSeconds:0};issuesByKey.set(issue.issueKey,previous);}for(const key of Object.keys(totals) as Array<keyof typeof totals>)previous[key]=Number(previous[key])+issue[key];}
+   const byIssue=new Map<string,typeof selected>();for(const row of selected){const key=row.issueKey||'Unmatched',group=byIssue.get(key)||[];group.push(row);byIssue.set(key,group);}
+   for(const key of byIssue.keys())if(!issueCredits.has(key)&&issueCredits.size<500)issueCredits.set(key,new PeriodTimeCredits());
+   for(const [key,credit] of issueCredits){credit.add(byIssue.get(key)||[],end);issuesByKey.set(key,{issueKey:key,...credit.totals()});}
    for(const key of ['issues','gaps','permissionPeriods'] as const){captureCoverage[key].push(...item.captureCoverage[key].slice(0,500-captureCoverage[key].length));}
    captureCoverage.moreIssues ||=item.captureCoverage.moreIssues||coverageIssueCount>500;captureCoverage.morePermissionPeriods ||=item.captureCoverage.morePermissionPeriods;captureCoverage.truncatedBefore ||=item.captureCoverage.truncatedBefore;
   }
   dayCount++;if(days.length<31)days.push({date,humanActiveSeconds:item.humanActiveSeconds,agentRunningSeconds:item.agentRunningSeconds,agentWallSeconds:item.agentWallSeconds,overlapMergedWallSeconds:item.overlapMergedWallSeconds,...(request.view==='details'?{issues:item.issues,captureCoverage:item.captureCoverage}:{})});
  }
  if(!known)throw new Error('Unknown project; use billing_projects to select a configured project or an exact captured path');
- return {project:configured?.id||nativeProject,...totals,hours:{humanActive:(totals.humanActiveSeconds/3600).toFixed(2),agentRunning:(totals.agentRunningSeconds/3600).toFixed(2),agentWall:(totals.agentWallSeconds/3600).toFixed(2),overlapMergedWall:(totals.overlapMergedWallSeconds/3600).toFixed(2)},...(request.view!=='summary'?{issues:[...issuesByKey.values()].map(i=>({...i,hours:{humanActive:(Number(i.humanActiveSeconds)/3600).toFixed(2),agentRunning:(Number(i.agentRunningSeconds)/3600).toFixed(2),agentWall:(Number(i.agentWallSeconds)/3600).toFixed(2),overlapMergedWall:(Number(i.overlapMergedWallSeconds)/3600).toFixed(2)}})),captureCoverage}:{}),days:request.view==='summary'?days.slice(0,31):days,coverageIssueCount,issueCount,truncatedBefore,aggregation:'sum-of-local-day-minute-credits',moreDays:dayCount>31};
+ const totals=periodCredit.totals();
+ return {project:configured?.id||nativeProject,...totals,hours:{humanActive:(totals.humanActiveSeconds/3600).toFixed(2),agentRunning:(totals.agentRunningSeconds/3600).toFixed(2),agentWall:(totals.agentWallSeconds/3600).toFixed(2),overlapMergedWall:(totals.overlapMergedWallSeconds/3600).toFixed(2)},...(request.view!=='summary'?{issues:[...issuesByKey.keys()].sort().map(key=>issuesByKey.get(key)!).map(i=>({...i,hours:{humanActive:(Number(i.humanActiveSeconds)/3600).toFixed(2),agentRunning:(Number(i.agentRunningSeconds)/3600).toFixed(2),agentWall:(Number(i.agentWallSeconds)/3600).toFixed(2),overlapMergedWall:(Number(i.overlapMergedWallSeconds)/3600).toFixed(2)}})),captureCoverage}:{}),days:request.view==='summary'?days.slice(0,31):days,coverageIssueCount,issueCount,truncatedBefore,aggregation:'minute-credit-per-contiguous-period-block',moreDays:dayCount>31};
 }

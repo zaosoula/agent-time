@@ -119,9 +119,9 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
    const creditedCounters=new Set(summary.intervals.filter(i=>i.attributionSource==='task-counter').flatMap(i=>i.sourceEventIds));
    for(const event of events){
     if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
-    // Reported context keeps its earlier reach: an hour before the range.
+    // Keep context for the same 12-hour lifetime used by attribution, including across day windows.
     if(readOptions.billingEvidence&&(event.source==='capture'||['sleep','wake','screen_locked','screen_unlocked','session_locked','session_unlocked'].includes(event.kind)||event.source==='hook'&&event.kind==='prompt_submitted')){kept.set(event.eventId,event);continue;}
-    if(event.source==='agent_report'){if((event.observedAt>=from-3600||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
+    if(event.source==='agent_report'){if((event.observedAt>=from-(event.kind==='work_context'?43200:3600)||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
     if(event.source!=='macos'||event.kind!=='activity'||event.observedAt<start||event.observedAt>=end)continue;
     const untrusted=event.data?.accessibilityTrusted===false;
     if(untrusted||!previousTrusted||hasIssueKeys(event))kept.set(event.eventId,event);

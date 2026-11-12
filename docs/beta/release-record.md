@@ -1,5 +1,15 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.46` published and verified — 2026-11-12
+
+Introduces SQLite-backed billable projects and immutable policy/report snapshots, grouped repository/workspace identities, four explicit time bases, decimal/fraction pricing, separate rates, commercial rounding, hard daily caps, optional evidence-based presence gates and separate AI fees. Settings → Billing edits the database; CSV/Markdown exports and new `billing_projects`/`billing_for_project` tools use saved results. Captured raw intervals and declared counters remain separate. Reports disclose unknown coverage/costs and cross-project overlap. Archives, imports, compaction and restore preserve billing records; no user event history is rewritten.
+
+Source `9b0ae1fdf64c36bc669cdc3fcfdcd7a7e1627ee1` was built/published by [run 43128866377](https://github.com/zaosoula/agent-time/actions/runs/43128866377). 511 JavaScript tests, 33 Rust tests, production build/typecheck and production dependency audit passed. Independent engine/storage/integration findings were fixed and regression-tested. Real browser plus real local protocol fixtures verified database configuration, same-date policy revisions, old-report preservation and export. The exact signed bundle's Node, collector IPC, report worker and MCP completed grouped-clock, immutable-price, 31-day month and long-summary workflows. All new/changed packaged modules match the source revision. No real capture or credentials were used.
+
+Public updater manifest/signature and landing selection matched staged metadata. Full public downloads matched SHA-256: updater archive `b30229089dff5f3b5365c882aaf3b405fa8c7b6fd70ac96d6c50f8a2d4c2eb1c`; DMG `a17c7e87bc147c2f81d37d300e5e84e7fd4c7a35a4d4c99055c84a651f4b9db0`. The arm64 app declares beta46 and passed strict deep signature, app/DMG stapled-ticket and Gatekeeper checks.
+
+A final legacy-compatibility comparison discovered that the new daily `time_for_project` aggregation credited a block touching midnight once per day rather than once per contiguous period block; billing calculations themselves were unaffected. A narrow follow-up restores the prior measured period totals and the existing 12-hour reported-context lifetime across daily windows. The separate four-request ERP/timesheet document is under read-only assessment and is not part of this implementation.
+
 ## `0.2.0-beta.45` published and verified — 2026-11-12
 
 Extends the local MCP tools for project-first multi-agent work: explicit free ticket references (`T-9716`, `D-140`, `K-189`), snapshotted project/ticket context, business agent identity separate from native session IDs, parent counter links, declared own-task tokens/costs with source and currency, and a nullable billable flag. Existing calls remain accepted. Declarations remain separate from observed time; counter credit remains opt-in and billing flags do not approve invoices. New `heartbeat_task` and `task_history` tools expose renewal and task lifecycle/history without replaying unrelated capture payloads.
