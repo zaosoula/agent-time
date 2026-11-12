@@ -53,4 +53,4 @@ Files: src/ui/BillingSettings.vue; src/ui/CaptureSettings.vue; focused UI tests.
 - [x] Document config/API and implementation rulings.
 - [x] Published and verified beta46, including 511 JavaScript and 33 native tests.
 - [x] Verified beta46 public bytes, packaged API/IPC, signature/notarization and browser workflow.
-- [ ] Publish the narrow compatibility patch for period-wide midnight credit and 12-hour context retention; record final evidence and clean task-only artifacts.
+- [x] Published/verified beta47 compatibility patch; 513 JavaScript and 33 native tests pass. Packaged IPC/MCP, public bytes, signature/notarization and cleanup recorded in docs/beta/release-record.md.
