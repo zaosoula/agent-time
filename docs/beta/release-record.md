@@ -1,5 +1,15 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.49` published and verified — 2026-11-12
+
+Adds configurable activity counting: one started minute per contiguous eligible block or actual seconds, independent of final commercial rounding. New policy versions default to minutes; existing omitted modes retain seconds. Editing another field of an older rule explicitly preserves the mode shown in the editor. Raw capture metrics and existing immutable policy/report payloads are preserved. The UI, daily reports and exports disclose counting mode, raw eligible time and counting credit separately from commercial rounding. Exclusions/presence apply before counting, cross-midnight blocks share one credit within a policy revision, and weights, rates and caps apply afterward. Fractional boundaries cannot add an extra commercial minute or create a negative adjustment that prevents saving.
+
+GitHub Actions [run 43145992173](https://github.com/zaosoula/agent-time/actions/runs/43145992173) built/published source `386ffa240288a8f042f6f4c41184b20098f65884`. All 576 JavaScript tests, 33 Rust tests, production typecheck/build and the dependency audit passed. Independent review findings were regression-tested and re-reviewed. A real browser with the real backend verified the new-policy default and saved minute/second revisions: two 20-second blocks produce 120 eligible seconds / EUR 2.50 in minute mode versus 40 eligible seconds / EUR 1.25 after configured commercial rounding in seconds mode. Both saved reports retain their original amounts.
+
+The exact arm64 signed package passed the counting integration, database revision/report preservation, real MCP, copied-hook and linked-worktree tests, plus collector IPC/report-worker billing, month/export and midnight-credit regression checks. Changed packaged modules match source. Strict deep signature verification, app/DMG stapled-ticket validation and Gatekeeper assessments passed. The public manifest/signature/landing match the candidate; complete public downloads match SHA-256: updater archive `47318275e9859c67e3347b423e08649fff03294cf5ec1bf000786e6678a4da0e`; DMG `6224376db7ecc41e61e79d3ffeb87ebd5f285bc6701a299b742f348babc3dad9`.
+
+No live customer billing configuration was changed. Synthetic profiles and downloaded bundles were removed after proof capture. Publication is verified; customer installation is not claimed.
+
 ## `0.2.0-beta.48` published and verified — 2026-11-12
 
 Adds generic opt-in launcher business identity (`AGENT_TIME_AGENT_ID`) and bounded `AGENT_TIME_ATTR_*` metadata, distinct from native session/child IDs and provider profiles. MCP context/task declarations inherit, clear and freeze attributes; measured session, timeline and project reads filter by business identity/profile and expose temporal contributors with truncation flags. Repeated launcher hooks cannot overwrite explicit declarations, root tasks cannot inherit child metadata, and ambiguous hostless declarations cannot choose between hosts. Metadata slices share original minute credit rather than creating additional rounded blocks.
