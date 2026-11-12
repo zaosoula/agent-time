@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.51` candidate — 2026-11-12
+
+Release owner requested publication. Includes `dadf740`: separate retained Billing reports page and configured identity recognition for reported work contexts. 76 focused billing, documentation, UI/cache and bundle tests plus production typecheck/build passed. Independent code review found no actionable regressions. Read-only replay on a disposable snapshot reproduced the saved 30.3167-hour report, then produced 35.6833 hours after the attribution fix; live history/configuration and old saved reports were untouched. Known exclusions and counter rules remain unchanged. Signed build, full CI and hosted artifact verification pending.
+
 ## `0.2.0-beta.50` published and verified — 2026-11-12
 
 Includes billing preparation/loading feedback (`dc85eef`) and in-memory page retention (`7f0e499`). Release owner requested publication in this session. Billing retains historical work context needed for presence rules and exact host/tie ordering; counting and commercial rounding logic is unchanged. Cache is limited to eight live pages; work continues off-screen, drafts/scroll/zoom remain available, and hidden dialogs release their focus traps.
