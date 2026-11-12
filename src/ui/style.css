@@ -483,6 +483,9 @@ input {
   justify-content: space-between;
   padding: 0 27px;
   background: var(--panel);
+  /* Acts as the window title bar: drag and double-click must not select its text. */
+  -webkit-user-select: none;
+  user-select: none;
 }
 .breadcrumbs {
   display: flex;

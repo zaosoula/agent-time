@@ -282,7 +282,7 @@ onUnmounted(() => {
       </aside>
 
       <main class="main-pane">
-        <header class="toolbar" data-tauri-drag-region>
+        <header class="toolbar" data-tauri-drag-region="deep">
           <div class="breadcrumbs">
             <template v-if="showsProject && store.project !== 'all'">
               <span>{{ pageTitle }}</span>

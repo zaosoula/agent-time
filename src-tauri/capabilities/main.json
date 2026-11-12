@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "main-navigation",
-  "description": "Allow the main window to receive native menu navigation events.",
+  "description": "Allow the main window to receive native menu navigation events and use its title bar to drag and zoom.",
   "windows": ["main"],
-  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-start-dragging", "deep-link:default"]
+  "permissions": ["core:event:allow-listen", "core:event:allow-unlisten", "core:window:allow-start-dragging", "core:window:allow-internal-toggle-maximize", "deep-link:default"]
 }
