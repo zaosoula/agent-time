@@ -22,11 +22,12 @@ export function validateBillingProject(value:unknown):BillingProject{
   const item=object(value),id=text(item.id),effectiveFrom=date(item.effectiveFrom),rounding=object(item.rounding),fees=object(item.aiFees);
   if(ids.has(id)||effectiveFrom<previous)throw new Error('Billing policies must have unique IDs and ascending effective dates');ids.add(id);previous=effectiveFrom;
   if(!['overlapMergedWall','humanActive','weightedAgentOnly','weightedAgentRunning'].includes(String(item.basis)))throw new Error('Invalid billing basis');
+  if(item.countingMode!==undefined&&item.countingMode!=='minutes'&&item.countingMode!=='seconds')throw new Error('Invalid billing counting mode');
   if(typeof item.currency!=='string'||!/^[A-Z]{3}$/.test(item.currency))throw new Error('Invalid billing currency');
   if(![1,15,60].includes(Number(rounding.minutes))||typeof rounding.minutes!=='number'||!['nearest','up','down'].includes(String(rounding.mode))||!['day','period'].includes(String(rounding.scope)))throw new Error('Invalid billing rounding');
   if(!['none','actual','flat'].includes(String(fees.mode)))throw new Error('Invalid billing AI fee');
   if(fees.mode==='flat'&&!['day','period'].includes(String(fees.scope)))throw new Error('Invalid billing flat fee scope');
-  return {id,effectiveFrom,basis:item.basis,currency:item.currency,hourlyRate:item.hourlyRate===null?null:decimal(item.hourlyRate),agentOnlyHourlyRate:item.agentOnlyHourlyRate===null?null:decimal(item.agentOnlyHourlyRate),agentWeight:weight(item.agentWeight),rounding:{minutes:rounding.minutes,mode:rounding.mode,scope:rounding.scope},dailyCapMinutes:limit(item.dailyCapMinutes,'daily cap'),presenceWindowMinutes:limit(item.presenceWindowMinutes,'presence window'),aiFees:fees.mode==='flat'?{mode:'flat',amount:decimal(fees.amount),scope:fees.scope}:{mode:fees.mode}};
+  return {id,effectiveFrom,...(item.countingMode===undefined?{}:{countingMode:item.countingMode}),basis:item.basis,currency:item.currency,hourlyRate:item.hourlyRate===null?null:decimal(item.hourlyRate),agentOnlyHourlyRate:item.agentOnlyHourlyRate===null?null:decimal(item.agentOnlyHourlyRate),agentWeight:weight(item.agentWeight),rounding:{minutes:rounding.minutes,mode:rounding.mode,scope:rounding.scope},dailyCapMinutes:limit(item.dailyCapMinutes,'daily cap'),presenceWindowMinutes:limit(item.presenceWindowMinutes,'presence window'),aiFees:fees.mode==='flat'?{mode:'flat',amount:decimal(fees.amount),scope:fees.scope}:{mode:fees.mode}};
  }) as BillingProject['policies'];
  const repositories=strings(sources.repositories,4096).map(path=>{if(!isAbsolute(path)||/[*?\[\]{}]/.test(path))throw new Error('Billing repository must be an absolute path without glob patterns');return projectPathFromWorktree(path);});
  const revision=p.revision;if(revision!==undefined&&(!Number.isSafeInteger(revision)||Number(revision)<1))throw new Error('Invalid billing revision');
@@ -59,10 +60,12 @@ export function validateBillingReport(report:BillingReport):void{
   for(const amounts of [report.totals,...report.days]){
    object(amounts);
    for(const key of ['humanActiveSeconds','agentWallSeconds','agentOnlyWallSeconds','agentRunningSeconds','overlapMergedWallSeconds','excludedSeconds','unknownSeconds','crossProjectOverlapSeconds','eligibleSeconds','billableSeconds','roundingSeconds'] as const)if(typeof amounts[key]!=='number'||!Number.isFinite(amounts[key])||key!=='roundingSeconds'&&amounts[key]<0)throw new Error('Invalid billing report seconds');
+   for(const key of ['rawEligibleSeconds','countingAdjustmentSeconds'] as const)if(amounts[key]!==undefined&&(typeof amounts[key]!=='number'||!Number.isFinite(amounts[key])||amounts[key]!<0))throw new Error('Invalid billing report counting seconds');
    for(const key of ['timeAmount','aiAmount','totalAmount'] as const)if(amounts[key]!==null)decimal(amounts[key]);
    decimal(amounts.aiKnownAmount);
   }
-  let previous='';for(const day of report.days){if(date(day.date)<report.fromDate||day.date>report.toDate||day.date<=previous||day.policyId!==null&&!snapshot.policies.some(p=>p.id===day.policyId)||!Array.isArray(day.warnings)||day.warnings.some(w=>typeof w!=='string'))throw new Error('Invalid billing report day');previous=day.date;}
+  if(report.countingModes!==undefined&&(!Array.isArray(report.countingModes)||report.countingModes.some(mode=>!['minutes','seconds'].includes(mode))))throw new Error('Invalid billing report counting modes');
+  let previous='';for(const day of report.days){if(day.countingMode!==undefined&&!['minutes','seconds'].includes(day.countingMode)||date(day.date)<report.fromDate||day.date>report.toDate||day.date<=previous||day.policyId!==null&&!snapshot.policies.some(p=>p.id===day.policyId)||!Array.isArray(day.warnings)||day.warnings.some(w=>typeof w!=='string'))throw new Error('Invalid billing report day');previous=day.date;}
 
 }
 export class BillingStore{
@@ -82,6 +85,8 @@ export class BillingStore{
    const row=this.db.prepare('SELECT revision,payload FROM billing_projects WHERE id=?').get(project.id),current=row?JSON.parse(String(row.payload)) as BillingProject:null;
    if(current?(expectedRevision!==Number(row!.revision)):(expectedRevision!==undefined&&expectedRevision!==0))throw new Error('Billing project revision conflict; reload the project');
    if(current&&current.policies.some((p,index)=>canonical(p)!==canonical(project.policies[index])))throw new Error('Billing policies are immutable; append a new policy version');
+   const existingIds=new Set(current?.policies.map(policy=>policy.id)||[]);
+   project.policies=project.policies.map(policy=>!existingIds.has(policy.id)&&policy.countingMode===undefined?{...policy,countingMode:'minutes'}:policy);
    const saved={...project,revision:current?Number(row!.revision)+1:1};
    for(const policy of saved.policies){const existing=this.db.prepare('SELECT payload FROM billing_policies WHERE project_id=? AND id=?').get(saved.id,policy.id),payload=canonical(policy);if(existing&&existing.payload!==payload)throw new Error('Billing policy is immutable');this.db.prepare('INSERT OR IGNORE INTO billing_policies VALUES(?,?,?)').run(saved.id,policy.id,payload);}
    this.db.prepare('INSERT INTO billing_projects VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,payload=excluded.payload').run(saved.id,saved.revision,canonical(saved));

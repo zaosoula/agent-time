@@ -39,3 +39,52 @@ test('repository roots cover descendants with boundary and longest-root ownershi
 test('configuration validation applies the app transport payload limit',()=>{const p=project();p.sources.workspaceIds=Array.from({length:100},(_,i)=>String(i)+'x'.repeat(3000));assert.throws(()=>validateBillingProject(p),/large|size|limit/i);});
 
 test('workspace IDs carrying a repository path resolve without registering every worktree ID',()=>{const events=new EventStore(':memory:');try{const store=new BillingStore(events.database),p=store.saveProject(project());assert.equal(store.resolveProject('orca::'+p.sources.repositories[0]+'/.orca/workspaces/one').id,p.id);}finally{events.close();}});
+
+test('counting modes validate without materializing legacy defaults',()=>{
+ const legacy=project();assert.equal(Object.hasOwn(validateBillingProject(legacy).policies[0]!,'countingMode'),false);
+ for(const countingMode of ['minutes','seconds'] as const){const value=project();value.policies[0]!.countingMode=countingMode;assert.equal(validateBillingProject(value).policies[0]!.countingMode,countingMode);}
+ for(const countingMode of ['hours','',null,1,['minutes'],{toString:()=> 'minutes'}]){const value=project();Object.assign(value.policies[0]!,{countingMode});assert.throws(()=>validateBillingProject(value),/counting/i);}
+});
+test('new policy saves default to minutes while raw legacy policy prefixes remain untouched',()=>{
+ const events=new EventStore(':memory:');try{
+  const store=new BillingStore(events.database),legacy=validateBillingProject({...project(),revision:1});
+  const canonical=(value:unknown):string=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical((value as Record<string,unknown>)[key])).join(',')+'}':JSON.stringify(value);
+  const originalPolicy=canonical(legacy.policies[0]);
+  events.database.prepare('INSERT INTO billing_projects VALUES(?,?,?)').run(legacy.id,1,canonical(legacy));
+  events.database.prepare('INSERT INTO billing_policies VALUES(?,?,?)').run(legacy.id,legacy.policies[0]!.id,originalPolicy);
+  const renamed=store.saveProject({...store.listProjects()[0]!,name:'Renamed'},1);
+  assert.equal(Object.hasOwn(renamed.policies[0]!,'countingMode'),false);
+  const appended=store.saveProject({...renamed,policies:[...renamed.policies,{...renamed.policies[0]!,id:'new-policy'}]},2);
+  assert.equal(appended.policies[1]!.countingMode,'minutes');assert.equal(Object.hasOwn(appended.policies[0]!,'countingMode'),false);
+  assert.equal(events.database.prepare('SELECT payload FROM billing_policies WHERE id=?').get(legacy.policies[0]!.id)?.payload,originalPolicy);
+  assert.equal(store.saveProject({...project(),id:'brand-new'}).policies[0]!.countingMode,'minutes');
+ }finally{events.close();}
+});
+test('archives preserve legacy counting omissions and immutable report bytes',async()=>{
+ const root=mkdtempSync(join(tmpdir(),'billing-legacy-counting-')),source=new EventStore(join(root,'source.sqlite')),target=new EventStore(join(root,'target.sqlite'));
+ try{
+  const legacy=validateBillingProject({...project(),revision:1}),store=new BillingStore(source.database),saved=report(legacy);
+  // Seed actual pre-feature rows rather than passing through new-policy defaults.
+  store.saveReport(saved);
+  const canonical=(value:unknown):string=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical((value as Record<string,unknown>)[key])).join(',')+'}':JSON.stringify(value);
+  source.database.prepare('INSERT INTO billing_projects VALUES(?,?,?)').run(legacy.id,1,canonical(legacy));
+  source.database.prepare('INSERT INTO billing_policies VALUES(?,?,?)').run(legacy.id,legacy.policies[0]!.id,canonical(legacy.policies[0]));
+  const original=source.database.prepare('SELECT payload FROM billing_reports WHERE id=?').get(saved.reportId)?.payload;
+  const archive=await source.exportArchive(root);target.importArchive(root,basename(archive.path));
+  const imported=new BillingStore(target.database);assert.deepEqual(imported.listProjects(),[legacy]);imported.saveReport(saved);
+  assert.equal(target.database.prepare('SELECT payload FROM billing_reports WHERE id=?').get(saved.reportId)?.payload,original);
+ }finally{source.close();target.close();rmSync(root,{recursive:true,force:true});}
+});
+
+test('optional report counting disclosures validate without accepting malformed values',()=>{
+ const events=new EventStore(':memory:');try{
+  const store=new BillingStore(events.database),p=project();p.policies[0]!.countingMode='seconds';
+  assert.equal(store.saveProject(p).policies[0]!.countingMode,'seconds');
+  const valid=report(p);valid.countingModes=['minutes','seconds'];valid.totals.rawEligibleSeconds=0;valid.totals.countingAdjustmentSeconds=0;store.saveReport(valid);
+  for(const field of ['rawEligibleSeconds','countingAdjustmentSeconds'] as const)for(const value of [-1,NaN,'0']){
+   const invalid=report(p);invalid.reportId=randomId();Object.assign(invalid.totals,{[field]:value});assert.throws(()=>store.saveReport(invalid),/counting/i);
+  }
+  const invalid=report(p);invalid.reportId=randomId();Object.assign(invalid,{countingModes:['hours']});assert.throws(()=>store.saveReport(invalid),/counting/i);
+ }finally{events.close();}
+ function randomId(){return `invalid-${Math.random()}`;}
+});

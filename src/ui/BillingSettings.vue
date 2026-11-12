@@ -31,7 +31,7 @@ const canReport = computed(() => Boolean(draft.value && original.value && draft.
 const splitLines = (value: string) => [...new Set(value.split('\n').map((line) => line.trim()).filter(Boolean))];
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value));
 function newPolicy(): BillingPolicy {
-  return { id: crypto.randomUUID(), effectiveFrom: today, basis: 'overlapMergedWall', currency: 'EUR', hourlyRate: null,
+  return { id: crypto.randomUUID(), effectiveFrom: today, basis: 'overlapMergedWall', countingMode: 'minutes', currency: 'EUR', hourlyRate: null,
     agentOnlyHourlyRate: null, agentWeight: '1', rounding: { minutes: 1, mode: 'nearest', scope: 'period' },
     dailyCapMinutes: null, presenceWindowMinutes: null, aiFees: { mode: 'none' } };
 }
@@ -60,6 +60,16 @@ function setOptionalMinutes(field: 'dailyCapMinutes' | 'presenceWindowMinutes', 
   const value = (event.target as HTMLInputElement).value;
   if (policy.value) policy.value[field] = value === '' ? null : Number(value);
 }
+function setCountingMode(event: Event) {
+  if (!policy.value) return;
+  const mode = (event.target as HTMLSelectElement).value;
+  // Keeping an existing seconds selection must not materialize a legacy omission.
+  if (mode === (policy.value.countingMode ?? 'seconds')) return;
+  const previous = original.value?.policies.find((item) => item.id === policy.value!.id);
+  if (mode === 'seconds' && previous && previous.countingMode === undefined) delete policy.value.countingMode;
+  else policy.value.countingMode = mode === 'minutes' ? 'minutes' : 'seconds';
+}
+const countingLabel = (mode: BillingPolicy['countingMode']) => mode === 'minutes' ? 'Minutes per activity block' : 'Actual seconds';
 function setFeeMode(event: Event) {
   if (!policy.value) return;
   const mode = (event.target as HTMLSelectElement).value;
@@ -78,6 +88,7 @@ async function save() {
     if (policyChanged.value) {
       const version = clone(policy.value);
       version.id = crypto.randomUUID();
+      version.countingMode = policy.value.countingMode ?? 'seconds';
       version.currency = version.currency.trim().toUpperCase();
       project.policies.push(version);
     }
@@ -137,19 +148,21 @@ onMounted(refresh);
           <p class="hint">Each change creates a new version. A correction can use the same effective date; previous versions and saved reports are kept.</p>
           <div class="grid"><label>Effective from<input v-model="policy.effectiveFrom" type="date" required /></label><label>Billing basis<select v-model="policy.basis"><option v-for="basis in bases" :key="basis.value" :value="basis.value">{{ basis.label }}</option></select></label></div>
           <p class="explanation">{{ basisDetail }} Declared task timers do not automatically become billable time.</p>
+          <label>Activity counting<select :value="policy.countingMode ?? 'seconds'" @change="setCountingMode"><option value="minutes">Minutes per activity block</option><option value="seconds">Actual seconds</option></select></label>
+          <p class="hint">Minutes round each contiguous eligible activity block up to a minute. Seconds use the actual duration. Exclusions still apply. Commercial rounding below is a separate step.</p>
           <div class="grid"><label>Currency<input v-model="policy.currency" required pattern="[A-Za-z]{3}" maxlength="3" placeholder="EUR" /></label>
             <label>Hourly rate <small>Leave blank if unknown</small><input :value="policy.hourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Unknown" @input="setNullableMoney('hourlyRate', $event)" /></label>
             <template v-if="policy.basis === 'weightedAgentOnly' || policy.basis === 'weightedAgentRunning'"><label>Agent fraction<input v-model="policy.agentWeight" required inputmode="decimal" pattern="([0-9]+(\.[0-9]+)?|[0-9]+/[1-9][0-9]*)" placeholder="1/6" /></label></template>
               <label v-if="policy.basis !== 'humanActive'">Agent-only hourly rate <small>Optional; otherwise use hourly rate</small><input :value="policy.agentOnlyHourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Use hourly rate" @input="setNullableMoney('agentOnlyHourlyRate', $event)" /></label>
-            <label>Rounding increment<select v-model="policy.rounding.minutes"><option :value="1">1 minute</option><option :value="15">15 minutes</option><option :value="60">1 hour</option></select></label>
-            <label>Rounding direction<select v-model="policy.rounding.mode"><option value="nearest">Nearest</option><option value="up">Up</option><option value="down">Down</option></select></label>
+            <label>Commercial rounding increment<select v-model="policy.rounding.minutes"><option :value="1">1 minute</option><option :value="15">15 minutes</option><option :value="60">1 hour</option></select></label>
+            <label>Commercial rounding direction<select v-model="policy.rounding.mode"><option value="nearest">Nearest</option><option value="up">Up</option><option value="down">Down</option></select></label>
             <label>Apply rounding<select v-model="policy.rounding.scope"><option value="period">Once per period</option><option value="day">Each day</option></select></label>
             <label>Daily cap (minutes) <small>Optional</small><input :value="policy.dailyCapMinutes ?? ''" type="number" min="1" step="1" placeholder="No cap" @input="setOptionalMinutes('dailyCapMinutes', $event)" /></label>
             <label>Recent human-message window (minutes) <small>Optional; requires captured message evidence</small><input :value="policy.presenceWindowMinutes ?? ''" type="number" min="1" step="1" placeholder="No presence gate" @input="setOptionalMinutes('presenceWindowMinutes', $event)" /></label>
             <label>AI fees<select :value="policy.aiFees.mode" @change="setFeeMode"><option value="none">No AI fees</option><option value="actual">Actual recorded cost</option><option value="flat">Flat fee</option></select></label>
             <template v-if="policy.aiFees.mode === 'flat'"><label>Flat amount<input v-model="policy.aiFees.amount" required inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" /></label><label>Flat fee applies<select v-model="policy.aiFees.scope"><option value="period">Per period</option><option value="day">Per day</option></select></label></template>
           </div><p v-if="policy.aiFees.mode === 'actual'" class="hint">Missing, incomplete or unverified costs are flagged. Unknown amounts stay unknown.</p>
-          <details v-if="original?.policies.length"><summary>Saved policy versions ({{ original.policies.length }}) · project revision {{ original.revision ?? 0 }}</summary><ul><li v-for="version in [...original.policies].reverse().sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))" :key="version.id">{{ version.effectiveFrom }} · {{ bases.find((basis) => basis.value === version.basis)?.label }} · {{ version.hourlyRate ?? 'Unknown' }} {{ version.currency }}/h <small>{{ version.id }}</small></li></ul></details>
+          <details v-if="original?.policies.length"><summary>Saved policy versions ({{ original.policies.length }}) · project revision {{ original.revision ?? 0 }}</summary><ul><li v-for="version in [...original.policies].reverse().sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))" :key="version.id">{{ version.effectiveFrom }} · {{ countingLabel(version.countingMode) }} · {{ bases.find((basis) => basis.value === version.basis)?.label }} · {{ version.hourlyRate ?? 'Unknown' }} {{ version.currency }}/h <small>{{ version.id }}</small></li></ul></details>
         </fieldset>
         <footer class="save-row"><span class="muted">{{ original && policyChanged ? 'Saving will append a policy version.' : 'Configuration is saved locally on this Mac.' }}</span><button class="btn primary" type="submit" :disabled="saving || reporting">{{ saving ? 'Saving…' : 'Save project' }}</button></footer>
       </form>
@@ -157,10 +170,11 @@ onMounted(refresh);
         <form class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reporting" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reporting" /></label><button class="btn primary" :disabled="reporting || saving">{{ reporting ? 'Working…' : 'Generate report' }}</button></form>
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
+          <p class="hint">Activity counting: {{ (report.countingModes ?? ['seconds']).map(countingLabel).join(' · ') }}. Commercial rounding follows the saved policy for each day.</p>
           <p class="explanation">{{ report.explanation }}</p>
           <div v-if="!report.quality.complete || report.quality.warnings.length" class="quality"><strong>{{ report.quality.complete ? 'Review notes' : 'Incomplete evidence — review before invoicing' }}</strong><ul v-if="report.quality.warnings.length"><li v-for="warning in report.quality.warnings" :key="warning">{{ warning }}</li></ul></div>
-          <details class="metrics"><summary>Measured time &amp; adjustments</summary><dl><dt>Human active</dt><dd>{{ duration(report.totals.humanActiveSeconds) }}</dd><dt>Agent wall time</dt><dd>{{ duration(report.totals.agentWallSeconds) }}</dd><dt>Agent only</dt><dd>{{ duration(report.totals.agentOnlyWallSeconds) }}</dd><dt>Cumulative agents</dt><dd>{{ duration(report.totals.agentRunningSeconds) }}</dd><dt>Shared clock</dt><dd>{{ duration(report.totals.overlapMergedWallSeconds) }}</dd><dt>Eligible before rounding</dt><dd>{{ duration(report.totals.eligibleSeconds) }}</dd><dt>Rounding adjustment</dt><dd>{{ duration(report.totals.roundingSeconds) }}</dd><dt>Excluded</dt><dd>{{ duration(report.totals.excludedSeconds) }}</dd><dt>Unknown coverage</dt><dd>{{ duration(report.totals.unknownSeconds) }}</dd><dt>Cross-project overlap</dt><dd>{{ duration(report.totals.crossProjectOverlapSeconds) }}</dd><dt>Known AI cost</dt><dd>{{ amount(report.totals.aiKnownAmount) }}</dd></dl></details>
-          <div class="table-scroll"><table><caption>Daily breakdown</caption><thead><tr><th>Date</th><th>Billable</th><th>Time amount</th><th>AI fees</th><th>Total</th></tr></thead><tbody><template v-for="day in report.days" :key="day.date"><tr><th scope="row">{{ day.date }}</th><td>{{ duration(day.billableSeconds) }}</td><td>{{ amount(day.timeAmount) }}</td><td>{{ amount(day.aiAmount) }}</td><td>{{ amount(day.totalAmount) }}</td></tr><tr v-if="day.warnings.length"><td colspan="5" class="day-warning">{{ day.warnings.join(' · ') }}</td></tr></template></tbody></table></div>
+          <details class="metrics"><summary>Measured time &amp; adjustments</summary><dl><dt>Human active</dt><dd>{{ duration(report.totals.humanActiveSeconds) }}</dd><dt>Agent wall time</dt><dd>{{ duration(report.totals.agentWallSeconds) }}</dd><dt>Agent only</dt><dd>{{ duration(report.totals.agentOnlyWallSeconds) }}</dd><dt>Cumulative agents</dt><dd>{{ duration(report.totals.agentRunningSeconds) }}</dd><dt>Shared clock</dt><dd>{{ duration(report.totals.overlapMergedWallSeconds) }}</dd><dt>Raw eligible time</dt><dd>{{ duration(report.totals.rawEligibleSeconds ?? report.totals.eligibleSeconds) }}</dd><dt>Activity counting adjustment</dt><dd>{{ duration(report.totals.countingAdjustmentSeconds ?? 0) }}</dd><dt>Eligible before commercial rounding</dt><dd>{{ duration(report.totals.eligibleSeconds) }}</dd><dt>Commercial rounding adjustment</dt><dd>{{ duration(report.totals.roundingSeconds) }}</dd><dt>Excluded</dt><dd>{{ duration(report.totals.excludedSeconds) }}</dd><dt>Unknown coverage</dt><dd>{{ duration(report.totals.unknownSeconds) }}</dd><dt>Cross-project overlap</dt><dd>{{ duration(report.totals.crossProjectOverlapSeconds) }}</dd><dt>Known AI cost</dt><dd>{{ amount(report.totals.aiKnownAmount) }}</dd></dl></details>
+          <div class="table-scroll"><table><caption>Daily breakdown</caption><thead><tr><th>Date</th><th>Counting</th><th>Billable</th><th>Time amount</th><th>AI fees</th><th>Total</th></tr></thead><tbody><template v-for="day in report.days" :key="day.date"><tr><th scope="row">{{ day.date }}</th><td>{{ countingLabel(day.countingMode) }}</td><td>{{ duration(day.billableSeconds) }}</td><td>{{ amount(day.timeAmount) }}</td><td>{{ amount(day.aiAmount) }}</td><td>{{ amount(day.totalAmount) }}</td></tr><tr v-if="day.warnings.length"><td colspan="6" class="day-warning">{{ day.warnings.join(' · ') }}</td></tr></template></tbody></table></div>
           <div class="report-actions"><button v-if="cursor" class="btn" :disabled="reporting" @click="loadReport(true)">Load more days</button><span class="muted">{{ report.days.length }} days shown</span><button class="btn" :disabled="reporting" @click="loadReport(false, 'csv')">Export CSV</button><button class="btn" :disabled="reporting" @click="loadReport(false, 'markdown')">Export Markdown</button></div>
           <div v-if="exportPath" class="export-result" role="status"><strong>Export saved</strong><code>{{ exportPath }}</code><button class="btn btn-sm" @click="copyExportPath">Copy path</button><p class="hint">In Finder, press ⇧⌘G and paste this path to find the file.</p></div>
         </template>
