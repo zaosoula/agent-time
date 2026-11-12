@@ -42,3 +42,10 @@ test('resource reports are validated',()=>{
  assert.equal(validAgentReport(resource({url:'https://x.dev/a',resourceKind:'secret'})),false);
  assert.equal(validAgentReport(resource({url:'https://x.dev/a',extra:1})),false);
 });
+
+test('resource attribution retains persisted canonical paths after worktree deletion',()=>{
+ const resources=reportedResources([resource({url:'https://x.dev/canonical'},{workspaceId:'local::/tmp/deleted-worktree',projectPath:'/projects/main/packages/client'})]);
+ assert.equal(resources.get('https://x.dev/canonical')?.projectPath,'/projects/main/packages/client');
+ const result=applyReportedResources(summary([human('https://x.dev/canonical',{projectPath:'/previous/project'})]),resources);
+ assert.equal(result.intervals[0].projectPath,'/projects/main/packages/client');
+});

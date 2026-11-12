@@ -162,7 +162,7 @@ export function groupTimelineProjects(
   humanBySession: Map<string, Interval[]>,
   bars: (session: Session) => Interval[],
   projectName: (session: Session) => string,
-  projectFromWorkspace: (workspaceId: string) => string,
+  projectFromWorkspace: (workspaceId: string, canonicalPath?:string) => string,
   includeHumanOnly = true,
 ): TimelineProjectGroup[] {
   const groups = new Map<string, TimelineProjectGroup>();
@@ -200,8 +200,8 @@ export function groupTimelineProjects(
   };
   for (const session of sessions) get(projectName(session)).sessions.push(session);
   for (const interval of humanIntervals) {
-    if (interval.state !== 'human' || !interval.workspaceId) continue;
-    const name = projectFromWorkspace(interval.workspaceId);
+    if (interval.state !== 'human' || interval.userAttribution==='unassigned' || (!interval.workspaceId && !interval.projectPath)) continue;
+    const name = projectFromWorkspace(interval.workspaceId || '', interval.userAttribution==='assigned'?undefined:interval.projectPath);
     if (name === 'Unassigned' || (!includeHumanOnly && !groups.has(name))) continue;
     addHuman(get(name), interval);
   }
@@ -216,7 +216,7 @@ export function groupTimelineProjects(
       } else {
         group.agent.push(...observed);
         group.agentSeconds += session.seconds;
-        for (const interval of (humanBySession.get(session.key) || []).filter((i) => !i.workspaceId))
+        for (const interval of (humanBySession.get(session.key) || []).filter((i) => !i.workspaceId && !i.projectPath && !i.userAttribution))
           addHuman(group, interval);
       }
     }

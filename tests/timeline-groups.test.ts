@@ -94,3 +94,16 @@ test('handoffs at the same instant do not create a false concurrency spike',()=>
  const steps=agentLoadSegments([interval(0,2,'grouped'),interval(2,4,'grouped')],[]);
  assert.deepEqual(steps.map(({start,end,total})=>[start,end,total]),[[0,4,1]]);
 });
+
+test('human timeline groups follow persisted canonical worktree projects',()=>{
+ const human={...interval(10,20,'human','local::/tmp/deleted-worktree'),projectPath:'/projects/main'};
+ const groups=groupTimelineProjects([],[human],new Map(),()=>[],sessionProject,workspaceProject);
+ assert.equal(groups.length,1);assert.equal(groups[0].name,'/projects/main');assert.equal(groups[0].humanSeconds,60);
+});
+
+test('manual assignments and unassigned choices override original worktree metadata in timeline groups',()=>{
+ const assigned={...interval(10,20,'human','user::/chosen'),projectPath:'/observed',userAttribution:'assigned' as const};
+ const unassigned={...interval(30,40,'human'),projectPath:'/observed',userAttribution:'unassigned' as const};
+ const groups=groupTimelineProjects([],[assigned,unassigned],new Map(),()=>[],sessionProject,workspaceProject);
+ assert.deepEqual(groups.map(group=>group.name),['/chosen']);assert.equal(groups[0].humanSeconds,60);
+});

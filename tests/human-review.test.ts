@@ -241,3 +241,16 @@ test('an automatic Orca project match is credited before any manual confirmation
   assert.deepEqual(collector.store.events(),original);
  }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
 });
+
+test('weekly review and human groups share canonical paths without overriding manual choices',()=>{
+ const start=new Date('2026-11-09T10:00:00').getTime()/1000;
+ const human=(id:string,offset:number,fields:Record<string,unknown>)=>({start:start+offset,end:start+offset+5,state:'human' as const,proof:'observed' as const,sourceEventIds:[id+'a',id+'b'],foregroundName:'Editor',...fields});
+ const intervals=[human('a',0,{workspaceId:'local::/tmp/worktree-a',projectPath:'/projects/main'}),human('b',5,{workspaceId:'local::/tmp/worktree-b',projectPath:'/projects/main'}),human('c',10,{workspaceId:'manual::/chosen',projectPath:'/projects/main',userAttribution:'assigned'}),human('d',15,{projectPath:'/projects/main',userAttribution:'unassigned'})];
+ const summary={intervals,sessions:[],coverage:[],unresolved:[],humanSeconds:0,agentSeconds:0,childAgentSeconds:0,elapsedSeconds:0};
+ const groups=groupHumanReview(intervals);
+ assert.deepEqual(groups.map(group=>[group.projectPath,group.seconds]),[[undefined,5],['/chosen',5],['/projects/main',10]]);
+ const week=weeklyReview(summary,'2026-11-09',new Set(['2026-11-09']));
+ assert.deepEqual(new Set(week.projects.map(row=>row.project)),new Set(['/projects/main','/chosen','Unassigned']));
+ assert.equal(week.reviewedEntries.reduce((sum,entry)=>sum+entry.seconds,0),20);
+ assert.deepEqual(new Set(week.reviewedEntries.map(entry=>entry.project)),new Set(['/projects/main','/chosen','Unassigned']));
+});

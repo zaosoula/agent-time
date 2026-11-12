@@ -1,6 +1,11 @@
+import {MAX_AGENT_REPORT_BYTES,applyWorkAttributes,validateAttributes,validateAgentIdentity,eventWorkMetadata} from '../capture/work-context.ts';
+import {PeriodTimeCredits} from './time-credit.ts';
+import {metadataResolver,matchesAgent,hasAgentFilter,type AgentFilter} from './work-metadata.ts';
+import {resolveProjectPath} from '../capture/project-path.ts';
 import {boundedSpoolListing,MAX_PENDING_HOOKS,MAX_HOOK_BYTES} from '../capture/hooks.ts';
 import {openEventDatabase,isPackedEventDatabase} from '../capture/event-database.ts';
 import {DatabaseSync} from 'node:sqlite';
+import {isDeepStrictEqual} from 'node:util';
 import {randomUUID} from 'node:crypto';
 import {existsSync,linkSync,lstatSync,mkdirSync,readFileSync,readdirSync,unlinkSync,writeFileSync} from 'node:fs';
 import {execFileSync} from 'node:child_process';
@@ -49,12 +54,12 @@ function pendingReports(output:string):CaptureEvent[]{
  const events:CaptureEvent[]=[],spool=join(output,'spool');
  if(!existsSync(spool))return events;
  for(const name of boundedSpoolListing(spool).files.filter(name=>name.endsWith('.json')).slice(0,2000))try{
-  const path=join(spool,name),info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink()||info.size>2048)continue;
+  const path=join(spool,name),info=lstatSync(path);if(!info.isFile()||info.isSymbolicLink()||info.size>MAX_AGENT_REPORT_BYTES)continue;
   const event=JSON.parse(readFileSync(path,'utf8')) as CaptureEvent;if(validAgentReport(event))events.push(event);
  }catch{/* Ignore incomplete or invalid spool entries. */}
  return events;
 }
-export interface Snapshot {summary:Summary;events:CaptureEvent[];from:number;to:number;truncatedBefore:boolean;firstSeen?:Map<string,number>;}
+export interface Snapshot {summary:Summary;events:CaptureEvent[];from:number;to:number;truncatedBefore:boolean;metadataTruncated?:boolean;firstSeen?:Map<string,number>;}
 // A safety cap on one day's window, far above a day of two-second samples.
 const maxWindowEvents=1_500_000;
 export function snapshotSettings(output:string){
@@ -91,11 +96,30 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
   if(resourceRows.length>20000)throw new Error('Too many resource mappings for a bounded summary; use explicit project attribution');
   const resources=reportedResources([...resourceRows.map(row=>JSON.parse(String(row.payload)) as CaptureEvent),...pending]);
   const intervals:Interval[]=[],coverage:Issue[]=[],unresolved:Issue[]=[],sessions=new Map<string,Session>(),firstSeen=new Map<string,number>();
-  const kept=new Map<string,CaptureEvent>();let previousTrusted=true;let readFrom=Infinity;
+  const kept=new Map<string,CaptureEvent>();const metadataHooks=new Map<string,{fingerprint:string;ids:string[]}>();let metadataHookCount=0;let metadataTruncated=false;const hydrated=new Set<string>();let previousTrusted=true;let readFrom=Infinity;
   for(const [start,end] of chunks(from,to)){
    const window=readWindowEvents(db,start,end,options.agentIdleThreshold);
    if(window.events.length>maxWindowEvents)throw new Error('Too many events for one day; use a shorter date range');
    readFrom=Math.min(readFrom,window.bounds.readFrom);
+   // Bounded metadata-only anchors keep old launchers without replaying old timing evidence.
+   const native=new Map<string,CaptureEvent>();
+   for(const event of window.events)if(event.provider&&event.sessionId&&(event.source==='hook'||event.source==='orca'))native.set(agentSessionKey({...event,child:Boolean(event.agentId)}),event);
+   if(native.size>500)metadataTruncated=true;
+   for(const [key,item] of [...native].slice(0,500))if(!hydrated.has(key)){
+    hydrated.add(key);
+    const identitySql="json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND coalesce(json_extract(payload,'$.hostId'),'')=? AND coalesce(json_extract(payload,'$.agentId'),'')=?";
+    const args=[item.provider!,item.sessionId!,item.hostId||'',item.agentId||''];
+    const query=`SELECT payload FROM events WHERE observed_at<? AND json_extract(payload,'$.source')='hook' AND ${identitySql} AND (json_type(payload,'$.data.attributes') IS NOT NULL OR json_type(payload,'$.data.agentIdentity') IS NOT NULL OR json_type(payload,'$.data.agentProfile') IS NOT NULL OR json_type(payload,'$.data.childType') IS NOT NULL) ORDER BY observed_at DESC LIMIT 129`;
+    const anchors=db.prepare(query).all(window.bounds.readFrom,...args);
+    if(anchors.length>128)metadataTruncated=true;
+    for(const row of anchors.slice(0,128)){const event=JSON.parse(String(row.payload)) as CaptureEvent;kept.set(event.eventId,event);}
+    // The launcher baseline may predate all subsequent metadata declarations.
+    const baseline=db.prepare(`SELECT payload FROM events WHERE observed_at<? AND json_extract(payload,'$.source')='hook' AND ${identitySql} AND json_extract(payload,'$.kind')='session_start' ORDER BY observed_at LIMIT 1`).get(window.bounds.readFrom,...args);
+    if(baseline){const event=JSON.parse(String(baseline.payload)) as CaptureEvent;kept.set(event.eventId,event);}
+    const contextRows=db.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at<? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='work_context' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND (json_extract(payload,'$.hostId') IS NULL OR json_extract(payload,'$.hostId')=?) ORDER BY observed_at DESC LIMIT 129`).all(window.bounds.readFrom,item.provider!,item.sessionId!,item.hostId||'');
+    if(contextRows.length>128)metadataTruncated=true;
+    for(const row of contextRows.slice(0,128)){const event=JSON.parse(String(row.payload)) as CaptureEvent;kept.set(event.eventId,event);}
+   }
    const rawEvents=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
    const events=options.countTaskCounters?hydrateReports(db,rawEvents):rawEvents;
    const decided=applyReportedResources(applyHumanDecisions(summarize(events,options),decisions,splits),resources);
@@ -119,9 +143,20 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
    const creditedCounters=new Set(summary.intervals.filter(i=>i.attributionSource==='task-counter').flatMap(i=>i.sourceEventIds));
    for(const event of events){
     if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
+    if(event.source==='hook'&&(event.kind==='session_start'||event.data?.agentIdentity!==undefined||event.data?.attributes!==undefined||event.data?.childType!==undefined||event.data?.agentProfile!==undefined)){
+     const key=agentSessionKey({...event,child:Boolean(event.agentId)}),fingerprint=JSON.stringify(eventWorkMetadata(event)),previous=metadataHooks.get(key);
+     if(previous?.fingerprint!==fingerprint){
+      if(metadataHookCount<8192){
+       const ids=previous?.ids||[];ids.push(event.eventId);kept.set(event.eventId,event);metadataHookCount++;
+       if(ids.length>128){kept.delete(ids.splice(1,1)[0]!);metadataHookCount--;metadataTruncated=true;}
+       metadataHooks.set(key,{fingerprint,ids});
+      }else metadataTruncated=true;
+     }
+     if(!(readOptions.billingEvidence&&event.kind==='prompt_submitted'))continue;
+    }
     // Keep context for the same 12-hour lifetime used by attribution, including across day windows.
     if(readOptions.billingEvidence&&(event.source==='capture'||['sleep','wake','screen_locked','screen_unlocked','session_locked','session_unlocked'].includes(event.kind)||event.source==='hook'&&event.kind==='prompt_submitted')){kept.set(event.eventId,event);continue;}
-    if(event.source==='agent_report'){if((event.observedAt>=from-(event.kind==='work_context'?43200:3600)||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
+    if(event.source==='agent_report'){if((event.observedAt>=from-(event.kind==='work_context'?43200:3600)||event.kind==='work_context'&&(event.data?.attributes!==undefined||event.data?.agentIdentity!==undefined)||creditedCounters.has(event.eventId))&&event.observedAt<to)kept.set(`${event.eventId}|${event.observedAt}`,event);continue;}
     if(event.source!=='macos'||event.kind!=='activity'||event.observedAt<start||event.observedAt>=end)continue;
     const untrusted=event.data?.accessibilityTrusted===false;
     if(untrusted||!previousTrusted||hasIssueKeys(event))kept.set(event.eventId,event);
@@ -132,12 +167,12 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
   for(const i of children){const key=agentSessionKey(i),group=byChild.get(key)||[];group.push([i.start,i.end]);byChild.set(key,group);}
   const summary:Summary={intervals,coverage,unresolved,sessions:[...sessions.values()],humanSeconds:measured.humanActiveSeconds,agentSeconds:measured.agentRunningSeconds,agentWallSeconds:measured.agentWallSeconds,childAgentSeconds:[...byChild.values()].reduce((sum,group)=>sum+minuteCreditSeconds(group),0),elapsedSeconds:measured.overlapMergedWallSeconds};
   const truncatedBefore=Boolean(db.prepare('SELECT 1 AS found FROM events WHERE observed_at<? LIMIT 1').get(readFrom));
-  return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,firstSeen};
+  return {summary,events:[...kept.values()].sort((a,b)=>a.observedAt-b.observedAt),from,to,truncatedBefore,metadataTruncated,firstSeen};
  }finally{if(!readOptions.database)db.close();}
 }
 const hasIssueKeys=(event:CaptureEvent)=>[event.data?.browserUrl,event.data?.browserTitle,event.data?.orcaSelectedTabTitle,event.data?.tabTitle].some(value=>issueKeys(value).length>0);
 const canonicalProject=(value:string)=>{const path=value.includes('::')?value.split('::').at(-1)||value:value;return isAbsolute(path)?projectPathFromWorktree(path):path;};
-const projectOf=(i:Interval)=>{const path=i.workspaceId?.split('::').at(-1);return path?canonicalProject(path):null;};
+const projectOf=(i:Interval)=>{if(i.userAttribution==='unassigned')return null;if(i.projectPath&&i.userAttribution!=='assigned')return i.projectPath;const path=i.workspaceId?.split('::').at(-1);return path?resolveProjectPath(path,{hostId:i.hostId}):null;};
 const issueKeys=(value:unknown):string[]=>typeof value==='string'?[...new Set([...value.slice(0,512).matchAll(/\b([a-z][a-z0-9]{1,15}-[1-9][0-9]{0,8})\b/gi)].map(match=>match[1]!.toUpperCase()).filter(key=>issuePattern.test(key)))]:[];
 const workspaceIssueFromId=(workspaceId?:string)=>{const path=workspaceId?.split('::').at(-1);const keys=issueKeys(path?basename(path):'');return keys.length===1?keys[0]!:null;};
 const workspaceIssue=(i:Interval)=>workspaceIssueFromId(i.workspaceId);
@@ -160,9 +195,10 @@ function perDay(rows:ReturnType<typeof attributedIntervals>){
  for(const row of rows){let cursor=row.start;while(cursor<row.end){const date=dateOf(cursor),next=new Date(dateStart(date)*1000);next.setDate(next.getDate()+1);const end=Math.min(row.end,next.getTime()/1000);pieces.push({...row,start:cursor,end});cursor=end;}}
  return [...new Set(pieces.map(i=>dateOf(i.start)))].sort().map(date=>({date,...totals(pieces.filter(i=>dateOf(i.start)===date))}));
 }
-interface AttributionIndex {byCounter:Map<string,CaptureEvent>;bySession:Map<string,CaptureEvent[]>;byProject:Map<string,CaptureEvent[]>;pageKeys:Map<string,string[]>;}
-function attributionIndex(events:CaptureEvent[]):AttributionIndex{
- const index:AttributionIndex={byCounter:new Map(),bySession:new Map(),byProject:new Map(),pageKeys:new Map()};
+interface AttributionIndex {hosts:Map<string,Set<string>>;byCounter:Map<string,CaptureEvent>;bySession:Map<string,CaptureEvent[]>;byProject:Map<string,CaptureEvent[]>;pageKeys:Map<string,string[]>;}
+function attributionIndex(events:CaptureEvent[],intervals:Interval[]=[]):AttributionIndex{
+ const index:AttributionIndex={hosts:new Map(),byCounter:new Map(),bySession:new Map(),byProject:new Map(),pageKeys:new Map()};
+ for(const item of [...events,...intervals])if(item.provider&&item.sessionId){const key=`${item.provider}:${item.sessionId}`,hosts=index.hosts.get(key)||new Set<string>();if(item.hostId)hosts.add(item.hostId);index.hosts.set(key,hosts);}
  for(const event of events){
   if(event.source==='agent_report'&&event.kind==='task_start')index.byCounter.set(event.eventId,event);
   if(event.source==='agent_report'&&event.kind==='work_context'){
@@ -186,7 +222,7 @@ function recent(rows:CaptureEvent[],at:number,maxAge:number):CaptureEvent[]{
 }
 function contextFor(i:Interval,index:AttributionIndex):CaptureEvent|null{
  if(!i.sessionId||!i.provider)return null;
- return recent(index.bySession.get(`${i.provider}:${i.sessionId}`)||[],i.start,43200)[0]||null;
+ return recent(index.bySession.get(`${i.provider}:${i.sessionId}`)||[],i.start,43200).find(event=>event.hostId?event.hostId===i.hostId:(index.hosts.get(`${i.provider}:${i.sessionId}`)?.size||0)<=1)||null;
 }
 function suggestedIssue(i:Interval,index:AttributionIndex):{issueKey:string;evidence:string[]}|null{
  if(i.state!=='human')return null;
@@ -207,7 +243,26 @@ function attribution(i:Interval,index:AttributionIndex){
   attributionRule:issueConflict?'conflicting-issue-signals':reportedKey?'agent-reported-session':pathKey?'orca-worktree-name':suggestion?'page-key-suggestion':'none',
   evidence:context?[...i.sourceEventIds,context.eventId]:suggestion?[...i.sourceEventIds,...suggestion.evidence]:i.sourceEventIds};
 }
-export const attributedIntervals=(s:Snapshot)=>{const index=attributionIndex(s.events);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
+function filteredPerDay(rows:Interval[],base:Interval[],filter:AgentFilter){
+ const days=[...new Set(base.map(i=>dateOf(i.start)))].sort();
+ return days.map(date=>{const from=dateStart(date),next=new Date(from*1000);next.setDate(next.getDate()+1);const to=next.getTime()/1000;
+  const clip=(items:Interval[])=>items.filter(i=>i.end>from&&i.start<to).map(i=>({...i,start:Math.max(from,i.start),end:Math.min(to,i.end)}));
+  return {date,...filteredTotals(clip(rows),clip(base),filter)};
+ });
+}
+function filteredTotals(rows:Interval[],base:Interval[],filter:AgentFilter){
+ if(!hasAgentFilter(filter))return totals(rows);
+ const credit=new PeriodTimeCredits();credit.add(rows,Infinity,base);const values=credit.totals();
+ return {...values,hours:{humanActive:(values.humanActiveSeconds/3600).toFixed(2),agentRunning:(values.agentRunningSeconds/3600).toFixed(2),agentWall:(values.agentWallSeconds/3600).toFixed(2),overlapMergedWall:(values.overlapMergedWallSeconds/3600).toFixed(2)}};
+}
+function contextSliceCount(s:Snapshot,rows:Interval[]){const resolver=metadataResolver(s.events,s.summary.intervals);return rows.filter(agentWorkInterval).reduce((count,row)=>count+resolver.slices(row).length,0);}
+function contextSlicesFor(s:Snapshot,rows:Interval[]){const resolver=metadataResolver(s.events,s.summary.intervals);return rows.filter(agentWorkInterval).flatMap(row=>resolver.slices(row)).slice(0,500);}
+export function agentFilteredIntervals<T extends Interval>(s:Snapshot,rows:T[],filter:AgentFilter={}):T[]{
+ if(!hasAgentFilter(filter))return rows;
+ const resolver=metadataResolver(s.events,s.summary.intervals);
+ return rows.filter(agentWorkInterval).flatMap(row=>resolver.slices(row).filter(piece=>matchesAgent(piece,filter)).map(piece=>({...row,...piece})));
+}
+export const attributedIntervals=(s:Snapshot)=>{const index=attributionIndex(s.events,s.summary.intervals);return s.summary.intervals.map(i=>({...i,...attribution(i,index)}));};
 export function timeForIssue(s:Snapshot,issueKey:string){
  if(!ticketPattern.test(issueKey)||!issueKey.trim())throw new Error('Invalid ticket reference');
  const attributed=attributedIntervals(s),rows=attributed.filter(i=>i.issueKey===issueKey);
@@ -217,42 +272,44 @@ export function timeForIssue(s:Snapshot,issueKey:string){
   suggestedHumanSeconds:totals(suggestions).humanActiveSeconds,suggestedHumanIntervals:suggestions.slice(0,100).map(publicInterval),moreSuggestedHumanIntervals:suggestions.length>100,
   captureCoverage:coverage(s),attribution:'Agent-reported issue context is advisory; measured time is not a billing approval',truncatedBefore:s.truncatedBefore};
 }
-export function timeForProject(s:Snapshot,project:string){return timeForProjectSet(s,[project],project);}
-export function timeForProjectSet(s:Snapshot,projects:string[],project:string){
+export function timeForProject(s:Snapshot,project:string,filter:AgentFilter={}){return timeForProjectSet(s,[project],project,filter);}
+export function timeForProjectSet(s:Snapshot,projects:string[],project:string,filter:AgentFilter={}){
  if(!project||project.length>512)throw new Error('Invalid project');
- const normalized=canonicalProject(project),accepted=new Set(projects.map(canonicalProject)),rows=attributedIntervals(s).filter(i=>i.project!==null&&accepted.has(i.project));
- const issues=[...new Set(rows.map(i=>i.issueKey||'Unmatched'))].sort().map(issueKey=>({issueKey,...totals(rows.filter(i=>(i.issueKey||'Unmatched')===issueKey))}));
- return {project:normalized,...totals(rows),issues,days:perDay(rows),captureCoverage:coverage(s),truncatedBefore:s.truncatedBefore};
+ const normalized=canonicalProject(project),accepted=new Set(projects.map(canonicalProject)),base=attributedIntervals(s).filter(i=>i.project!==null&&accepted.has(i.project)),rows=agentFilteredIntervals(s,base,filter);
+ const issues=[...new Set(rows.map(i=>i.issueKey||'Unmatched'))].sort().map(issueKey=>({issueKey,...filteredTotals(rows.filter(i=>(i.issueKey||'Unmatched')===issueKey),base.filter(i=>(i.issueKey||'Unmatched')===issueKey),filter)}));
+ return {project:normalized,...filteredTotals(rows,base,filter),issues,contextSlices:contextSlicesFor(s,rows),metadataTruncated:Boolean(s.metadataTruncated),moreContextSlices:contextSliceCount(s,rows)>500,days:hasAgentFilter(filter)?filteredPerDay(rows,base,filter):perDay(rows),captureCoverage:coverage(s),truncatedBefore:s.truncatedBefore};
 }
-export function timeline(s:Snapshot,project?:string){
- const normalized=project?canonicalProject(project):undefined,rows=attributedIntervals(s).filter(i=>!normalized||i.project===normalized);
- const measured=rows.filter(i=>humanInterval(i)||agentInterval(i));
+export function timeline(s:Snapshot,project?:string,filter:AgentFilter={}){
+ const normalized=project?canonicalProject(project):undefined,base=attributedIntervals(s).filter(i=>!normalized||i.project===normalized),rows=agentFilteredIntervals(s,base,filter);
+ const resolver=metadataResolver(s.events,s.summary.intervals),contextSlices=rows.filter(agentWorkInterval).flatMap(row=>resolver.slices(row));
+ const measured=rows.filter(i=>humanInterval(i)||(hasAgentFilter(filter)?agentWorkInterval(i):agentInterval(i))).flatMap(i=>humanInterval(i)?[i]:resolver.slices(i).map(piece=>({...i,...piece})));
  const boundaries=measured.flatMap((row,index)=>[{at:row.start,index,open:true},{at:row.end,index,open:false}]).sort((a,b)=>a.at-b.at||Number(a.open)-Number(b.open));
- const active=new Set<number>(),segments:Array<{start:number;end:number;state:'human'|'agent'|'both';agentCount:number;projects:string[];issueKeys:string[];sourceEventIds:string[]}>=[];
+ const active=new Set<number>(),segments:Array<{start:number;end:number;state:'human'|'agent'|'both';agentCount:number;projects:string[];issueKeys:string[];sourceEventIds:string[];contributors:unknown[];moreContributors:boolean}>=[];
  let previous:number|null=null,segmentCount=0;
  for(let offset=0;offset<boundaries.length;){const at=boundaries[offset]!.at;
   if(previous!==null&&at>previous&&active.size){
    segmentCount++;
-   if(segments.length<500){const current=[...active].map(index=>measured[index]!),human=current.some(humanInterval),agents=current.filter(agentInterval);
-    segments.push({start:previous,end:at,state:human&&agents.length?'both':human?'human':'agent',agentCount:agents.length,projects:[...new Set(current.map(i=>i.project).filter((value):value is string=>Boolean(value)))],issueKeys:[...new Set(current.map(i=>i.issueKey).filter((value):value is string=>Boolean(value)))],sourceEventIds:[...new Set(current.flatMap(i=>i.evidence))].slice(0,32)});
+   if(segments.length<500){const current=[...active].map(index=>measured[index]!),human=current.some(humanInterval),agents=current.filter(hasAgentFilter(filter)?agentWorkInterval:agentInterval);
+    segments.push({start:previous,end:at,moreContributors:agents.length>32,contributors:agents.map(i=>({sessionKey:agentSessionKey(i),provider:i.provider,sessionId:i.sessionId,agentId:i.agentId,hostId:i.hostId,...resolver.at(i,previous!)})).slice(0,32),state:human&&agents.length?'both':human?'human':'agent',agentCount:agents.length,projects:[...new Set(current.map(i=>i.project).filter((value):value is string=>Boolean(value)))],issueKeys:[...new Set(current.map(i=>i.issueKey).filter((value):value is string=>Boolean(value)))],sourceEventIds:[...new Set(current.flatMap(i=>i.evidence))].slice(0,32)});
    }
   }
   while(offset<boundaries.length&&boundaries[offset]!.at===at){const boundary=boundaries[offset++]!;if(boundary.open)active.add(boundary.index);else active.delete(boundary.index);}
   previous=at;
  }
- return {segments,moreSegments:segmentCount>500,totals:totals(rows),truncatedBefore:s.truncatedBefore};
+ return {segments,moreSegments:segmentCount>500,contextSlices:contextSlices.slice(0,500),moreContextSlices:contextSlices.length>500,metadataTruncated:Boolean(s.metadataTruncated),totals:filteredTotals(rows,base,filter),truncatedBefore:s.truncatedBefore};
 }
-export function sessions(s:Snapshot,filter:{provider?:string;workspace?:string;issueKey?:string}){
- const index=attributionIndex(s.events),firstSeen=s.firstSeen||new Map<string,number>();
+export function sessions(s:Snapshot,filter:{provider?:string;workspace?:string;issueKey?:string}&AgentFilter){
+ const resolver=metadataResolver(s.events,s.summary.sessions);
+ const index=attributionIndex(s.events,s.summary.intervals),firstSeen=s.firstSeen||new Map<string,number>();
  if(!s.firstSeen)for(const event of s.events)if(event.provider&&event.sessionId){const key=`${event.provider}:${event.sessionId}`;firstSeen.set(key,Math.min(firstSeen.get(key)??Infinity,event.observedAt));}
- const rows=s.summary.sessions.filter(session=>session.lastObservedAt>=s.from&&session.lastObservedAt<s.to&&
-  (!filter.provider||session.provider===filter.provider)&&(!filter.workspace||session.workspaceId===filter.workspace));
+ const rows=s.summary.sessions.filter(session=>(session.lastObservedAt>=s.from&&session.lastObservedAt<s.to||hasAgentFilter(filter)&&s.summary.intervals.some(i=>agentSessionKey(i)===agentSessionKey(session)&&i.end>s.from&&i.start<s.to))&&
+  (!filter.provider||session.provider===filter.provider)&&(!filter.workspace||session.workspaceId===filter.workspace)&&(!hasAgentFilter(filter)||s.summary.intervals.some(i=>agentSessionKey(i)===agentSessionKey(session)&&resolver.slices(i).some(piece=>matchesAgent(piece,filter)))));
  const linked=rows.map(session=>{
   const key=`${session.provider}:${session.sessionId}`,workspaceKey=workspaceIssueFromId(session.workspaceId),reportedKeys=[...new Set((index.bySession.get(key)||[]).map(e=>e.data?.issueKey).filter((value):value is string=>typeof value==='string'))];
   return {session,issueKeys:[...new Set([...(workspaceKey?[workspaceKey]:[]),...reportedKeys])],firstObservedAt:firstSeen.get(key)||null};
  });
  const filtered=filter.issueKey?linked.filter(row=>row.issueKeys.includes(filter.issueKey!)):linked;
- return {sessions:filtered.slice(0,500).map(({session,issueKeys,firstObservedAt})=>{const {title,cwd,...safe}=session;return {...safe,firstObservedAt,issueKeys};}),moreSessions:filtered.length>500,truncatedBefore:s.truncatedBefore};
+ return {sessions:filtered.slice(0,500).map(({session,issueKeys,firstObservedAt})=>{const {title,cwd,...safe}=session;const contextSlices=s.summary.intervals.filter(i=>agentWorkInterval(i)&&agentSessionKey(i)===agentSessionKey(session)).flatMap(i=>resolver.slices(i));return {...safe,...resolver.at(session,Math.min(s.to,session.lastObservedAt)),firstObservedAt,issueKeys,contextSlices:contextSlices.slice(0,100),moreContextSlices:contextSlices.length>100};}),moreSessions:filtered.length>500,metadataTruncated:Boolean(s.metadataTruncated),truncatedBefore:s.truncatedBefore};
 }
 export function coverage(s:Snapshot){
  const issues=[...s.summary.coverage,...s.summary.unresolved].filter(i=>i.observedAt===undefined||i.observedAt>=s.from&&i.observedAt<s.to);
@@ -292,7 +349,7 @@ export function coverageForRange(output:string,from:number,to:number){
 }
 export function unattributed(s:Snapshot){
  const groups=groupHumanReview(s.summary.intervals).filter(g=>['unmatched','conflict'].includes(humanReviewState(g)));
- const index=attributionIndex(s.events);
+ const index=attributionIndex(s.events,s.summary.intervals);
  return {groups:groups.slice(0,500).map(g=>{
   const interval=s.summary.intervals.find(i=>i.state==='human'&&i.start>=g.start&&i.end<=g.end);
   return {start:g.start,end:g.end,seconds:g.seconds,label:interval?.browserDomain||interval?.foregroundName||interval?.foregroundBundleId||'Mac activity',projectPath:g.projectPath||null,reason:humanReviewState(g),eventIds:g.pairs.flat(),suggestedIssueKey:interval?suggestedIssue(interval,index)?.issueKey||null:null};
@@ -302,7 +359,7 @@ export function explainAttribution(s:Snapshot,eventId:string){
  if(!uuidPattern.test(eventId))throw new Error('Invalid event ID');
  const interval=s.summary.intervals.find(i=>i.sourceEventIds.includes(eventId));
  if(!interval)return {eventId,found:false};
- return {eventId,found:true,interval:publicInterval({...interval,...attribution(interval,attributionIndex(s.events))}),note:'Reported context is a suggestion; only observed intervals contribute measured time'};
+ return {eventId,found:true,interval:publicInterval({...interval,...attribution(interval,attributionIndex(s.events,s.summary.intervals))}),note:'Reported context is a suggestion; only observed intervals contribute measured time'};
 }
 
 export function readReport(output:string,requestId:string):CaptureEvent|null{
@@ -322,12 +379,13 @@ export function inferRecentSession(output:string,provider:string,workspaceId?:st
   return active.length===1?active[0]!.sessionId!:null;
  }finally{db.close();}
 }
-export function writeReport(output:string,kind:CaptureEvent['kind'],requestId:string,contextId:string,data:Record<string,unknown>,identity:{provider?:string;sessionId?:string;workspaceId?:string}={}):CaptureEvent{
+export function writeReport(output:string,kind:CaptureEvent['kind'],requestId:string,contextId:string,data:Record<string,unknown>,identity:{provider?:string;sessionId?:string;workspaceId?:string;hostId?:string}={}):CaptureEvent{
  if(!uuidPattern.test(requestId)||!uuidPattern.test(contextId))throw new Error('Use UUIDs for requestId and contextId');
- const intended=JSON.parse(JSON.stringify({requestId,contextId,...data})) as Record<string,unknown>;
+ const normalized={...data};if(data.attributes!==undefined)normalized.attributes=validateAttributes(data.attributes);if(data.agentIdentity!==undefined)normalized.agentIdentity=validateAgentIdentity(data.agentIdentity);
+ const intended=JSON.parse(JSON.stringify({requestId,contextId,...normalized})) as Record<string,unknown>;
  const existing=readReport(output,requestId);
- if(existing){if(existing.kind!==kind||JSON.stringify(existing.data)!==JSON.stringify(intended))throw new Error('Request ID already used for a different declaration');return existing;}
- const event=makeEvent('agent_report',kind,{eventId:requestId,provider:identity.provider,sessionId:identity.sessionId,workspaceId:identity.workspaceId,data:intended});
+ if(existing){if((['provider','sessionId','workspaceId','hostId'] as const).some(key=>identity[key]&&existing[key]&&identity[key]!==existing[key])||existing.kind!==kind||!isDeepStrictEqual(existing.data,intended))throw new Error('Request ID already used for a different declaration');return existing;}
+ const event=makeEvent('agent_report',kind,{eventId:requestId,...(identity.hostId?{hostId:identity.hostId}:{}),provider:identity.provider,sessionId:identity.sessionId,workspaceId:identity.workspaceId,data:intended});
  if(!validAgentReport(event))throw new Error('Invalid agent declaration');
  const directory=join(output,'spool');mkdirSync(directory,{recursive:true,mode:0o700});
  const info=lstatSync(directory);if(!info.isDirectory()||info.isSymbolicLink())throw new Error('Invalid collector spool');
@@ -338,7 +396,7 @@ export function writeReport(output:string,kind:CaptureEvent['kind'],requestId:st
   try{linkSync(temporary,final);}catch(error){
    if((error as NodeJS.ErrnoException).code!=='EEXIST')throw error;
    const prior=readReport(output,requestId);
-   if(!prior||prior.kind!==kind||JSON.stringify(prior.data)!==JSON.stringify(intended))throw new Error('Request ID already used for a different declaration');
+   if(!prior||prior.kind!==kind||!isDeepStrictEqual(prior.data,intended))throw new Error('Request ID already used for a different declaration');
    return prior;
   }
  }finally{if(existsSync(temporary))unlinkSync(temporary);}
@@ -353,12 +411,12 @@ export function currentWork(output:string){
   const contexts=new Map<string,CaptureEvent>(),starts=new Map<string,CaptureEvent>(),stops=new Set<string>(),ports=new Map<number,CaptureEvent>();
   for(const e of reports){
    const id=String(e.data?.contextId||'');
-   if(e.kind==='work_context')contexts.set(id,e);
+   if(e.kind==='work_context'){const previous=contexts.get(id);contexts.set(id,{...e,data:{...previous?.data,...e.data,...(previous?.data?.attributes!==undefined||e.data?.attributes!==undefined?{attributes:applyWorkAttributes(previous?.data?.attributes as Record<string,string>|undefined,e.data?.attributes===undefined?undefined:validateAttributes(e.data.attributes))}:{})}});}
    if(e.kind==='task_start')starts.set(e.eventId,e);
    if(e.kind==='task_stop')stops.add(String(e.data?.taskCounterId));
    if(e.kind==='port_state')ports.set(Number(e.data?.port),e);
   }
-  return {truncated:rows.length>2000,contexts:[...contexts.values()].filter(e=>!e.provider||!e.sessionId||(sessionEnds.get(`${e.provider}:${e.sessionId}`)||0)<e.observedAt).map(e=>({contextId:e.data?.contextId,issueKey:e.data?.issueKey,project:e.data?.project,task:e.data?.task,agentIdentity:e.data?.agentIdentity,billable:e.data?.billable,reportedAt:e.observedAt,provider:e.provider,sessionId:e.sessionId})),
+  return {truncated:rows.length>2000,contexts:[...contexts.values()].filter(e=>!e.provider||!e.sessionId||(sessionEnds.get(`${e.provider}:${e.sessionId}`)||0)<e.observedAt).map(e=>({contextId:e.data?.contextId,issueKey:e.data?.issueKey,project:e.data?.project,task:e.data?.task,agentIdentity:e.data?.agentIdentity,attributes:e.data?.attributes,billable:e.data?.billable,reportedAt:e.observedAt,provider:e.provider,sessionId:e.sessionId})),
    tasks:reportedWorkForDay(reports,now()-43200,now()+1,now(),sessionEnds).filter(item=>item.kind==='counter'&&!stops.has(item.id)&&item.status!=='session-ended').map(item=>({...item,taskCounterId:item.id,name:item.title,reportedElapsedSeconds:Math.round(item.end-item.start),measured:false})),
    ports:[...ports.values()].map(e=>({port:e.data?.port,state:e.data?.state,verified:e.data?.verified,processId:e.data?.processId,reportedAt:e.observedAt}))};
  }finally{db?.close();}
@@ -376,25 +434,48 @@ export function verifyPort(port:number):{verified:boolean;processId:number|null}
 }
 
 /** Task writes share native identity and snapshot context once, so later topic changes cannot move an existing counter. */
-export function writeTaskReport(output:string,kind:CaptureEvent['kind'],requestId:string,contextId:string,data:Record<string,unknown>,identity:{provider?:string;sessionId?:string;workspaceId?:string}={}):CaptureEvent{
+export function writeTaskReport(output:string,kind:CaptureEvent['kind'],requestId:string,contextId:string,data:Record<string,unknown>,identity:{provider?:string;sessionId?:string;workspaceId?:string;hostId?:string}={}):CaptureEvent{
  if(kind==='task_start'){
   const parent=data.parentTaskCounterId?readReport(output,String(data.parentTaskCounterId)):undefined;
   if(data.parentTaskCounterId&&parent?.kind!=='task_start')throw new Error('Unknown parent task counter');
   const db=existsSync(join(output,'events.sqlite'))?database(output):null;
-  let context:CaptureEvent|undefined;
-  try{const row=db?.prepare(`SELECT payload FROM events ${reportIndex(db)} WHERE observed_at>? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='work_context' AND json_extract(payload,'$.data.contextId')=? ORDER BY observed_at DESC LIMIT 1`).get(now()-43200,contextId);if(row)context=JSON.parse(String(row.payload));}finally{db?.close();}
-  for(const e of pendingReports(output))if(e.kind==='work_context'&&e.data?.contextId===contextId&&(!context||e.observedAt>=context.observedAt))context=e;
-  if(context&&(['provider','sessionId','workspaceId'] as const).some(key=>identity[key]&&context?.[key]&&identity[key]!==context[key]))context=undefined;
-  const inherited:Record<string,unknown>={};
-  for(const key of ['project','issueKey','agentIdentity','billable'] as const){const value=context?context.data?.[key]:(key!=='agentIdentity'?parent?.data?.[key]:undefined);if(value!==undefined&&(value!==null||key==='billable'))inherited[key]=value;}
+  let context:CaptureEvent|undefined;const inherited:Record<string,unknown>={};
+  const evidence:CaptureEvent[]=[],nativeHosts=new Set<string>();
+  try{
+   for(const row of db?.prepare(`SELECT payload FROM events WHERE json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND json_extract(payload,'$.source')='hook' AND coalesce(json_extract(payload,'$.agentId'),'')='' AND (?='' OR json_extract(payload,'$.hostId') IS NULL OR json_extract(payload,'$.hostId')=?) ORDER BY observed_at DESC LIMIT 1000`).all(identity.provider||'',identity.sessionId||'',identity.hostId||'',identity.hostId||'')||[])evidence.push(JSON.parse(String(row.payload)));
+   // Native hooks and declarations have independent limits: busy launchers cannot evict context.
+   for(const row of db?.prepare(`SELECT payload FROM events ${db?reportIndex(db):''} WHERE json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='work_context' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND (?='' OR json_extract(payload,'$.hostId') IS NULL OR json_extract(payload,'$.hostId')=?) ORDER BY observed_at DESC LIMIT 128`).all(identity.provider||'',identity.sessionId||'',identity.hostId||'',identity.hostId||'')||[])evidence.push(JSON.parse(String(row.payload)));
+   // Host ambiguity is historical, not a property of whichever hooks fit the recent evidence cap.
+   for(const row of db?.prepare(`SELECT DISTINCT json_extract(payload,'$.hostId') host FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND coalesce(json_extract(payload,'$.agentId'),'')='' AND json_extract(payload,'$.hostId') IS NOT NULL LIMIT 2`).all(identity.provider||'',identity.sessionId||'')||[])nativeHosts.add(String(row.host));
+   const baseline=db?.prepare(`SELECT payload FROM events WHERE json_extract(payload,'$.source')='hook' AND json_extract(payload,'$.provider')=? AND json_extract(payload,'$.sessionId')=? AND coalesce(json_extract(payload,'$.hostId'),'')=? AND coalesce(json_extract(payload,'$.agentId'),'')='' AND json_extract(payload,'$.kind')='session_start' ORDER BY observed_at LIMIT 1`).get(identity.provider||'',identity.sessionId||'',identity.hostId||'');
+   if(baseline)evidence.push(JSON.parse(String(baseline.payload)));
+  }finally{db?.close();}
+  evidence.push(...pendingReports(output));
+  for(const event of evidence)if(event.source==='hook'&&!event.agentId&&event.provider===identity.provider&&event.sessionId===identity.sessionId&&event.hostId)nativeHosts.add(event.hostId);
+  for(const e of evidence.sort((a,b)=>Number(a.source!=='hook')-Number(b.source!=='hook')||a.observedAt-b.observedAt)){
+   if(nativeHosts.size>1&&(!identity.hostId||!e.hostId))continue;
+   if(e.observedAt>now()||(['provider','sessionId','workspaceId','hostId'] as const).some(key=>identity[key]&&e[key]&&identity[key]!==e[key]))continue;
+   if(e.source==='hook'){
+    if(e.agentId||!identity.sessionId||e.sessionId!==identity.sessionId||e.provider!==identity.provider)continue;
+    const meta=eventWorkMetadata(e);if(meta.agentIdentity)inherited.agentIdentity=meta.agentIdentity;
+    if(meta.attributes)inherited.attributes=applyWorkAttributes(inherited.attributes as Record<string,string>|undefined,meta.attributes);
+   }else if(e.kind==='work_context'&&(e.data?.contextId===contextId||Boolean(identity.sessionId&&e.sessionId===identity.sessionId&&e.provider===identity.provider))){
+    context=e;
+    for(const key of ['project','issueKey','agentIdentity','billable'] as const)if(e.data?.[key]!==undefined&&(e.data[key]!==null||key==='billable'))inherited[key]=e.data[key];else if(e.data?.[key]===null)delete inherited[key];
+    if(e.data?.attributes!==undefined)inherited.attributes=applyWorkAttributes(inherited.attributes as Record<string,string>|undefined,validateAttributes(e.data.attributes));
+   }
+  }
+  for(const key of ['project','issueKey','billable'] as const)if(inherited[key]===undefined&&parent?.data?.[key]!==undefined)inherited[key]=parent.data[key];
   // Reuse the original inherited snapshot on retries; explicit fields are still compared by writeReport.
   const existing=readReport(output,requestId);
-  if(existing?.kind==='task_start')for(const key of ['project','issueKey','agentIdentity','billable'] as const)if(data[key]===undefined){delete inherited[key];if(existing.data?.[key]!==undefined)inherited[key]=existing.data[key];}
-  return writeReport(output,kind,requestId,contextId,{...inherited,...data,leaseSeconds:data.leaseSeconds??900},identity);
+  if(existing?.kind==='task_start')for(const key of ['project','issueKey','agentIdentity','attributes','billable'] as const)if(data[key]===undefined){delete inherited[key];if(existing.data?.[key]!==undefined)inherited[key]=existing.data[key];}
+  const baseAttributes=(existing?.kind==='task_start'?existing.data?.attributes:inherited.attributes) as Record<string,string>|undefined;
+  const attributes=baseAttributes!==undefined||data.attributes!==undefined?applyWorkAttributes(baseAttributes,data.attributes===undefined?undefined:validateAttributes(data.attributes)):undefined;
+  return writeReport(output,kind,requestId,contextId,{...inherited,...data,...(attributes!==undefined?{attributes}:{}),leaseSeconds:data.leaseSeconds??900},identity);
  }
  if(kind!=='task_stop'&&kind!=='task_heartbeat')throw new Error('Invalid task operation');
  const start=readReport(output,String(data.taskCounterId));if(start?.kind!=='task_start')throw new Error('Unknown task counter');
- for(const key of ['provider','sessionId','workspaceId'] as const)if(identity[key]&&start[key]&&identity[key]!==start[key])throw new Error('Task counter belongs to a different native session or workspace');
+ for(const key of ['provider','sessionId','workspaceId','hostId'] as const)if(identity[key]&&start[key]&&identity[key]!==start[key])throw new Error('Task counter belongs to a different native session or workspace');
  const existing=readReport(output,requestId);
  if(!existing){
   const db=existsSync(join(output,'events.sqlite'))?database(output):null;
@@ -407,7 +488,7 @@ export function writeTaskReport(output:string,kind:CaptureEvent['kind'],requestI
   if(item&&['completed','failed','cancelled','session-ended'].includes(item.status||''))throw new Error('Task counter is already closed');
   if(kind==='task_heartbeat'&&(!item||item.status==='interrupted'))throw new Error('Task counter expired; stop it and start a new counter');
  }
- return writeReport(output,kind,requestId,contextId,data,{provider:start.provider,sessionId:start.sessionId,workspaceId:start.workspaceId});
+ return writeReport(output,kind,requestId,contextId,data,{hostId:start.hostId,provider:start.provider,sessionId:start.sessionId,workspaceId:start.workspaceId});
 }
 
 /** Reads reports only, with an explicit cap: never replay the capture database to list task metadata. */

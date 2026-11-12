@@ -1,3 +1,4 @@
+import type {WorkAttributes} from './work-context.ts';
 import type {CaptureEvent,Interval,Session,Summary} from './events.ts';
 import {minuteCreditSeconds} from './correlate.ts';
 import {agentSessionKey} from './session-identity.ts';
@@ -15,9 +16,9 @@ export interface AgentIdentity {id:string;name?:string;role?:string;}
 export interface TaskUsage {inputTokens?:number;outputTokens?:number;cachedInputTokens?:number;cost?:number;currency?:string;source:'agent-reported'|'provider-response';}
 export interface ReportedWorkItem {
  id:string;kind:'context'|'counter';title:string;issueKey?:string;project?:string;
- provider?:string;sessionId?:string;workspaceId?:string;
+ provider?:string;sessionId?:string;workspaceId?:string;projectPath?:string;hostId?:string;
  start:number;end:number;active:boolean;status?:'active'|'completed'|'failed'|'cancelled'|'session-ended'|'interrupted';
- agentIdentity?:AgentIdentity;parentTaskCounterId?:string;billable?:boolean|null;usage?:TaskUsage;expiresAt?:number;
+ attributes?:WorkAttributes;agentIdentity?:AgentIdentity;parentTaskCounterId?:string;billable?:boolean|null;usage?:TaskUsage;expiresAt?:number;
 }
 
 /** Declarations are context, never credited time. A context is a point; a counter is an elapsed span. */
@@ -36,7 +37,7 @@ export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number
   else if(event.kind==='task_heartbeat'){const id=String(event.data?.taskCounterId);heartbeats.set(id,Math.max(heartbeats.get(id)??0,event.observedAt));}
   else if(event.kind==='work_context'&&event.observedAt>=start){
    const title=String(event.data?.task||event.data?.issueKey||event.data?.project||'Work context');
-   contexts.push({id:event.eventId,kind:'context',title,issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,project:typeof event.data?.project==='string'?event.data.project:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,billable:event.data?.billable as boolean|null|undefined,start:event.observedAt,end:event.observedAt,active:false});
+   contexts.push({id:event.eventId,kind:'context',title,issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,project:typeof event.data?.project==='string'?event.data.project:undefined,hostId:event.hostId,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,projectPath:event.projectPath,attributes:event.data?.attributes as WorkAttributes|undefined,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,billable:event.data?.billable as boolean|null|undefined,start:event.observedAt,end:event.observedAt,active:false});
   }
  }
  // Session-end evidence is available in both app and MCP summary windows.
@@ -56,7 +57,7 @@ export function reportedWorkForDay(events:CaptureEvent[],start:number,end:number
   const until=Math.min(stoppedAt??(interrupted?confirmed:now),end);
   const status:ReportedWorkItem['status']=stoppedAt!==undefined?(endedWithSession===stoppedAt?'session-ended':(stop?.data?.outcome as 'completed'|'failed'|'cancelled')||'completed'):interrupted?'interrupted':'active';
   if(until<start||event.observedAt>=end)continue;
-  counters.push({id:event.eventId,kind:'counter',title:String(event.data?.name||'Task counter'),issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,start:event.observedAt,end:Math.max(event.observedAt,until),active:status==='active'&&now<end,status,expiresAt,project:typeof event.data?.project==='string'?event.data.project:undefined,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,parentTaskCounterId:event.data?.parentTaskCounterId as string|undefined,billable:event.data?.billable as boolean|null|undefined,usage:stop?.data?.usage as TaskUsage|undefined});
+  counters.push({id:event.eventId,kind:'counter',title:String(event.data?.name||'Task counter'),issueKey:typeof event.data?.issueKey==='string'?event.data.issueKey:undefined,hostId:event.hostId,provider:event.provider,sessionId:event.sessionId,workspaceId:event.workspaceId,projectPath:event.projectPath,start:event.observedAt,end:Math.max(event.observedAt,until),active:status==='active'&&now<end,status,expiresAt,project:typeof event.data?.project==='string'?event.data.project:undefined,attributes:event.data?.attributes as WorkAttributes|undefined,agentIdentity:event.data?.agentIdentity as AgentIdentity|undefined,parentTaskCounterId:event.data?.parentTaskCounterId as string|undefined,billable:event.data?.billable as boolean|null|undefined,usage:stop?.data?.usage as TaskUsage|undefined});
  }
  return [...counters,...contexts].sort((a,b)=>b.start-a.start);
 }
@@ -93,20 +94,20 @@ export function creditTaskCounters(summary:Summary,items:ReportedWorkItem[]):Sum
  let added:Range[]=[],agentDelta=0;
  for(const counter of counters){
   const span:Range=[counter.start,counter.end],project=projectOf(counter.workspaceId);
-  const roots=sessions.filter(session=>!session.child&&(!counter.provider||session.provider===counter.provider));
+  const roots=sessions.filter(session=>!session.child&&(!counter.provider||session.provider===counter.provider)&&(!counter.hostId||counter.hostId===session.hostId));
   const declaredSessionId=counter.agentIdentity?`task-agent:${JSON.stringify([counter.provider||'',counter.agentIdentity.id,counter.workspaceId||''])}`:undefined;
   const peers=counter.sessionId?roots.filter(session=>session.sessionId===counter.sessionId):declaredSessionId?roots.filter(session=>session.sessionId===declaredSessionId):project?roots.filter(session=>sessionProjectOf(session)===project):[];
   const overlap=(session:Session)=>agentRangesOf(session).reduce((sum,[s,e])=>sum+Math.max(0,Math.min(e,span[1])-Math.max(s,span[0])),0);
   let session=[...peers].sort((a,b)=>overlap(b)-overlap(a)||b.lastObservedAt-a.lastObservedAt)[0];
   if(!session){
-   session={key:`task-counter:${counter.id}`,sessionId:counter.sessionId||declaredSessionId||`task-counter:${counter.id}`,workspaceId:counter.workspaceId,cwd:counter.workspaceId,provider:counter.provider,title:counter.title,state:counter.active?'running':'stopped',lastObservedAt:counter.end,seconds:0,observedSeconds:0,child:false,proof:'reported'};
+   session={hostId:counter.hostId,projectPath:counter.projectPath,agentIdentity:counter.agentIdentity,attributes:counter.attributes,metadataSource:'agent-report',key:`task-counter:${counter.id}`,sessionId:counter.sessionId||declaredSessionId||`task-counter:${counter.id}`,workspaceId:counter.workspaceId,cwd:counter.workspaceId,provider:counter.provider,title:counter.title,state:counter.active?'running':'stopped',lastObservedAt:counter.end,seconds:0,observedSeconds:0,child:false,proof:'reported'};
    sessions.push(session);
   }
   const own=agentRangesOf(session);
   const covered=(peers.includes(session)?peers:[session]).flatMap(agentRangesOf);
   const gaps=subtract(span,covered);
   if(!gaps.length)continue;
-  for(const [start,end] of gaps)intervals.push({start,end,state:'running',proof:'inferred',sourceEventIds:[counter.id],hostId:session.hostId,workspaceId:session.workspaceId,sessionId:session.sessionId,agentId:session.agentId,provider:session.provider,runId:session.runId,taskId:session.taskId,dispatchId:session.dispatchId,child:false,attributionSource:'task-counter',attributionReason:`Agent task counter “${counter.title}”`});
+  for(const [start,end] of gaps)intervals.push({start,end,state:'running',proof:'inferred',sourceEventIds:[counter.id],hostId:session.hostId,workspaceId:session.workspaceId,sessionId:session.sessionId,agentId:session.agentId,provider:session.provider,runId:session.runId,taskId:session.taskId,dispatchId:session.dispatchId,child:false,agentIdentity:counter.agentIdentity,attributes:counter.attributes,metadataSource:'agent-report',projectPath:counter.projectPath,attributionSource:'task-counter',attributionReason:`Agent task counter “${counter.title}”`});
   const credit=Math.max(0,minuteCreditSeconds([...own,...gaps])-minuteCreditSeconds(own));
   session.seconds+=credit;agentDelta+=credit;
   added=[...added,...gaps];

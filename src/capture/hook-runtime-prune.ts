@@ -5,7 +5,7 @@ import {join} from 'node:path';
 
 const runtimeName=/^[a-f0-9]{16}(?:-replaced-[a-f0-9-]+)?$/;
 const currentName=/^[a-f0-9]{16}$/;
-const allowedFiles=new Set(['node','hook-runner.ts','hooks.ts','events.ts','json.ts','store.ts','observation-retention.ts','orca.ts','orca-focus.ts','package.json','sources']);
+const allowedFiles=new Set(['node','hook-runner.ts','hooks.ts','events.ts','json.ts','work-context.ts','project-path.ts','store.ts','observation-retention.ts','orca.ts','orca-focus.ts','package.json','sources']);
 const graceMs=60*60*1000;
 
 function recognizedRuntime(path:string):boolean{

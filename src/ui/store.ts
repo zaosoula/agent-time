@@ -29,7 +29,7 @@ import {
 import { humanizeError, isRetryableError } from './errors.ts';
 import { dateString, isValidDateString } from './format.ts';
 import { createPoller, watchWindowVisibility, windowFocused, windowVisible } from './polling.ts';
-import { sessionProject, unassignedProject, workspaceProject } from './project-identity.ts';
+import { intervalProject, sessionProject, unassignedProject, workspaceProject } from './project-identity.ts';
 import { indexSessionIntervals, intervalSessionKey, sessionIntervalKey } from './session-intervals.ts';
 import {
   agentLoadSegments,
@@ -410,11 +410,13 @@ function createStore() {
       if (interval.state !== 'grouped' && interval.state !== 'human') continue;
       const session =
         interval.state === 'grouped' ? firstSessionByEvidence.value.get(evidenceKey(interval)) : undefined;
-      const name = session
-        ? sessionProject(session)
-        : interval.workspaceId
-          ? workspaceProject(interval.workspaceId)
-          : unassignedProject;
+      const name = interval.projectPath || interval.userAttribution
+        ? intervalProject(interval)
+        : session
+          ? sessionProject(session)
+          : interval.workspaceId
+            ? workspaceProject(interval.workspaceId)
+            : unassignedProject;
       if (name !== unassignedProject) worked.add(name);
     }
     return [...worked].sort();
@@ -472,7 +474,7 @@ function createStore() {
       ? dayIntervals.value
       : dayIntervals.value.filter((interval) => {
           if (interval.state === 'human')
-            return Boolean(interval.workspaceId && workspaceProject(interval.workspaceId) === project.value);
+            return Boolean((interval.workspaceId || interval.projectPath) && intervalProject(interval) === project.value);
           return visibleSessionKeys.value.has(intervalSessionKey(interval));
         }),
   );
@@ -481,7 +483,7 @@ function createStore() {
       (item) =>
         project.value === 'all' ||
         item.project === project.value ||
-        Boolean(item.workspaceId && workspaceProject(item.workspaceId) === project.value) ||
+        Boolean((item.workspaceId || item.projectPath) && workspaceProject(item.workspaceId, item.projectPath) === project.value) ||
         Boolean(
           item.sessionId &&
           summary.value.sessions.some(
@@ -581,7 +583,7 @@ function createStore() {
     `${provider || ''}:${sessionId || ''}`;
   /** Project a reported item belongs to: its workspace, its agent session, or a uniquely named project. */
   function reportedProject(item: ReportedWorkItem, projectNames: string[]): string | undefined {
-    const workspace = workspaceProject(item.workspaceId);
+    const workspace = workspaceProject(item.workspaceId, item.projectPath);
     if (workspace !== unassignedProject) return workspace;
     const session =
       item.sessionId &&

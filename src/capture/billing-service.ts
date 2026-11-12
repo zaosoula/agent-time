@@ -8,7 +8,7 @@ import {openEventDatabase,isPackedEventDatabase} from './event-database.ts';
 import {BillingStore,billingProjectForSource} from './billing-store.ts';
 import {calculateBilling,renderBillingExport} from './billing-engine.ts';
 import {billingDateRange,billingDayStart,billingLocalDate,validateBillingDate,nextBillingDate} from './billing-calendar.ts';
-import {snapshot,attributedIntervals,coverage,timeForProjectSet,snapshotSettings,type Snapshot} from '../mcp/data.ts';
+import {snapshot,agentFilteredIntervals,attributedIntervals,coverage,timeForProjectSet,snapshotSettings,type Snapshot} from '../mcp/data.ts';
 import {agentSessionKey} from './session-identity.ts';
 import type {BillingProject,BillingReport,BillingDayInput,BillingSpan} from './billing-types.ts';
 import type {CaptureEvent} from './events.ts';
@@ -27,11 +27,11 @@ export function validateBillingRequest(value:unknown):BillingRequest{
 export function billingProjects(output:string){
  if(!existsSync(join(output,'events.sqlite')))return {projects:[],knownSources:[]};const db=open(output);
  try{const projects=new BillingStore(db).listProjects();const known=new Set(projects.flatMap(p=>p.sources.repositories));
-  for(const row of db.prepare('SELECT payload FROM events ORDER BY rowid DESC LIMIT 500').iterate()){const e=JSON.parse(String(row.payload)) as CaptureEvent;const path=e.cwd||e.workspaceId?.split('::').at(-1);if(path?.startsWith('/'))known.add(path.split('/.orca/workspaces/')[0]!);}
+  for(const row of db.prepare('SELECT payload FROM events ORDER BY rowid DESC LIMIT 500').iterate()){const e=JSON.parse(String(row.payload)) as CaptureEvent;const path=e.projectPath||e.cwd||e.workspaceId?.split('::').at(-1);if(path?.startsWith('/'))known.add(path.split('/.orca/workspaces/')[0]!);}
   return {projects,knownSources:[...known].sort()};
  }finally{db.close();}
 }
-const sourceProject=(projects:BillingProject[],event:{workspaceId?:string;cwd?:string;project?:string|null})=>billingProjectForSource(projects,{workspaceId:event.workspaceId,path:event.cwd||(event.project?.startsWith('/')?event.project:undefined)||event.workspaceId?.split('::').at(-1),reportedProject:event.project&&!event.project.startsWith('/')?event.project:undefined});
+const sourceProject=(projects:BillingProject[],event:{workspaceId?:string;cwd?:string;projectPath?:string;project?:string|null})=>billingProjectForSource(projects,{workspaceId:event.workspaceId,path:event.projectPath||event.cwd||(event.project?.startsWith('/')?event.project:undefined)||event.workspaceId?.split('::').at(-1),reportedProject:event.project&&!event.project.startsWith('/')?event.project:undefined});
 function exclusions(events:CaptureEvent[],start:number,end:number){
  const result:BillingDayInput['excluded']=[];let stopped:number|undefined,asleep:number|undefined,locked:number|undefined;
  for(const e of [...events].sort((a,b)=>a.observedAt-b.observedAt)){
@@ -68,7 +68,7 @@ function dayInput(output:string,db:DatabaseSync,project:BillingProject,projects:
  }
  const contexts=data.events.filter(e=>e.source==='agent_report'&&e.kind==='work_context').sort((a,b)=>a.observedAt-b.observedAt);
  const humanMessages=data.events.filter(e=>e.source==='hook'&&e.kind==='prompt_submitted'&&e.observedAt>=start-86400).filter(e=>e.data?.humanInitiated===true||Boolean(e.terminalHandle)&&spans.some(s=>s.kind==='human'&&s.projectId===project.id&&s.start<=e.observedAt+15&&s.end>=e.observedAt-15)).filter(e=>{
-  if(sourceProject(projects,{workspaceId:e.workspaceId,cwd:e.cwd})?.id===project.id)return true;
+  if(sourceProject(projects,{workspaceId:e.workspaceId,cwd:e.cwd,projectPath:e.projectPath})?.id===project.id)return true;
   const context=contexts.findLast(c=>c.provider===e.provider&&c.sessionId===e.sessionId&&c.observedAt<=e.observedAt);
   return context&&sourceProject(projects,{workspaceId:context.workspaceId,project:typeof context.data?.project==='string'?context.data.project:undefined})?.id===project.id;
  }).map(e=>e.observedAt);
@@ -123,25 +123,27 @@ export function billingForProject(output:string,value:BillingRequest):BillingRep
 }
 
 /** Existing measured metrics keep their minute-credit semantics; this compact reader never accumulates raw days. */
-export function projectTimeForRange(output:string,request:{project:string;fromDate:string;toDate:string;view?:'summary'|'details'}){
+export function projectTimeForRange(output:string,request:{project:string;fromDate:string;toDate:string;view?:'summary'|'details';agentIdentityId?:string;agentProfile?:string}){
  validateBillingDate(request.fromDate);validateBillingDate(request.toDate);if(request.fromDate>request.toDate)throw new Error('Invalid time period');
  const db=open(output);let projects:BillingProject[],configured:BillingProject|undefined;
  try{projects=new BillingStore(db).listProjects();try{configured=new BillingStore(db).resolveProject(request.project);}catch(error){if(String(error).toLowerCase().includes('ambiguous')||projects.some(p=>p.id===request.project||p.aliases.includes(request.project)||p.name===request.project))throw error;}}
  finally{db.close();}
  if(request.toDate>billingLocalDate(Date.now()/1000,configured?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone))throw new Error('Future time dates are unavailable');
  const suffix=request.project.split('::').at(-1)!,nativeProject=suffix.startsWith('/')?projectPathFromWorktree(suffix):request.project;
+ const contextSlices:unknown[]=[];let moreContextSlices=false;
  const timezone=configured?.timezone||Intl.DateTimeFormat().resolvedOptions().timeZone,days:Array<Record<string,unknown>>=[];
  const periodCredit=new PeriodTimeCredits(),issueCredits=new Map<string,PeriodTimeCredits>();let known=Boolean(configured),truncatedBefore=false;let issueCount=0,coverageIssueCount=0,dayCount=0;const issuesByKey=new Map<string,ReturnType<PeriodTimeCredits['totals']>&{issueKey:string}>();const captureCoverage={issues:[] as unknown[],gaps:[] as unknown[],permissionPeriods:[] as unknown[],moreIssues:false,morePermissionPeriods:false,truncatedBefore:false};
  for(const date of billingDateRange(request.fromDate,request.toDate)){
   const start=billingDayStart(date,timezone),end=billingDayStart(nextBillingDate(date),timezone),s=snapshot(output,start,end);
   const rows=attributedIntervals(s);const paths=configured?[...new Set(rows.filter(i=>sourceProject(projects,{workspaceId:i.workspaceId,project:i.project})?.id===configured!.id).flatMap(i=>i.project?[i.project]:[]))]:[nativeProject];
   if(!configured&&rows.some(i=>i.project===nativeProject))known=true;
-  const item=timeForProjectSet(s,paths,configured?.id||nativeProject),selected=rows.filter(i=>i.project!==null&&paths.includes(i.project));periodCredit.add(selected,end);
+  const item=timeForProjectSet(s,paths,configured?.id||nativeProject,request),base=rows.filter(i=>i.project!==null&&paths.includes(i.project)),selected=agentFilteredIntervals(s,base,request);periodCredit.add(selected,end,base);
+  if(item.moreContextSlices||item.contextSlices.length>500-contextSlices.length)moreContextSlices=true;contextSlices.push(...item.contextSlices.slice(0,500-contextSlices.length));
   coverageIssueCount+=item.captureCoverage.issues.length;issueCount+=item.issues.length;truncatedBefore ||=item.truncatedBefore;
   if(request.view!=='summary'){
    const byIssue=new Map<string,typeof selected>();for(const row of selected){const key=row.issueKey||'Unmatched',group=byIssue.get(key)||[];group.push(row);byIssue.set(key,group);}
    for(const key of byIssue.keys())if(!issueCredits.has(key)&&issueCredits.size<500)issueCredits.set(key,new PeriodTimeCredits());
-   for(const [key,credit] of issueCredits){credit.add(byIssue.get(key)||[],end);issuesByKey.set(key,{issueKey:key,...credit.totals()});}
+   for(const [key,credit] of issueCredits){credit.add(byIssue.get(key)||[],end,base.filter(row=>(row.issueKey||'Unmatched')===key));issuesByKey.set(key,{issueKey:key,...credit.totals()});}
    for(const key of ['issues','gaps','permissionPeriods'] as const){captureCoverage[key].push(...item.captureCoverage[key].slice(0,500-captureCoverage[key].length));}
    captureCoverage.moreIssues ||=item.captureCoverage.moreIssues||coverageIssueCount>500;captureCoverage.morePermissionPeriods ||=item.captureCoverage.morePermissionPeriods;captureCoverage.truncatedBefore ||=item.captureCoverage.truncatedBefore;
   }
@@ -149,5 +151,5 @@ export function projectTimeForRange(output:string,request:{project:string;fromDa
  }
  if(!known)throw new Error('Unknown project; use billing_projects to select a configured project or an exact captured path');
  const totals=periodCredit.totals();
- return {project:configured?.id||nativeProject,...totals,hours:{humanActive:(totals.humanActiveSeconds/3600).toFixed(2),agentRunning:(totals.agentRunningSeconds/3600).toFixed(2),agentWall:(totals.agentWallSeconds/3600).toFixed(2),overlapMergedWall:(totals.overlapMergedWallSeconds/3600).toFixed(2)},...(request.view!=='summary'?{issues:[...issuesByKey.keys()].sort().map(key=>issuesByKey.get(key)!).map(i=>({...i,hours:{humanActive:(Number(i.humanActiveSeconds)/3600).toFixed(2),agentRunning:(Number(i.agentRunningSeconds)/3600).toFixed(2),agentWall:(Number(i.agentWallSeconds)/3600).toFixed(2),overlapMergedWall:(Number(i.overlapMergedWallSeconds)/3600).toFixed(2)}})),captureCoverage}:{}),days:request.view==='summary'?days.slice(0,31):days,coverageIssueCount,issueCount,truncatedBefore,aggregation:'minute-credit-per-contiguous-period-block',moreDays:dayCount>31};
+ return {project:configured?.id||nativeProject,...totals,contextSlices,moreContextSlices,hours:{humanActive:(totals.humanActiveSeconds/3600).toFixed(2),agentRunning:(totals.agentRunningSeconds/3600).toFixed(2),agentWall:(totals.agentWallSeconds/3600).toFixed(2),overlapMergedWall:(totals.overlapMergedWallSeconds/3600).toFixed(2)},...(request.view!=='summary'?{issues:[...issuesByKey.keys()].sort().map(key=>issuesByKey.get(key)!).map(i=>({...i,hours:{humanActive:(Number(i.humanActiveSeconds)/3600).toFixed(2),agentRunning:(Number(i.agentRunningSeconds)/3600).toFixed(2),agentWall:(Number(i.agentWallSeconds)/3600).toFixed(2),overlapMergedWall:(Number(i.overlapMergedWallSeconds)/3600).toFixed(2)}})),captureCoverage}:{}),days:request.view==='summary'?days.slice(0,31):days,coverageIssueCount,issueCount,truncatedBefore,aggregation:'minute-credit-per-contiguous-period-block',moreDays:dayCount>31};
 }

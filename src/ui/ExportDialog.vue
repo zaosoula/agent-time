@@ -12,7 +12,7 @@ import { minuteCreditSeconds } from '../capture/correlate.ts';
 import { humanReviewState } from '../capture/human-review.ts';
 import { useStore } from './store.ts';
 import { duration, longDate } from './format.ts';
-import { projectDisplay, sessionProject, unassignedProject, workspaceProject } from './project-identity.ts';
+import { intervalProject, projectDisplay, sessionProject, unassignedProject } from './project-identity.ts';
 
 const open = defineModel<boolean>('open', { required: true });
 const store = reactive(useStore());
@@ -48,8 +48,8 @@ function exportCsv() {
     const session = interval.sessionId
       ? store.summary.sessions.find((s) => s.sessionId === interval.sessionId && s.hostId === interval.hostId)
       : undefined;
-    const name = interval.workspaceId
-      ? workspaceProject(interval.workspaceId)
+    const name = (interval.workspaceId || interval.projectPath || interval.userAttribution)
+      ? intervalProject(interval)
       : session
         ? sessionProject(session)
         : unassignedProject;

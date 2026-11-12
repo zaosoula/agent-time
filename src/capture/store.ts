@@ -127,26 +127,26 @@ export class EventStore {
     return handles.flatMap(handle=>{const row=read.get(handle);return row?[JSON.parse(String(row.payload)) as CaptureEvent]:[];});
   }
   /** Workspace identities seen in hook and Orca terminal evidence since `since`. */
-  workspaceObservations(since:number):Array<{workspaceId:string|null;cwd:string|null}>{
+  workspaceObservations(since:number):Array<{workspaceId:string|null;cwd:string|null;hostId?:string;projectPath?:string}>{
     if(isPackedEventDatabase(this.db)){
-      type Seen={workspaceId:unknown;cwd:unknown;handle:unknown;at:number;rowid:number};
-      const read=this.db.prepare("SELECT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd,json_extract(payload,'$.terminalHandle') handle FROM events WHERE rowid=?");
+      type Seen={workspaceId:unknown;cwd:unknown;hostId:unknown;projectPath:unknown;handle:unknown;at:number;rowid:number};
+      const read=this.db.prepare("SELECT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd,json_extract(payload,'$.hostId') hostId,json_extract(payload,'$.projectPath') projectPath,json_extract(payload,'$.terminalHandle') handle FROM events WHERE rowid=?");
       const textOrder=(a:unknown,b:unknown)=>typeof a==='number'?(typeof b==='number'?a-b:-1):typeof b==='number'?1:Buffer.compare(Buffer.from(String(a)),Buffer.from(String(b)));
       const scan=(sql:string,terminal:boolean,args:number[]=[])=>{
         const compare=(a:Seen,b:Seen)=>(terminal?textOrder(a.handle,b.handle):a.at-b.at)||a.rowid-b.rowid,unique=new Map<string,Seen>();
         for(const row of this.db.prepare(sql).iterate(...args)){
-          const value=read.get(row.rowid!)!,item:Seen={workspaceId:value.workspaceId,cwd:value.cwd,handle:value.handle,at:Number(row.observed_at),rowid:Number(row.rowid)},key=JSON.stringify([item.workspaceId,item.cwd]),previous=unique.get(key);
+          const value=read.get(row.rowid!)!,item:Seen={workspaceId:value.workspaceId,cwd:value.cwd,hostId:value.hostId,projectPath:value.projectPath,handle:value.handle,at:Number(row.observed_at),rowid:Number(row.rowid)},key=JSON.stringify([item.workspaceId,item.cwd,item.hostId,item.projectPath]),previous=unique.get(key);
           if(!previous||compare(item,previous)<0)unique.set(key,item);
         }
-        return [...unique.values()].sort(compare).map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null}));
+        return [...unique.values()].sort(compare).map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null,...(typeof row.hostId==='string'?{hostId:row.hostId}:{}),...(typeof row.projectPath==='string'?{projectPath:row.projectPath}:{})}));
       };
       const hooks=scan("SELECT rowid,observed_at FROM events INDEXED BY events_source_recent WHERE json_extract(payload,'$.source')='hook' AND observed_at>=? ORDER BY rowid",false,[since]);
       const terminals=scan("SELECT rowid,observed_at FROM events INDEXED BY events_terminal_handle WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL ORDER BY rowid",true);
       return [...hooks,...terminals];
     }
-    const hooks=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' AND observed_at>=?").all(since);
-    const terminals=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd FROM events WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL").all();
-    return [...hooks,...terminals].map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null}));
+    const hooks=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd,json_extract(payload,'$.hostId') hostId,json_extract(payload,'$.projectPath') projectPath FROM events INDEXED BY events_hooks WHERE json_extract(payload,'$.source')='hook' AND observed_at>=?").all(since);
+    const terminals=this.db.prepare("SELECT DISTINCT json_extract(payload,'$.workspaceId') workspaceId,json_extract(payload,'$.cwd') cwd,json_extract(payload,'$.hostId') hostId,json_extract(payload,'$.projectPath') projectPath FROM events WHERE json_extract(payload,'$.kind')='terminal' AND json_extract(payload,'$.terminalHandle') IS NOT NULL").all();
+    return [...hooks,...terminals].map(row=>({workspaceId:typeof row.workspaceId==='string'?row.workspaceId:null,cwd:typeof row.cwd==='string'?row.cwd:null,...(typeof row.hostId==='string'?{hostId:row.hostId}:{}),...(typeof row.projectPath==='string'?{projectPath:row.projectPath}:{})}));
   }
   reviewActionEventIds(id:string):string[]{
     const row=this.db.prepare('SELECT before_json FROM review_actions WHERE id=?').get(id);

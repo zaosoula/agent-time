@@ -10,7 +10,7 @@ function fixture(){
  const root=mkdtempSync(join(tmpdir(),'agent-time-runtime-prune-'));
  const add=(name:string,age:number)=>{
   const dir=join(root,name);mkdirSync(join(dir,'sources'),{recursive:true});
-  for(const file of ['node','hook-runner.ts','json.ts','package.json'])writeFileSync(join(dir,file),'owned');
+  for(const file of ['node','hook-runner.ts','json.ts','work-context.ts','project-path.ts','package.json'])writeFileSync(join(dir,file),'owned');
   writeFileSync(join(dir,'sources','agent-registry.ts'),'owned');
   utimesSync(dir,new Date(now-age),new Date(now-age));return dir;
  };

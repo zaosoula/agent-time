@@ -312,3 +312,64 @@ test('opt-in cross-midnight task credit stays inside selected day while elapsed 
   assert.ok(summary.intervals.every(i=>i.start>=midnight));assert.equal(c.reportedWork(date)[0].start,midnight-3600);
  }finally{await c.close();rmSync(path,{recursive:true,force:true});}
 });
+
+test('review fingerprints retain completed choices when only additive project context changes',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'ade-review-context-')),collector=new Collector(output);
+ try{
+  const interval={start:1,end:11,state:'human',proof:'observed',sourceEventIds:['first','second'],workspaceId:'user::/chosen',userAttribution:'assigned'};
+  let summary={intervals:[interval],sessions:[],coverage:[],unresolved:[],humanSeconds:60,agentSeconds:0,elapsedSeconds:60,childAgentSeconds:0};
+  const internal=collector as any;internal.daySummary=()=>summary;
+  const original=internal.dayReviewSnapshot('2026-11-11').fingerprint;
+  collector.store.markDayReview('2026-11-11',original);
+  summary={...summary,intervals:[{...interval,projectPath:'/observed',agentIdentity:{id:'business-agent'},attributes:{client:'project'},metadataSource:'launcher'} as typeof interval]};
+  assert.equal(internal.dayReviewSnapshot('2026-11-11').fingerprint,original);
+  assert.equal(internal.dayReviewSnapshot('2026-11-11').stale,false);
+  summary={...summary,intervals:[{...interval,workspaceId:'user::/changed'}]};
+  assert.equal(internal.dayReviewSnapshot('2026-11-11').stale,true);
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('website project candidates use persisted worktree paths and resolve only compatible hosts',async()=>{
+ const {mkdirSync,writeFileSync}=await import('node:fs');
+ const output=mkdtempSync(join(tmpdir(),'ade-worktree-host-')),collector=new Collector(output);
+ try{
+  const main=join(output,'main'),linked=join(output,'linked'),metadata=join(main,'.git','worktrees','linked');
+  mkdirSync(metadata,{recursive:true});mkdirSync(linked);writeFileSync(join(linked,'.git'),`gitdir: ${metadata}\n`);writeFileSync(join(metadata,'commondir'),'../..\n');
+  for(const hostId of ['local','remote-other'])collector.store.put(makeEvent('hook','session_start',{hostId,cwd:linked,workspaceId:`${hostId}::${linked}`}));
+  collector.store.put(makeEvent('hook','session_start',{hostId:'remote-history',cwd:'/deleted/worktree',workspaceId:'remote-history::/deleted/worktree',projectPath:'/canonical/history'}));
+  const candidates=(collector as any).knownWorkspaces() as Array<{workspaceId:string;projectPath:string}>;
+  assert.equal(candidates.find(item=>item.workspaceId===`local::${linked}`)?.projectPath,main);
+  assert.equal(candidates.find(item=>item.workspaceId===`remote-other::${linked}`)?.projectPath,linked);
+  assert.equal(candidates.find(item=>item.workspaceId==='remote-history::/deleted/worktree')?.projectPath,'/canonical/history');
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('legacy terminal observations and focused tabs preserve persisted hook project paths',async()=>{
+ const output=mkdtempSync(join(tmpdir(),'ade-canonical-hook-')),collector=new Collector(output);
+ try{
+  const workspaceId='local::/deleted/worktree';
+  collector.store.put(makeEvent('hook','session_start',{workspaceId,cwd:'/deleted/worktree',hostId:'local',projectPath:'/principal/project'}));
+  collector.store.put(makeEvent('orca','terminal',{workspaceId,cwd:'/deleted/worktree',terminalHandle:'legacy-terminal'}));
+  const internal=collector as any;
+  assert.equal(internal.knownWorkspaces().find((item:any)=>item.workspaceId===workspaceId)?.projectPath,'/principal/project');
+  internal.focusedTabs=[{workspaceId}];
+  assert.equal(internal.knownWorkspaces().find((item:any)=>item.workspaceId===workspaceId)?.projectPath,'/principal/project');
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('resource caches refresh resolved paths after filesystem cache expiry and retain unchanged maps',async t=>{
+ const {mkdirSync,writeFileSync}=await import('node:fs');
+ const output=mkdtempSync(join(tmpdir(),'ade-resource-path-refresh-')),collector=new Collector(output);
+ try{
+  const main=join(output,'main'),linked=join(output,'linked'),metadata=join(main,'.git','worktrees','linked');
+  mkdirSync(linked);let now=Date.now();t.mock.method(Date,'now',()=>now);
+  collector.store.put(makeEvent('agent_report','resource',{workspaceId:`local::${linked}`,hostId:'local',data:{url:'https://example.test/resource'}}));
+  const internal=collector as any,initial=internal.resources();
+  assert.equal(initial.get('https://example.test/resource')?.projectPath,linked);
+  mkdirSync(metadata,{recursive:true});writeFileSync(join(linked,'.git'),`gitdir: ${metadata}\n`);writeFileSync(join(metadata,'commondir'),'../..\n');
+  now+=11_000;
+  const updated=internal.resources();
+  assert.notEqual(updated,initial);assert.equal(updated.get('https://example.test/resource')?.projectPath,main);
+  now+=11_000;assert.equal(internal.resources(),updated,'unchanged resolved contents reuse the map');
+ }finally{await collector.close();rmSync(output,{recursive:true,force:true});}
+});

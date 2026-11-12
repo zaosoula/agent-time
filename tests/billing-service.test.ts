@@ -5,6 +5,18 @@ import {BillingStore} from '../src/capture/billing-store.ts';import {billingForP
 import {billingDayStart} from '../src/capture/billing-calendar.ts';import type {BillingProject} from '../src/capture/billing-types.ts';
 const project:BillingProject={id:'caex',name:'CAEX',aliases:['client-caex'],sources:{repositories:['/fixture/caex','/fixture/infra'],workspaceIds:[],reportedProjects:['CAEX']},timezone:'Europe/Paris',policies:[{id:'v1',effectiveFrom:'2026-01-01',basis:'overlapMergedWall',currency:'EUR',hourlyRate:'100.00',agentOnlyHourlyRate:null,agentWeight:'1',rounding:{minutes:1,mode:'nearest',scope:'period'},dailyCapMinutes:null,presenceWindowMinutes:null,aiFees:{mode:'none'}}]};
 const fixture=()=>{const output=mkdtempSync(join(tmpdir(),'at-billing-service-')),store=new EventStore(join(output,'events.sqlite'));new BillingStore(store.database).saveProject(project);return {output,store};};
+test('persisted canonical paths retain prompt presence after a linked worktree is deleted',()=>{
+ const {output,store}=fixture();try{
+  const billing=new BillingStore(store.database),saved=billing.resolveProject('caex');
+  billing.saveProject({...saved,policies:[...saved.policies,{...saved.policies[0]!,id:'presence',presenceWindowMinutes:15}]},saved.revision);
+  const at=billingDayStart('2026-11-10','Europe/Paris')+36000,who={provider:'claude',hostId:'local',sessionId:'linked',cwd:'/fixture/deleted-linked',projectPath:'/fixture/caex'};
+  store.put(makeEvent('hook','prompt_submitted',{...who,observedAt:at-1,data:{humanInitiated:true}}));
+  for(const [kind,offset] of [['tool_start',0],['tool_end',60]] as const)store.put(makeEvent('hook',kind,{...who,observedAt:at+offset,data:{toolId:'t'}}));
+  const result=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'});
+  assert.equal(result.report.totals.agentRunningSeconds,60);assert.equal(result.report.totals.eligibleSeconds,60);assert.equal(result.report.totals.billableSeconds,60);assert.equal(result.report.totals.timeAmount,'1.67');
+  assert.ok(billingProjects(output).knownSources.includes('/fixture/caex'));
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
 test('billing calendar follows the project timezone and daylight saving',()=>{assert.equal(billingDayStart('2026-03-30','Europe/Paris')-billingDayStart('2026-03-29','Europe/Paris'),23*3600);assert.equal(billingDayStart('2026-10-26','Europe/Paris')-billingDayStart('2026-10-25','Europe/Paris'),25*3600);assert.throws(()=>billingDayStart('2026-02-30','Europe/Paris'));});
 test('database project grouping bills raw seconds once and saves a reproducible export',()=>{const {output,store}=fixture();try{
  const at=billingDayStart('2026-11-10','Europe/Paris')+36000;

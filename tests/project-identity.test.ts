@@ -29,3 +29,15 @@ test('project colours derive from a stable hash of the path, not list position',
   for (const slot of slots) assert.ok(slot >= 0 && slot < projectColorCount);
   assert.equal(projectColor('Unassigned'), 'var(--muted)');
 });
+
+test('pure UI helpers prefer persisted canonical project paths after a worktree is gone',()=>{
+ assert.equal(workspaceProject('local::/tmp/deleted-worktree','/projects/main/packages/client'),'/projects/main/packages/client');
+ assert.equal(sessionProject({cwd:'/tmp/deleted-worktree',workspaceId:'local::/tmp/deleted-worktree',projectPath:'/projects/main'}),'/projects/main');
+});
+
+test('manual project choices outrank the captured canonical project',async()=>{
+ const {intervalProject}=await import('../src/ui/project-identity.ts');
+ assert.equal(intervalProject({workspaceId:'user::/chosen',projectPath:'/observed',userAttribution:'assigned'}),'/chosen');
+ assert.equal(intervalProject({workspaceId:undefined,projectPath:'/observed',userAttribution:'unassigned'}),'Unassigned');
+ assert.equal(intervalProject({workspaceId:'local::/worktree',projectPath:'/observed'}),'/observed');
+});

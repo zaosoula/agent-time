@@ -25,7 +25,7 @@ import {HookInstallation,type HookInstallationStatus,type HookProvider} from './
 import {McpInstallation} from './mcp-installation.ts';
 import {ClaudeStatusLineInstallation} from './claude-statusline-installation.ts';
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
-import {WebsiteResolver,websiteKey,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
+import {WebsiteResolver,websiteKey,resolveProjectPath,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
 import {applyHumanDecisions,groupHumanReview,humanIntervalKey,humanReviewState,type HumanDecision,type HumanSplit} from './human-review.ts';
 import {unobservedGaps} from './gaps.ts';
@@ -63,12 +63,18 @@ const exportTemporaryAgeMs=60*60_000;
 
 const reviewIssues=(day:Summary)=>[...day.coverage,...day.unresolved].filter(issue=>issue.reason!==staticOrcaScopeReason);
 function sortedByJson<T>(items:T[]):T[]{return items.map(item=>[JSON.stringify(item),item] as const).sort((a,b)=>a[0]<b[0]?-1:a[0]>b[0]?1:0).map(([,item])=>item);}
-function reviewFingerprint(intervals:unknown[],issues:unknown[],notes:unknown[]){return createHash('sha256').update(JSON.stringify({intervals,issues,notes})).digest('hex');}
+/** Additive observation context does not change the timing or manual choices a person reviewed. */
+function reviewInterval(interval:unknown):unknown{
+ if(!interval||typeof interval!=='object')return interval;
+ const {projectPath,agentIdentity,agentProfile,attributes,metadataWarning,metadataSource,...reviewed}=interval as Record<string,unknown>;
+ return reviewed;
+}
+function reviewFingerprint(intervals:unknown[],issues:unknown[],notes:unknown[]){return createHash('sha256').update(JSON.stringify({intervals:intervals.map(reviewInterval),issues,notes})).digest('hex');}
 /** Prefix of order-independent fingerprints; unprefixed ones come from earlier versions. */
 const FINGERPRINT_VERSION='v2:';
 /** Stored after a failed legacy check so the costly check is never repeated. */
 /** Bump when the review snapshot logic changes, to drop cached snapshots. */
-const DAY_REVIEW_CACHE_VERSION='r3';
+const DAY_REVIEW_CACHE_VERSION='r4';
 const LEGACY_STALE_FINGERPRINT=`${FINGERPRINT_VERSION}legacy-stale`;
 
 export class Collector {
@@ -376,10 +382,13 @@ export class Collector {
    */
   private knownWorkspaces():KnownWorkspace[]{
     if(this.knownWorkspaceCache&&Date.now()-this.knownWorkspaceCache.at<knownWorkspacesTtlMs)return this.withFocusedWorkspaces(this.knownWorkspaceCache.value);
-    const known=new Map<string,KnownWorkspace>();
+    const known=new Map<string,KnownWorkspace>(),persistedProjects=new Map<string,string>();
     for(const row of this.store.workspaceObservations(Date.now()/1000-90*86400)){
       const workspaceId=row.workspaceId,path=row.cwd||workspaceId?.split('::').at(-1);
-      if(workspaceId&&path&&isAbsolute(path))known.set(workspaceId,{workspaceId,workspacePath:resolve(path),projectPath:projectPathFromWorktree(path)});
+      if(workspaceId&&path&&isAbsolute(path)){
+        if(row.projectPath&&isAbsolute(row.projectPath))persistedProjects.set(workspaceId,row.projectPath);
+        known.set(workspaceId,{workspaceId,workspacePath:resolve(path),projectPath:persistedProjects.get(workspaceId)||resolveProjectPath(path,{hostId:row.hostId||undefined})});
+      }
     }
     this.knownWorkspaceCache={at:Date.now(),value:[...known.values()]};
     return this.withFocusedWorkspaces(this.knownWorkspaceCache.value);
@@ -387,7 +396,7 @@ export class Collector {
   private withFocusedWorkspaces(base:KnownWorkspace[]):KnownWorkspace[]{
     if(!this.focusedTabs.length)return base;
     const known=new Map(base.map(item=>[item.workspaceId,item]));
-    for(const tab of this.focusedTabs){const path=tab.workspaceId.split('::').at(-1);if(path&&isAbsolute(path))known.set(tab.workspaceId,{workspaceId:tab.workspaceId,workspacePath:resolve(path),projectPath:projectPathFromWorktree(path)});}
+    for(const tab of this.focusedTabs){const path=tab.workspaceId.split('::').at(-1);if(path&&isAbsolute(path))known.set(tab.workspaceId,{workspaceId:tab.workspaceId,workspacePath:resolve(path),projectPath:known.get(tab.workspaceId)?.projectPath||projectPathFromWorktree(path)});}
     return [...known.values()];
   }
   websiteProjects(){
@@ -470,7 +479,7 @@ export class Collector {
     const notes=this.store.manualNotes(date);
     // The fingerprint ignores interval order: a bounded day window can list the
     // same intervals in another order than a replay of the whole history did.
-    const fingerprint=FINGERPRINT_VERSION+reviewFingerprint(sortedByJson(day.intervals),sortedByJson(reviewIssues(day)),notes);
+    const fingerprint=FINGERPRINT_VERSION+reviewFingerprint(sortedByJson(day.intervals.map(reviewInterval)),sortedByJson(reviewIssues(day)),notes);
     const saved=this.store.dayReview(date);
     let stale=Boolean(saved&&saved.fingerprint!==fingerprint);
     if(stale&&saved&&!saved.fingerprint.startsWith(FINGERPRINT_VERSION)&&!this.legacyFingerprintChecked.has(date)){
@@ -660,7 +669,7 @@ export class Collector {
       const now=Date.now()/1000;
       const next=reportedResources(this.store.agentReports(now-31*86400,now+60)),previous=this.resourceCache?.value;
       // Keep the previous map when nothing changed, so derived summaries keep their identity.
-      const same=previous&&previous.size===next.size&&[...next].every(([key,value])=>previous.get(key)?.observedAt===value.observedAt);
+      const same=previous&&previous.size===next.size&&[...next].every(([key,value])=>JSON.stringify(previous.get(key))===JSON.stringify(value));
       this.resourceCache={at:Date.now(),value:same?previous:next};
     }
     return this.resourceCache.value;

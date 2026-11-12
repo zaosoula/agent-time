@@ -18,7 +18,7 @@ const hash=(value:string)=>createHash('sha256').update(value).digest('hex').slic
 const quote=(value:string)=>"'"+value.replaceAll("'","'\\''")+"'";
 const source=dirname(fileURLToPath(import.meta.url));
 // Only what the hook runner loads, so the runtime version changes only with hook code.
-const files=['hook-runner.ts','hooks.ts','events.ts','json.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
+const files=['hook-runner.ts','hooks.ts','events.ts','json.ts','work-context.ts','project-path.ts',...readdirSync(join(source,'sources')).filter(f=>f.endsWith('.agent.ts')||f==='agent-registry.ts'||f==='types.ts').map(f=>join('sources',f))];
 const runtimeVersion=hash(process.version+files.map(f=>readFileSync(join(source,f),'utf8')).join('\n'));
 // First execution of a copied runtime can exceed five seconds on a busy Mac.
 // This only verifies installation; hook delivery keeps its separate short timeout.

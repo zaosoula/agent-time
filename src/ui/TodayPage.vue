@@ -13,7 +13,7 @@ import SetupVerification from './SetupVerification.vue';
 import { relaunchHookSetup } from './transport.ts';
 import { useStore } from './store.ts';
 import { clock, duration, longDate } from './format.ts';
-import { projectLabel, workspaceProject, unassignedProject } from './project-identity.ts';
+import { intervalProject, projectLabel, workspaceProject, unassignedProject } from './project-identity.ts';
 
 const props = defineProps<{ busy: boolean }>();
 const emit = defineEmits<{ start: [] }>();
@@ -106,7 +106,7 @@ const websites = computed(() => {
     } catch {
       /* Keep the captured domain. */
     }
-    const project = interval.workspaceId ? workspaceProject(interval.workspaceId) : unassignedProject;
+    const project = (interval.workspaceId || interval.projectPath) ? intervalProject(interval) : unassignedProject;
     const key = `${domain}::${project}`;
     const group = groups.get(key) || { domain, project, intervals: [], browsers: new Set<string>(), pages: new Map<string, Page>() };
     group.intervals.push([interval.start, interval.end]);

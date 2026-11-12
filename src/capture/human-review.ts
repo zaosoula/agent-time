@@ -47,11 +47,19 @@ function identity(interval:Interval):string {
  return interval.browserUrl||interval.browserOrigin||interval.browserDomain||interval.tabId||interval.tabTitle||interval.foregroundBundleId||interval.foregroundName||'Unknown app';
 }
 
+/** Pure read projection: a person's decision outranks original capture metadata. */
+export function intervalProjectPath(interval:Pick<Interval,'workspaceId'|'projectPath'|'userAttribution'>):string|undefined {
+ if(interval.userAttribution==='unassigned')return;
+ const workspace=interval.workspaceId?.split('::').at(-1);
+ if(interval.userAttribution==='assigned')return workspace;
+ return interval.projectPath?.startsWith('/')?interval.projectPath:workspace;
+}
+
 export function groupHumanReview(intervals:Interval[]):HumanReviewGroup[] {
  const groups:HumanReviewGroup[]=[];
  for(const interval of intervals.filter(i=>i.state==='human').sort((a,b)=>a.start-b.start)){
   const key=humanIntervalKey(interval);if(!key)continue;
-  const path=interval.workspaceId?.split('::').at(-1);
+  const path=intervalProjectPath(interval);
   const label=interval.browserTitle||interval.tabTitle||interval.foregroundName||interval.browserDomain||'Unknown app';
   const detail=interval.browserUrl||interval.browserDomain||interval.foregroundBundleId||'Foreground activity';
   const matchKey=JSON.stringify([identity(interval),path||'',interval.userAttribution||'',interval.attributionSource||'',interval.attributionReason||'',interval.reviewSegment||'']);

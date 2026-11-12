@@ -1,9 +1,11 @@
 import {execFile} from 'node:child_process';
 import {promisify} from 'node:util';
 import {existsSync,readFileSync,writeFileSync,renameSync,readdirSync,statSync} from 'node:fs';
-import {basename,isAbsolute,join,resolve,sep} from 'node:path';
+import {basename,isAbsolute,join,sep} from 'node:path';
 import {homedir} from 'node:os';
 import type {Interval} from './events.ts';
+import {projectPathFromWorktree} from './project-path.ts';
+export {projectPathFromWorktree,resolveProjectPath} from './project-path.ts';
 
 export interface WebsiteRule {pattern:string;projectPath:string;}
 export interface WebsiteRuleImpact {pattern:string;projectPath:string;observedIntervals:number;affectedIntervals:number;examples:Array<{url:string;currentProject:string|null;seconds:number}>;windowDays:7;}
@@ -20,10 +22,6 @@ const defaultRunner:Runner=async(file,args,timeout=1800)=>{
 };
 const dockerBinary=()=>['/usr/local/bin/docker','/opt/homebrew/bin/docker','/Applications/Docker.app/Contents/Resources/bin/docker'].find(existsSync);
 const inside=(path:string,root:string)=>path===root||path.startsWith(root+sep);
-export function projectPathFromWorktree(path:string):string{
- const marker=`${sep}.orca${sep}workspaces${sep}`,index=path.indexOf(marker);
- return resolve(index>=0?path.slice(0,index):path);
-}
 export function websiteKey(raw:string,rules:WebsiteRule[]=[]):string|null{
  try{
   const url=new URL(raw);

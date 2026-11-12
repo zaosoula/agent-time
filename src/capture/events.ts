@@ -1,14 +1,15 @@
+import type {WorkMetadata} from './work-context.ts';
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
 export interface CaptureEvent {
   eventId: string; source: string; kind: string; observedAt: number; monotonicAt: number; collectorEpoch: string;
   sourceAt?: number; hostId?: string; runtimeId?: string; workspaceId?: string; cwd?: string;
-  terminalHandle?: string; terminalIncarnation?: string; provider?: string; sessionId?: string;
+  projectPath?:string; terminalHandle?: string; terminalIncarnation?: string; provider?: string; sessionId?: string;
   turnId?: string; agentId?: string; parentAgentId?: string; runId?: string; taskId?: string; dispatchId?: string;
   data?: Record<string, unknown>;
 }
-export interface Interval {
+export interface Interval extends WorkMetadata {
   start: number; end: number; state: 'running' | 'turn' | 'grouped' | 'waiting' | 'human'; proof: 'observed' | 'inferred';
   sourceEventIds: string[]; hostId?: string; workspaceId?: string; sessionId?: string; agentId?: string;
   provider?: string; runId?: string; taskId?: string; dispatchId?: string; child?: boolean;
@@ -19,7 +20,7 @@ export interface Interval {
   attributionSource?:string;attributionReason?:string;
 }
 export interface Issue { reason: string; eventId?: string; source?: string; observedAt?: number; }
-export interface Session {
+export interface Session extends WorkMetadata {
   key: string; hostId?: string; workspaceId?: string; cwd?: string; runId?: string; taskId?: string; dispatchId?: string;
   sessionId?: string; agentId?: string; provider?: string; title: string; state: string;
   terminalHandle?: string; lastObservedAt: number; seconds: number; observedSeconds: number; child: boolean; proof: string;

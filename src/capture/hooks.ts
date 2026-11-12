@@ -4,11 +4,18 @@ import { createHash, randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { validateEvent, type CaptureEvent, type Issue } from './events.ts';
 import type { EventStore } from './store.ts';
+import {readLauncherContext,eventWorkMetadata} from './work-context.ts';
+import {resolveProjectPath} from './project-path.ts';
 import {agentById} from './sources/agent-registry.ts';
 export function normalizeHook(provider: string, payload: unknown, context: Partial<CaptureEvent>): CaptureEvent {
   const agent=agentById.get(provider);
   if(!agent)throw new Error('Unsupported hook provider');
-  return agent.normalizeHook(payload,context);
+  const event=agent.normalizeHook(payload,context);
+  // Provider adapters replace data; merge the allowlisted launcher context afterwards.
+  const {agentIdentity,attributes,metadataSource,metadataWarning}=eventWorkMetadata({data:context.data});
+  event.data={...event.data,...(agentIdentity?{agentIdentity}:{}),...(attributes?{attributes}:{}),...(metadataSource?{metadataSource}:{}),...(metadataWarning?{metadataWarning}:{})};
+  if(event.cwd)event.projectPath=resolveProjectPath(event.cwd,{hostId:event.hostId});
+  return event;
 }
 /** Where each agent keeps session transcripts inside its config folder. */
 const transcriptFolders:Record<string,string>={claude:'/projects/',codex:'/sessions/'};
@@ -27,11 +34,11 @@ export function hookInstallationId(provider:string,payload:unknown,env:NodeJS.Pr
   const folder=at>0?(transcript as string).slice(0,at):env[agent.configEnv]||join(home,agent.configDirectory);
   return createHash('sha256').update(join(resolve(folder),agent.configFile)).digest('hex').slice(0,16);
 }
-export function hookContext(): Partial<CaptureEvent> {
+export function hookContext(env:NodeJS.ProcessEnv=process.env): Partial<CaptureEvent> {
   // Only allowlisted identifiers; never capture the environment or hook endpoint credentials.
-  return { terminalHandle: process.env.ORCA_TERMINAL_HANDLE,
-    workspaceId: process.env.ORCA_WORKTREE_ID || process.env.ORCA_WORKSPACE_ID,
-    hostId: process.env.ORCA_EXECUTION_HOST_ID || 'local' };
+  return { terminalHandle: env.ORCA_TERMINAL_HANDLE,
+    workspaceId: env.ORCA_WORKTREE_ID || env.ORCA_WORKSPACE_ID,
+    hostId: env.ORCA_EXECUTION_HOST_ID || 'local',data:{...readLauncherContext(env)} };
 }
 export const MAX_HOOK_BYTES=64*1024;
 export const MAX_PENDING_HOOKS=4096;

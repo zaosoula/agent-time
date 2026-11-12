@@ -181,3 +181,15 @@ test('a known browser site uses its domain, while app-only activity stays genera
  assert.equal(reviewContextTitle(browser),'example.com');assert.equal(reviewVisitTitle(browser),'example.com');
  assert.equal(reviewContextTitle(general),'General activity');assert.equal(reviewVisitTitle(general),'Visit');
 });
+
+test('review app groups share canonical worktree projects and preserve manual choices',()=>{
+ const input=[
+  interval('linked-a',0,5,{workspaceId:'local::/tmp/worktree-a',projectPath:'/projects/main'}),
+  interval('linked-b',5,10,{workspaceId:'local::/tmp/worktree-b',projectPath:'/projects/main'}),
+  interval('chosen',10,15,{workspaceId:'manual::/chosen',projectPath:'/projects/main',userAttribution:'assigned'}),
+  interval('unassigned',15,20,{projectPath:'/projects/main',userAttribution:'unassigned'}),
+ ];
+ const groups=buildAppReviewGroups(input);
+ assert.deepEqual(groups.map(group=>[group.projectPath,group.seconds]),[[undefined,5],['/chosen',5],['/projects/main',10]]);
+ assert.equal(groups.flatMap(group=>group.pairs).length,4);
+});

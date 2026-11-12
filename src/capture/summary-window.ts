@@ -1,3 +1,4 @@
+import {validateAttributes,validateAgentIdentity} from './work-context.ts';
 import {readStoredPayload} from './payload-reader.ts';
 import type {DatabaseSync} from 'node:sqlite';
 import type {CaptureEvent} from './events.ts';
@@ -31,21 +32,33 @@ export function inWindow(event:CaptureEvent,bounds:WindowBounds):boolean{
 }
 export function isActivitySample(event:CaptureEvent):boolean{return event.source==='macos'&&event.kind==='activity';}
 
-const identityFields=['source','kind','hostId','workspaceId','sessionId','agentId','dispatchId','terminalHandle','terminalIncarnation','provider','runId','taskId','cwd'] as const;
+const identityFields=['source','kind','hostId','workspaceId','sessionId','agentId','dispatchId','terminalHandle','terminalIncarnation','provider','runId','taskId','cwd','projectPath'] as const;
 const detailFields=['foregroundBundleId','foregroundName','browserDomain','state','outcome','toolName','hook'] as const;
 /** Parse event rows, sharing repeated identity strings to keep large windows small in memory. */
 export function eventParser(){
- const pooled=new Map<string,string>();
+ const pooled=new Map<string,string>(),objects=new Map<string,unknown>();let pooledBytes=0;
+ // The parser belongs to one window and caps retained strings/maps even for adversarial unique metadata.
+ const maxStrings=8192,maxStringBytes=2*1024*1024,maxObjects=2048;
+ const internObject=(kind:'attributes'|'agentIdentity',value:unknown)=>{
+  try{
+   const validated=kind==='attributes'?validateAttributes(value):validateAgentIdentity(value);
+   const key=kind+JSON.stringify(Object.entries(validated).sort(([a],[b])=>a.localeCompare(b)));
+   const previous=objects.get(key);if(previous!==undefined)return previous;
+   if(objects.size<maxObjects)objects.set(key,validated);
+   return validated;
+  }catch{return value;}
+ };
  const intern=(value:unknown)=>{
   if(typeof value!=='string')return value;
   const previous=pooled.get(value);if(previous!==undefined)return previous;
-  pooled.set(value,value);return value;
+  if(pooled.size<maxStrings&&pooledBytes+value.length*2<=maxStringBytes){pooled.set(value,value);pooledBytes+=value.length*2;}return value;
  };
  return (payload:string):CaptureEvent=>{
   const event=JSON.parse(payload) as CaptureEvent;
   for(const key of identityFields)if(typeof event[key]==='string')(event as unknown as Record<string,unknown>)[key]=intern(event[key]);
   if(typeof event.collectorEpoch==='string')event.collectorEpoch=intern(event.collectorEpoch) as string;
   if(event.data)for(const key of detailFields)if(typeof event.data[key]==='string')event.data[key]=intern(event.data[key]);
+  if(event.data)for(const key of ['attributes','agentIdentity'] as const)if(event.data[key]!==undefined)event.data[key]=internObject(key,event.data[key]);
   return event;
  };
 }

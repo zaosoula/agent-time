@@ -1,4 +1,4 @@
-import type { Session } from '../capture/events.ts';
+import type { Interval, Session } from '../capture/events.ts';
 
 export const unassignedProject = 'Unassigned';
 
@@ -8,12 +8,19 @@ export function projectPath(path: string | null | undefined): string {
   return root || '/';
 }
 
-export function workspaceProject(id: string | null | undefined): string {
-  return projectPath(id?.split('::').at(-1));
+export function workspaceProject(id: string | null | undefined, canonicalPath?: string | null): string {
+  const canonical = projectPath(canonicalPath);
+  return canonical !== unassignedProject ? canonical : projectPath(id?.split('::').at(-1));
 }
 
-export function sessionProject(session: Pick<Session, 'cwd' | 'workspaceId'>): string {
-  const workspace = workspaceProject(session.workspaceId);
+/** Explicit review decisions take precedence over the original observation. */
+export function intervalProject(interval: Pick<Interval,'workspaceId'|'projectPath'|'userAttribution'>): string {
+  if(interval.userAttribution==='unassigned')return unassignedProject;
+  return workspaceProject(interval.workspaceId,interval.userAttribution==='assigned'?undefined:interval.projectPath);
+}
+
+export function sessionProject(session: Pick<Session, 'cwd' | 'workspaceId'> & {projectPath?:string}): string {
+  const workspace = workspaceProject(session.workspaceId, session.projectPath);
   return workspace !== unassignedProject ? workspace : projectPath(session.cwd);
 }
 

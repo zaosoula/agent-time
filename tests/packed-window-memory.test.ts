@@ -5,3 +5,8 @@ test('a packed window whose logical payload exceeds the heap budget stays readab
  const child=spawnSync(process.execPath,['--max-old-space-size=64','--input-type=module','-e',script],{encoding:'utf8',timeout:60000});assert.equal(child.status,0,child.stderr);assert.equal(JSON.parse(child.stdout).events,6000);
  }finally{rmSync(root,{recursive:true,force:true});}
 });
+
+test('large repeated work metadata fits a constrained parser heap without a global object pool',()=>{
+ const script=`import {eventParser} from './src/capture/summary-window.ts';const parse=eventParser(),attributes=Object.fromEntries(Array.from({length:7},(_,i)=>['key'+i,'x'.repeat(120)])),payload=JSON.stringify({eventId:'one',source:'hook',kind:'tool_start',observedAt:1,monotonicAt:1,collectorEpoch:'one',data:{attributes,agentIdentity:{id:'business'}}}),rows=[];for(let i=0;i<50000;i++)rows.push(parse(payload));if(new Set(rows.map(event=>event.data.attributes)).size!==1)throw new Error('Metadata maps were not shared');console.log(rows.length);`;
+ const child=spawnSync(process.execPath,['--max-old-space-size=64','--input-type=module','-e',script],{encoding:'utf8',timeout:60000});assert.equal(child.status,0,child.stderr);assert.equal(Number(child.stdout),50000);
+});

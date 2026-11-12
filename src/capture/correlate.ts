@@ -1,4 +1,5 @@
 import type { CaptureEvent, Interval, Issue, Session, Summary } from './events.ts';
+import {eventWorkMetadata,type WorkMetadata} from './work-context.ts';
 import {agentSessionKey,hasNativeSessionIdentity} from './session-identity.ts';
 import { workerSnapshotValidSeconds } from './observation-retention.ts';
 export function unionSeconds(intervals:Array<[number,number]>):number {
@@ -74,6 +75,22 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  const events=unique.sort((a,b)=>sortTime.get(a.eventId)!-sortTime.get(b.eventId)!||compareCausalPosition(a.collectorEpoch,a.monotonicAt,b.collectorEpoch,b.monotonicAt)||a.eventId.localeCompare(b.eventId));
  const intervals:Interval[]=[],unresolved:Issue[]=[],coverage:Issue[]=[],sessions=new Map<string,Session>();
  const globalFences:number[]=[],sessionFences=new Map<string,number[]>(),standaloneIntervals=new Map<string,Interval[]>();
+ const commonByKey=new Map<string,WorkMetadata>(),eventMetadata=new WeakMap<CaptureEvent,WorkMetadata>(),metadataPool=new Map<string,unknown>();
+ function readMetadata(event:CaptureEvent):WorkMetadata{
+  const metadata=eventWorkMetadata(event);
+  for(const field of ['attributes','agentIdentity'] as const)if(metadata[field]){
+   const key=field+JSON.stringify(metadata[field]),previous=metadataPool.get(key);
+   if(previous)Object.assign(metadata,{[field]:previous});else if(metadataPool.size<2048)metadataPool.set(key,metadata[field]);
+  }
+  return metadata;
+ }
+ const metadataKeys=['agentIdentity','agentProfile','attributes','metadataSource','projectPath','metadataWarning'] as const;
+ const metadataOf=(value:WorkMetadata):WorkMetadata=>Object.fromEntries(metadataKeys.filter(key=>value[key]!==undefined).map(key=>[key,value[key]]));
+ function rememberMetadata(key:string,value:WorkMetadata){
+  const previous=commonByKey.get(key);
+  if(!previous){commonByKey.set(key,metadataOf(value));return;}
+  for(const field of metadataKeys)if(JSON.stringify(previous[field])!==JSON.stringify(value[field]))delete previous[field];
+ }
  const workerPrevious=new Map<string,CaptureEvent>(),childLifecycle=new Map<string,CaptureEvent>();
  const active=new Map<string,{event:CaptureEvent;state:'running'|'waiting';session:Session;key:string}>();
  const provisional:Array<{event:CaptureEvent;session:Session;key:string}>=[];
@@ -99,6 +116,8 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    if(standalone){
     if(!s){s=standalone;s.key=key;sessions.set(key,s);}
     s.sessionId=e.sessionId;s.cwd ||= standalone.cwd;s.provider ||= standalone.provider;
+    for(const field of metadataKeys)if(s[field]===undefined&&standalone[field]!==undefined)Object.assign(s,{[field]:standalone[field]});
+    const oldMetadata=commonByKey.get(standaloneKey);if(oldMetadata){rememberMetadata(key,oldMetadata);commonByKey.delete(standaloneKey);}
     s.runId=e.runId;s.taskId=e.taskId;s.dispatchId=e.dispatchId;s.workspaceId=e.workspaceId||s.workspaceId;s.terminalHandle ||= e.terminalHandle;
     promotedBindings.set(standaloneKey,e);
     s.lastObservedAt=Math.max(s.lastObservedAt,standalone.lastObservedAt);
@@ -116,6 +135,9 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    }
   }
   if(!s){s={key,hostId:e.hostId,workspaceId:e.workspaceId,cwd:e.cwd,runId:e.runId,taskId:e.taskId,dispatchId:e.dispatchId,sessionId:e.sessionId,agentId:e.agentId,provider:e.provider,terminalHandle:e.terminalHandle,title:String(e.data?.title||`${child?(e.data?.childType||e.provider||'Native'):e.provider||'Agent'} ${child?'subagent':'session'}`),state:'unknown',lastObservedAt:e.observedAt,seconds:0,observedSeconds:0,child,proof:'unresolved'};sessions.set(key,s);}
+  Object.assign(s,readMetadata(e));
+  // Snapshot preceding context: later hooks may change the session while this tool stays open.
+  eventMetadata.set(e,metadataOf(s));
   s.lastObservedAt=Math.max(s.lastObservedAt,e.observedAt);return s;
  }
  function rememberActivity(key:string,time:number){const anchors=activityAnchors.get(key)||[];anchors.push(time);activityAnchors.set(key,anchors);}
@@ -123,6 +145,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   if(end.observedAt<start.observedAt){coverage.push({reason:'Clock rollback: interval left unknown',eventId:end.eventId});return;}
   if(end.observedAt===start.observedAt)return;
   const interval:Interval={start:start.observedAt,end:end.observedAt,state,proof,sourceEventIds:[start.eventId,end.eventId],hostId:s?.hostId,workspaceId:s?.workspaceId,sessionId:s?.sessionId,agentId:s?.agentId,provider:s?.provider,runId:s?.runId,taskId:s?.taskId,dispatchId:s?.dispatchId,child:s?.child};
+  if(s){Object.assign(interval,eventMetadata.get(start)??readMetadata(start));rememberMetadata(s.key,interval);}
   intervals.push(interval);
   // Index intervals a later Dispatch binding may promote, instead of rescanning all intervals.
   if(!interval.child&&!interval.dispatchId&&interval.sessionId!==undefined){const key=agentSessionKey(interval),group=standaloneIntervals.get(key)||[];group.push(interval);standaloneIntervals.set(key,group);}
@@ -354,7 +377,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  }
  for(const {event,session,key} of provisional){
   const group=session.child?children:roots,ranges=group.get(key)||[];
-  ranges.push([event.observedAt,event.observedAt+0.001]);group.set(key,ranges);
+  ranges.push([event.observedAt,event.observedAt+0.001]);group.set(key,ranges);rememberMetadata(key,eventMetadata.get(event)??readMetadata(event));
  }
  const rootSeconds=new Map([...roots].map(([key,ranges])=>[key,minuteCreditSeconds(grouped(key,ranges))]));
  const childSeconds=new Map([...children].map(([key,ranges])=>[key,minuteCreditSeconds(grouped(key,ranges))]));
@@ -362,7 +385,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   const key=s.key;
   s.seconds=(s.child?childSeconds:rootSeconds).get(key)||0;
   s.observedSeconds=unionSeconds((s.child?observedChildren:observedRoots).get(key)||[]);
-  for(const [start,end] of grouped(key,(s.child?children:roots).get(key)||[]))intervals.push({start,end,state:'grouped',proof:'inferred',sourceEventIds:[],hostId:s.hostId,workspaceId:s.workspaceId,sessionId:s.sessionId,agentId:s.agentId,provider:s.provider,runId:s.runId,taskId:s.taskId,dispatchId:s.dispatchId,child:s.child});
+  for(const [start,end] of grouped(key,(s.child?children:roots).get(key)||[]))intervals.push({start,end,state:'grouped',proof:'inferred',sourceEventIds:[],...commonByKey.get(key),hostId:s.hostId,workspaceId:s.workspaceId,sessionId:s.sessionId,agentId:s.agentId,provider:s.provider,runId:s.runId,taskId:s.taskId,dispatchId:s.dispatchId,child:s.child});
  }
  const groupedActivity=[...roots,...children].flatMap(([key,ranges])=>grouped(key,ranges));
  const humanRanges=intervals.filter(i=>i.state==='human').map(i=>[i.start,i.end] as [number,number]);

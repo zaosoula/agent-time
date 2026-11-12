@@ -76,3 +76,25 @@ After updating Agent Time, restart existing agent/MCP connections so the refresh
 ## Project billing (beta 46)
 
 Configure billable projects and policy versions in **Settings → Billing**. SQLite is canonical; multiple repositories/workspaces can share one deduplicated production clock. `billing_projects` lists the configured identities. `billing_for_project` calculates compact, saved financial summaries with daily pagination or local CSV/Markdown exports. Raw captured intervals, commercial rounding, declared counters, unknown fees and coverage are kept distinct. See [Project billing](billing.md) for policy, pricing, evidence and API details.
+
+## Generic launcher context and measured agent reads (beta 48)
+
+A launcher can opt in to business identity and external attributes without opening a counter:
+
+```sh
+AGENT_TIME_AGENT_ID=worker-17 AGENT_TIME_ATTR_CLIENT_ID=client-one AGENT_TIME_ATTR_PROJECT_ID=project-one claude -p --agent builder "Work on the task"
+```
+
+Only `AGENT_TIME_AGENT_ID`, `AGENT_TIME_ATTR_*` and the existing Orca identity allowlist are captured from the environment. Do not put credentials in these opt-in attributes. The business identity is returned as `agentIdentity.id`; provider-native `agentId`/`sessionId` stay unchanged. A provider's `agent_type` is returned separately as `agentProfile`, including for root sessions. A profile such as `builder` can be shared by many distinct business agents.
+
+`set_work_context` and `start_task` accept an `attributes` string map. Keys are normalized to lowercase (`AGENT_TIME_ATTR_PROJECT_ID` becomes `project_id`). Up to 16 keys are accepted, with 64-character keys, 128-character values and at most 1,024 UTF-8 bytes for the serialized map. Keys must match `[a-z][a-z0-9_.-]*`; control characters, unsafe prototype keys and case collisions are rejected. Each complete report has a 4,096-byte UTF-8 limit. Invalid launcher metadata is omitted with a fixed warning while timing capture continues; invalid explicit MCP declarations return an error.
+
+Effective attributes combine launcher context, preceding session declarations, then explicit task overrides. An empty string removes an inherited key; an empty map leaves inherited keys unchanged. `start_task` freezes its effective context, so later declarations and retries do not move a task. Context is scoped to the actual provider/session/native child and host. Pass `hostId` when reporting for a known remote execution; ambiguous hostless evidence cannot choose between identical native sessions on different hosts.
+
+`sessions`, `timeline` and `time_for_project` accept exact `agentIdentityId` and `agentProfile` filters. Both filters, when supplied, must match. These filters select captured work, not declared elapsed counters. Unassociated human activity is excluded from agent-filtered reads. Timeline contributors and temporal `contextSlices` retain metadata changes and their source evidence instead of flattening parallel agents into one attribute map. Session metadata represents its latest context. Bounded reads expose truncation when applicable; split the query for detailed evidence when truncated.
+
+Metadata changes do not create new minute-credit blocks. Filtered credits are allocated from the original captured block, preserving unfiltered totals and cross-midnight credit. Attribute-based ERP grouping and timesheet writes remain the consumer's responsibility; no external IDs or billing approval are inferred from these values.
+
+Ordinary linked Git worktrees are grouped with their principal checkout as well as Orca worktrees. New hook events retain raw `cwd` alongside canonical `projectPath`, preserving known grouping after a worktree is deleted. Nested paths remain nested beneath the principal checkout so billing subprojects stay distinct. Remote paths are not resolved against this Mac's filesystem. Unavailable historical filesystem evidence remains unresolved. Existing manual review decisions take precedence.
+
+After upgrading, repair/update installed hooks in **Settings → Agents** and restart launcher/MCP sessions. Copied hook runtimes must be refreshed to capture the new opt-in metadata; existing captures and calls remain readable.
