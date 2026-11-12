@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue';
+import { computed, onActivated, reactive, ref, watch } from 'vue';
 import { workOutcomeTransport } from './transport.ts';
 import type { WorkOutcomes } from '../capture/work-outcomes.ts';
 import DayPicker from './DayPicker.vue';
@@ -18,6 +18,12 @@ const loading = ref(false),
   error = ref(''),
   outcomes = ref<WorkOutcomes | null>(null);
 let generation = 0;
+let requestedDate = '', committedDate = '';
+function refreshDate() {
+  if (store.page !== 'outcomes' || loading.value && requestedDate === props.date || outcomes.value && committedDate === props.date || error.value && requestedDate === props.date) return;
+  void load();
+}
+onActivated(refreshDate);
 const visible = computed(
   () =>
     outcomes.value?.projects.filter(
@@ -32,19 +38,21 @@ const time = clock;
 async function load() {
   const current = ++generation,
     date = props.date;
+  requestedDate = date;
   loading.value = true;
   error.value = '';
   outcomes.value = null;
+  committedDate = '';
   try {
     const result = await workOutcomeTransport.list(date);
-    if (current === generation && date === props.date) outcomes.value = result;
+    if (current === generation && date === props.date) { outcomes.value = result; committedDate = date; }
   } catch (cause) {
     if (current === generation) error.value = humanizeError(cause);
   } finally {
     if (current === generation) loading.value = false;
   }
 }
-watch(() => props.date, () => void load(), { immediate: true });
+watch(() => props.date, refreshDate, { immediate: true });
 </script>
 
 <template>

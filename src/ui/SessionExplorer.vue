@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {useRetainedOpen} from './page-presentation.ts';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowLeft, Bot, ChevronRight, Flag, Timer, X } from '@lucide/vue';
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui';
@@ -128,6 +129,7 @@ const contextItems = computed(() => {
   const items = [...(selected.value?.reported || [])].sort((a, b) => b.start - a.start);
   return showAllContext.value ? items : items.slice(0, contextLimit);
 });
+const presentedOpen = useRetainedOpen(sheetOpen);
 </script>
 
 <template>
@@ -241,7 +243,7 @@ const contextItems = computed(() => {
         </button>
       </div>
     </div>
-    <DialogRoot v-model:open="sheetOpen">
+    <DialogRoot v-model:open="presentedOpen">
       <DialogPortal>
         <DialogOverlay class="execution-overlay" />
         <DialogContent class="execution-sheet" @close-auto-focus="restoreFocus">

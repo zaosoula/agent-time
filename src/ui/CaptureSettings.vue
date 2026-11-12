@@ -49,6 +49,7 @@ const savedTab = sessionStorage.getItem(tabKey);
 const active = ref<string>(tabs.some((tab) => tab.id === savedTab) ? savedTab! : 'general');
 const visitedTabs = ref(new Set([active.value]));
 store.settingsSection.value = active.value;
+watch(() => store.settingsSection.value, (value) => { if (active.value !== value) active.value = value; });
 watch(active, (value) => {
   visitedTabs.value.add(value);
   store.settingsSection.value = value;
@@ -95,6 +96,7 @@ const startup = ref<StartupItemStatus | null>(null),
   startupBusy = ref(false),
   startupError = ref('');
 async function refreshStartup() {
+  if (store.page.value !== 'settings') return;
   if (!native) return;
   try {
     startup.value = await startupItem('status');

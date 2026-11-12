@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {useRetainedOpen} from './page-presentation.ts';
 // Gaps without observations and the notes you add about them, in one place. A note can be started
 // from a gap, from a review row, or from scratch with any time range on the selected day.
 import { computed, nextTick, reactive, ref, watch } from 'vue';
@@ -109,6 +110,7 @@ async function remove(id: string) {
     removing.value = '';
   }
 }
+const presentedOpen = useRetainedOpen(dialogOpen);
 </script>
 
 <template>
@@ -168,7 +170,7 @@ async function remove(id: string) {
     </ul>
   </section>
 
-  <DialogRoot v-model:open="dialogOpen">
+  <DialogRoot v-model:open="presentedOpen">
     <DialogPortal>
       <DialogOverlay class="export-backdrop" />
       <DialogContent as-child>

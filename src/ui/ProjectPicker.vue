@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {useRetainedOpen} from './page-presentation.ts';
 import { computed, ref, watch } from 'vue';
 import {
   ListboxContent,
@@ -38,11 +39,12 @@ function choose(value: unknown) {
   emit('update:modelValue', value);
   open.value = false;
 }
+const presentedOpen = useRetainedOpen(open);
 </script>
 
 <template>
   <div class="project-picker">
-    <PopoverRoot v-model:open="open">
+    <PopoverRoot v-model:open="presentedOpen">
       <PopoverTrigger as-child>
         <button type="button" class="project-picker-current" :aria-label="label" aria-haspopup="listbox">
           <span class="project-picker-value">

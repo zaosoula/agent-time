@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
+import { computed, onMounted, onUnmounted, onActivated, reactive, ref, watch } from 'vue';
 import { ChevronLeft, ChevronRight } from '@lucide/vue';
 import { weeklyTransport } from './transport.ts';
 import { reviewedCsv, type WeeklyReview } from '../capture/weekly.ts';
@@ -37,7 +37,7 @@ onMounted(() => {
     /* Keep goals optional when local storage is unavailable. */
   }
   refreshTimer = setInterval(() => {
-    if (windowVisible.value) void load();
+    if (windowVisible.value && store.page === 'weekly' && !loading.value) void load();
   }, 60_000);
 });
 onUnmounted(() => clearInterval(refreshTimer));
@@ -60,6 +60,14 @@ function setReminder(event: Event) {
   }
 }
 let loadGeneration = 0;
+let requestedContext = '', committedContext = '';
+function currentContext() { return `${monday.value}:${store.reviewRevision}`; }
+function refreshContext() {
+  const context = currentContext();
+  if (store.page !== 'weekly' || loading.value && requestedContext === context || review.value && committedContext === context || error.value && requestedContext === context) return;
+  void load();
+}
+onActivated(refreshContext);
 const monday = computed(() => {
   const day = new Date(store.selectedDate + 'T12:00:00');
   day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
@@ -78,12 +86,14 @@ async function load() {
   const generation = ++loadGeneration,
     startDate = monday.value,
     revision = store.reviewRevision;
+  requestedContext = currentContext();
   loading.value = true;
   error.value = '';
   try {
     const next = await weeklyTransport.review(startDate);
     if (generation === loadGeneration && startDate === monday.value && revision === store.reviewRevision) {
       review.value = next;
+      committedContext = `${startDate}:${revision}`;
       refreshedAt.value = Date.now();
     }
   } catch (cause) {
@@ -92,7 +102,7 @@ async function load() {
     if (generation === loadGeneration) loading.value = false;
   }
 }
-watch([monday, () => store.reviewRevision], () => void load(), { immediate: true });
+watch([monday, () => store.reviewRevision], refreshContext, { immediate: true });
 const weekEnd = computed(() => shiftDate(monday.value, 6));
 const thisWeek = computed(() => monday.value <= dateString(new Date()) && dateString(new Date()) <= weekEnd.value);
 function exportReviewed() {

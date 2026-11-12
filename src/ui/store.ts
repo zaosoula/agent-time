@@ -135,10 +135,12 @@ function createStore() {
   /** Website prefix the review queue is filtered to, set from Capture health. */
   const reviewSiteFilter = ref('');
 
-  function navigate(destination: Page, nextProject = 'all') {
+  function navigate(destination: Page, nextProject?: string) {
     page.value = destination;
-    project.value = nextProject;
-    selectedSessionKey.value = '';
+    if (nextProject !== undefined && nextProject !== project.value) {
+      project.value = nextProject;
+      selectedSessionKey.value = '';
+    }
   }
 
   function setDate(value: string) {

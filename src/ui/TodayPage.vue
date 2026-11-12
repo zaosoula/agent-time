@@ -15,7 +15,7 @@ import { useStore } from './store.ts';
 import { clock, duration, longDate } from './format.ts';
 import { intervalProject, projectLabel, workspaceProject, unassignedProject } from './project-identity.ts';
 
-const props = defineProps<{ busy: boolean }>();
+const props = defineProps<{ busy: boolean; mode: 'today' | 'sessions' }>();
 const emit = defineEmits<{ start: [] }>();
 const store = reactive(useStore());
 /** Project the main chart and figures are focused on, from the explorer; empty for the whole view. */
@@ -54,14 +54,7 @@ async function stopTimer(id: string, discard = false) {
   }
 }
 
-const view = ref(store.page === 'sessions' ? 'sessions' : 'timeline');
-watch(
-  () => store.page,
-  (page) => {
-    if (page === 'sessions') view.value = 'sessions';
-    else if (page === 'today') view.value = 'timeline';
-  },
-);
+const view = ref(props.mode === 'sessions' ? 'sessions' : 'timeline');
 
 const pending = computed(() => store.reviewPending.length);
 const macSource = computed(() => store.confidence.sources.find((source) => source.id === 'macos'));
@@ -140,7 +133,7 @@ const websites = computed(() => {
       <div>
         <h1>
           {{
-            store.page === 'sessions'
+            props.mode === 'sessions'
               ? 'Agent sessions'
               : store.project === 'all'
                 ? 'Home'
@@ -149,7 +142,7 @@ const websites = computed(() => {
         </h1>
         <p>
           {{
-            store.page === 'sessions'
+            props.mode === 'sessions'
               ? longDate(store.selectedDate)
               : `${longDate(store.selectedDate)} · ${store.project === 'all' ? 'all projects' : store.project}`
           }}
@@ -200,7 +193,7 @@ const websites = computed(() => {
     </div>
 
     <SetupVerification
-      v-if="store.page === 'today' && store.isToday"
+      v-if="props.mode === 'today' && store.isToday"
       :status="store.status"
       :hooks="store.hookStatus"
       :health="store.captureHealth"
@@ -211,11 +204,11 @@ const websites = computed(() => {
       @start="emit('start')"
     />
 
-    <DayOverview v-if="store.page === 'today'" :focus="focusedGroup" @clear-focus="chartFocus = ''" />
+    <DayOverview v-if="props.mode === 'today'" :focus="focusedGroup" @clear-focus="chartFocus = ''" />
 
     <div class="day-status-row">
       <button
-        v-if="store.page === 'today' && store.summaryLoaded && pending"
+        v-if="props.mode === 'today' && store.summaryLoaded && pending"
         class="review-cta"
         @click="store.navigate('review')"
       >
@@ -223,11 +216,11 @@ const websites = computed(() => {
         <span>{{ pending === 1 ? 'item needs' : 'items need' }} review</span>
         <ArrowRight :size="14" />
       </button>
-      <span v-else-if="store.page === 'today' && store.dayReviewed" class="badge good">
+      <span v-else-if="props.mode === 'today' && store.dayReviewed" class="badge good">
         <CheckCircle2 :size="12" />Day reviewed
       </span>
       <button
-        v-else-if="store.page === 'today' && store.summaryLoaded && store.reviewCaptured.length"
+        v-else-if="props.mode === 'today' && store.summaryLoaded && store.reviewCaptured.length"
         class="btn btn-quiet btn-sm"
         @click="store.navigate('review')"
       >
@@ -282,7 +275,7 @@ const websites = computed(() => {
       <TabsContent value="sessions"><SessionsTable /></TabsContent>
     </TabsRoot>
 
-    <details v-if="store.page === 'today' && (humanTabs.length || websites.length)" class="human-tabs">
+    <details v-if="props.mode === 'today' && (humanTabs.length || websites.length)" class="human-tabs">
       <summary class="human-tabs-summary">
         <span>
           <strong>Where your time went</strong>

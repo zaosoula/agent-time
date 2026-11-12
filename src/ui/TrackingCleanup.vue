@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import {usePagePresentation} from './page-presentation.ts';
+const pageActive=usePagePresentation();
 import { ref } from 'vue';
 import {
   DialogRoot,
@@ -63,7 +65,7 @@ async function remove() {
     <p v-if="message" role="status">{{ message }}</p>
     <p v-if="error && !open" class="error" role="alert">{{ error }}</p>
   </div>
-  <DialogRoot :open="open" @update:open="!busy && (open = $event)"
+  <DialogRoot :open="open && pageActive" @update:open="pageActive && !busy && (open = $event)"
     ><DialogPortal
       ><DialogOverlay class="cleanup-overlay" /><DialogContent
         class="cleanup-dialog"

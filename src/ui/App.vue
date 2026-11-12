@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {capturePageScroll, restorePageScroll} from './page-scroll.ts';
 import LoadingStatus from './LoadingStatus.vue';
 import {storagePressureDetail} from '../capture/storage-pressure-status.ts';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
@@ -64,18 +65,21 @@ const projectPages: Page[] = ['today', 'sessions', 'outcomes'];
 const showsProject = computed(() => projectPages.includes(store.page));
 
 // ---- Navigation ---------------------------------------------------------------------------
-function navigate(destination: Page, nextProject = 'all') {
-  if (store.page === 'today') {
-    const top = document.querySelector<HTMLElement>('.day-content')?.scrollTop || 0;
-    sessionStorage.setItem(`agent-time.day-scroll:${store.selectedDate}`, String(top));
-  }
+function navigate(destination: Page, nextProject?: string) {
   store.navigate(destination, nextProject);
-  if (destination === 'today')
-    void nextTick().then(() => {
-      const pane = document.querySelector<HTMLElement>('.day-content');
-      if (pane) pane.scrollTop = Number(sessionStorage.getItem(`agent-time.day-scroll:${store.selectedDate}`) || 0);
-    });
 }
+// Keep DOM scroll positions alongside the eight cached page instances. This
+// also covers deep links and tray navigation, which can change the page directly.
+const pageScroll = new Map<Page, ReturnType<typeof capturePageScroll>>();
+watch(() => store.page, (next, previous) => {
+  const oldRoot = document.querySelector<HTMLElement>(`[data-page-context="${previous}"]`);
+  if (oldRoot) pageScroll.set(previous, capturePageScroll(oldRoot));
+  void nextTick().then(() => {
+    if (store.page !== next) return;
+    const root = document.querySelector<HTMLElement>(`[data-page-context="${next}"]`);
+    if (root) restorePageScroll(root, pageScroll.get(next) || []);
+  });
+});
 function reviewSite(key: string) {
   store.setDate(dateString(new Date()));
   navigate('review');
@@ -124,8 +128,7 @@ const dismissedBanners = ref<Record<string, boolean>>({});
 const hookBannerKey = computed(() => `hooks:${store.outdatedHooks.map((target) => target.id).join('|')}`);
 const sourceBannerKey = computed(() => `sources:${store.sourceProblems.map((source) => source.id).join('|')}`);
 const storagePressure = computed(()=>store.status?.storageCare?.paused?store.status.storageCare.pressure:undefined);
-const storageSettingsKey = ref(0);
-function openStorage(){sessionStorage.setItem('agent-time.settings-tab','data');storageSettingsKey.value++;navigate('settings');}
+function openStorage(){sessionStorage.setItem('agent-time.settings-tab','data');store.settingsSection='data';navigate('settings');}
 const pollProblem = computed(() => store.pollError || store.status?.lastError || '');
 function retry() {
   void store.refreshStatus();
@@ -192,12 +195,7 @@ function onKeydown(event: KeyboardEvent) {
     store.selectedSessionKey = '';
   }
 }
-watch(
-  () => store.page,
-  (page) => {
-    if (page !== 'today' && page !== 'sessions') store.selectedSessionKey = '';
-  },
-);
+
 
 onMounted(() => {
   store.start();
@@ -254,7 +252,7 @@ onUnmounted(() => {
         </div>
         <button
           :class="['project-row', { selected: store.project === 'all' && showsProject }]"
-          @click="navigate(showsProject ? store.page : 'today')"
+          @click="navigate(showsProject ? store.page : 'today', 'all')"
         >
           <Folder :size="16" /><span>All projects</span>
         </button>
@@ -371,24 +369,30 @@ onUnmounted(() => {
           </button>
         </div>
         <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'outcomes'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
-        <TodayPage
-          v-if="store.page === 'today' || store.page === 'sessions'"
-          :busy="busy"
-          @start="toggleCapture"
-        />
-        <ReviewPage v-else-if="store.page === 'review'" />
-        <WeeklyReview v-else-if="store.page === 'weekly'" />
-        <WorkOutcomes v-else-if="store.page === 'outcomes'" />
-        <UsagePage v-else-if="store.page === 'usage'" :status="store.status" />
-        <CaptureSettingsPage
-          v-else-if="store.page === 'settings'"
-          :key="storageSettingsKey"
-          :status="store.status"
-          :busy="busy"
-          @change="updateSettings"
-          @error="settingsError"
-        />
-        <CaptureHealthPage v-else :status="store.status" :issues="store.issues" @review-site="reviewSite" />
+        <KeepAlive :max="8">
+          <TodayPage
+            v-if="store.page === 'today' || store.page === 'sessions'"
+            :key="store.page"
+            :mode="store.page"
+            :data-page-context="store.page"
+            :busy="busy"
+            @start="toggleCapture"
+          />
+          <ReviewPage v-else-if="store.page === 'review'" key="review" data-page-context="review" />
+          <WeeklyReview v-else-if="store.page === 'weekly'" key="weekly" data-page-context="weekly" />
+          <WorkOutcomes v-else-if="store.page === 'outcomes'" key="outcomes" data-page-context="outcomes" />
+          <UsagePage v-else-if="store.page === 'usage'" key="usage" data-page-context="usage" :status="store.status" />
+          <CaptureSettingsPage
+            v-else-if="store.page === 'settings'"
+            key="settings"
+            data-page-context="settings"
+            :status="store.status"
+            :busy="busy"
+            @change="updateSettings"
+            @error="settingsError"
+          />
+          <CaptureHealthPage v-else key="health" data-page-context="health" :status="store.status" :issues="store.issues" @review-site="reviewSite" />
+        </KeepAlive>
 
         <footer class="statusbar">
           <button

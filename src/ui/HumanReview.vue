@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch, onMounted, onUnmounted, nextTick, reactive } from 'vue';
+import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, reactive } from 'vue';
 import { Check, ChevronRight, RotateCcw, AppWindow } from '@lucide/vue';
 import { humanReviewState, type HumanReviewGroup } from '../capture/human-review.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
@@ -252,7 +252,7 @@ async function loadProjects() {
 }
 // Rules can change in Settings or another window: reload when the window comes back.
 watch(windowVisible, (shown) => {
-  if (shown) void loadProjects();
+  if (shown && store.page === 'review') void loadProjects();
 });
 
 /** Run a review action and apply the day summary it returns. */
@@ -359,6 +359,8 @@ onMounted(() => {
   void loadHistory();
   void loadProjects();
 });
+onActivated(() => window.addEventListener('keydown', keyboard));
+onDeactivated(() => window.removeEventListener('keydown', keyboard));
 onUnmounted(() => window.removeEventListener('keydown', keyboard));
 
 // ---- Decisions ----------------------------------------------------------------------------

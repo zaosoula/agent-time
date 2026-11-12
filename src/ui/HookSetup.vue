@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import {usePagePresentation} from './page-presentation.ts';
+const pageActive=usePagePresentation();
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
 import {
   DialogRoot,
@@ -279,7 +281,7 @@ onUnmounted(() => {
 </script>
 <template>
   <template v-if="mode === 'onboarding'"
-    ><DialogRoot :open="open" @update:open="!$event && dismiss()"
+    ><DialogRoot :open="open && pageActive" @update:open="pageActive && !$event && dismiss()"
       ><DialogPortal
         ><DialogOverlay class="hook-overlay" /><DialogContent
           class="hook-dialog"
@@ -363,7 +365,7 @@ onUnmounted(() => {
         </DialogContent></DialogPortal
       ></DialogRoot
     >
-    <DialogRoot :open="permissionOpen" @update:open="!$event && dismissPermission()"
+    <DialogRoot :open="permissionOpen && pageActive" @update:open="pageActive && !$event && dismissPermission()"
       ><DialogPortal
         ><DialogOverlay class="hook-overlay" /><DialogContent class="hook-dialog">
           <div class="hook-dialog-icon"><ShieldCheck :size="24" /></div>

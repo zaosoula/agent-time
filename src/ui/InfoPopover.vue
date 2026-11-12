@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import {ref} from 'vue';
+import {useRetainedOpen} from './page-presentation.ts';
+const presentedOpen=useRetainedOpen(ref(false));
 import { PopoverArrow, PopoverContent, PopoverPortal, PopoverRoot, PopoverTrigger } from 'reka-ui';
 import { Info } from '@lucide/vue';
 
@@ -6,7 +9,7 @@ defineProps<{ label: string; size?: number }>();
 </script>
 
 <template>
-  <PopoverRoot>
+  <PopoverRoot v-model:open="presentedOpen">
     <PopoverTrigger class="info-trigger" :aria-label="label">
       <slot name="trigger"><Info :size="size || 13" /></slot>
     </PopoverTrigger>

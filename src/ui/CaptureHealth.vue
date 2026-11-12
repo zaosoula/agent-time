@@ -299,11 +299,11 @@ async function saveDiagnostics() {
 onMounted(() => {
   void refreshRecovery();
   recoveryPoller = setInterval(() => {
-    if (windowVisible.value) void refreshRecovery();
+    if (windowVisible.value && store.page.value === 'health') void refreshRecovery();
   }, 30000);
 });
 watch(windowVisible, (shown) => {
-  if (shown) void refreshRecovery();
+  if (shown && store.page.value === 'health') void refreshRecovery();
 });
 onUnmounted(() => {
   unmounted = true;
