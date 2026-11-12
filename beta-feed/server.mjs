@@ -4,6 +4,7 @@ import {link, mkdir, open, readFile, rename, rm, stat} from 'node:fs/promises';
 import {createServer} from 'node:http';
 import {basename, join} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {renderDocumentation, documentationPaths, hasDocumentationPage} from './documentation.mjs';
 
 const VERSION = /^\d+\.\d+\.\d+-beta\.\d+$/;
 const ARCHIVE = 'Agent Time.app.tar.gz';
@@ -124,6 +125,26 @@ export function createBetaFeed({dataDir, uploadToken, publicOrigin}) {
           'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer',
           'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'",
         });
+      }
+      if (request.method === 'GET' && (path === '/docs' || path.startsWith('/docs/'))) {
+        if (path.endsWith('/')) return reply(response, 308, '', {Location: path.slice(0, -1) + url.search});
+        const slug = path === '/docs' ? undefined : path.slice('/docs/'.length);
+        const found = hasDocumentationPage(slug);
+        const version = await currentInstallerVersion(dataDir);
+        const installLink = version ? new URL(installerPath(version), publicOrigin).href : null;
+        return reply(response, found ? 200 : 404, renderDocumentation({slug, version, installLink, publicOrigin}), {
+          'Content-Type': 'text/html; charset=utf-8', 'Referrer-Policy': 'no-referrer',
+          'X-Content-Type-Options': 'nosniff', ...(found ? {} : {'X-Robots-Tag': 'noindex'}),
+          'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; img-src 'self'; font-src 'self'; base-uri 'none'; form-action 'none'",
+        });
+      }
+      if (request.method === 'GET' && path === '/sitemap.xml') {
+        const origin = new URL(publicOrigin).origin;
+        const pages = ['/', ...documentationPaths()].map(path => `<url><loc>${origin}${path}</loc></url>`).join('');
+        return reply(response, 200, `<?xml version="1.0" encoding="UTF-8"?><urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${pages}</urlset>`, {'Content-Type': 'application/xml; charset=utf-8'});
+      }
+      if (request.method === 'GET' && path === '/robots.txt') {
+        return reply(response, 200, `User-agent: *\nAllow: /\nDisallow: /admin/\nDisallow: /beta/\nDisallow: /install/\nSitemap: ${new URL('/sitemap.xml', publicOrigin).href}\n`);
       }
       if (request.method === 'GET' && path === '/beta/latest.json') {
         if (!(await exists(join(dataDir, 'latest.json')))) return reply(response, 204);
