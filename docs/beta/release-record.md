@@ -1,12 +1,16 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.50` release candidate — 2026-11-12
+## `0.2.0-beta.50` published and verified — 2026-11-12
 
 Includes billing preparation/loading feedback (`dc85eef`) and in-memory page retention (`7f0e499`). Release owner requested publication in this session. Billing retains historical work context needed for presence rules and exact host/tie ordering; counting and commercial rounding logic is unchanged. Cache is limited to eight live pages; work continues off-screen, drafts/scroll/zoom remain available, and hidden dialogs release their focus traps.
 
 Implementation evidence:585 JavaScript tests and33 native tests passed for the performance slice;40 focused UI tests plus production typecheck/build passed for page retention, including pending-job completion through all eight pages, Teleport cleanup and discarded-request retries. Browser checks used synthetic data and verified one report completes while on Home, retained draft/selected tab, one project-list load/report request, restored search/zoom and exact608.5px scroll, and a note draft surviving navigation without covering the destination. Live history/settings were not modified. The real-history benchmark used a disposable consistent SQLite copy (~1.44 million events):11-day report25839ms,23 progress updates; single-day preparation2336ms versus an original probe exceeding66s. These are local measurements, not latency guarantees.
 
-Publication pending signed CI build, complete candidate gates and independent public artifact/feed verification. No customer installation is claimed.
+GitHub Actions [run 43244705763](https://github.com/zaosoula/agent-time/actions/runs/43244705763) built and published source `a4fa7a21045ab634b12d07db5cc46945d0b36a29`. All590 JavaScript tests,33 native tests, production typecheck/build and the dependency audit passed. Apple signing, notarization, app/DMG stapled tickets and independent strict deep signature/Gatekeeper checks passed for the arm64 candidate.
+
+The exact packaged Node completed real MCP/captured-hook integration and packaged collector IPC tests. The new report-progress API returned progress during the worker request and complete afterward. Grouped shared-clock and cumulative agent metrics, old saved reports after rate changes, month pagination, CSV/Markdown exports and cross-midnight counting passed; packaged capture/MCP modules match source.
+
+Independent complete public downloads matched SHA-256: updater archive `14ca79a995adb747efaee040dd59959c5151d65987a8f91e02c692ac0b383a54` (55,787,912 bytes); [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.50/Agent%20Time_0.2.0-beta.50_aarch64.dmg) `da21043a6625e9f96212680f4e055119a7cf3d824bdadf4142d908b397bd5004` (55,575,007 bytes). The public update manifest/signature and landing selection match beta.50. Verification completed2026-11-12T15:17:31Z. Downloaded/expanded packages and synthetic profiles were removed after proof capture. Customer installation is not claimed.
 
 ## `0.2.0-beta.49` published and verified — 2026-11-12
 
