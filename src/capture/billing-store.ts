@@ -46,7 +46,10 @@ function billingSourceMatches(projects:BillingProject[],source:{workspaceId?:str
   const root=projectPathFromWorktree(candidate);
   if(path===root||path.startsWith(root==='/'?'/':root+'/')){const specificity=root.length;roots.set(project.id,Math.max(roots.get(project.id)??-1,specificity));longest=Math.max(longest,specificity);}
  }
- return projects.filter(p=>Boolean(source.workspaceId&&p.sources.workspaceIds.includes(source.workspaceId)||source.reportedProject&&p.sources.reportedProjects.includes(source.reportedProject)||longest>=0&&roots.get(p.id)===longest));
+ // A context may declare the configured identity rather than an additional source name.
+ // Retain every match so case/name collisions and conflicting path ownership remain errors.
+ const identity=source.reportedProject?.trim().toLowerCase();
+ return projects.filter(p=>Boolean(identity&&[p.id,p.name,...p.aliases].some(name=>name.toLowerCase()===identity)||source.workspaceId&&p.sources.workspaceIds.includes(source.workspaceId)||source.reportedProject&&p.sources.reportedProjects.includes(source.reportedProject)||longest>=0&&roots.get(p.id)===longest));
 }
 export function billingProjectForSource(projects:BillingProject[],source:{workspaceId?:string|null;path?:string|null;reportedProject?:string|null}):BillingProject|null{
  const matches=billingSourceMatches(projects,source);

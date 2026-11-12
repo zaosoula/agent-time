@@ -12,6 +12,7 @@ import {
   CircleHelp,
   ClipboardCheck,
   Download,
+  ReceiptText,
   Folder,
   GitCommitHorizontal,
   Layers3,
@@ -26,6 +27,7 @@ import { useStore, type Page } from './store.ts';
 import { toast, clearToast } from './toast.ts';
 import { dateString } from './format.ts';
 import { projectColor, projectDisplay } from './project-identity.ts';
+import BillingReportsPage from './BillingReports.vue';
 import BetaUpdates from './BetaUpdates.vue';
 import CaptureHealthPage from './CaptureHealth.vue';
 import CaptureSettingsPage from './CaptureSettings.vue';
@@ -53,6 +55,7 @@ const pages: Array<{ id: Page; title: string; icon: typeof CalendarDays }> = [
   { id: 'review', title: 'Review', icon: ClipboardCheck },
   { id: 'sessions', title: 'Agent sessions', icon: Layers3 },
   { id: 'weekly', title: 'Weekly review', icon: BarChart3 },
+  { id: 'billing', title: 'Billing reports', icon: ReceiptText },
   { id: 'outcomes', title: 'Work evidence', icon: GitCommitHorizontal },
   { id: 'health', title: 'Capture health', icon: Activity },
   { id: 'usage', title: 'Tokens & limits', icon: Bot },
@@ -68,7 +71,7 @@ const showsProject = computed(() => projectPages.includes(store.page));
 function navigate(destination: Page, nextProject?: string) {
   store.navigate(destination, nextProject);
 }
-// Keep DOM scroll positions alongside the eight cached page instances. This
+// Keep DOM scroll positions alongside the nine cached page instances. This
 // also covers deep links and tray navigation, which can change the page directly.
 const pageScroll = new Map<Page, ReturnType<typeof capturePageScroll>>();
 watch(() => store.page, (next, previous) => {
@@ -369,7 +372,7 @@ onUnmounted(() => {
           </button>
         </div>
         <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'outcomes'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
-        <KeepAlive :max="8">
+        <KeepAlive :max="9">
           <TodayPage
             v-if="store.page === 'today' || store.page === 'sessions'"
             :key="store.page"
@@ -379,6 +382,7 @@ onUnmounted(() => {
             @start="toggleCapture"
           />
           <ReviewPage v-else-if="store.page === 'review'" key="review" data-page-context="review" />
+          <BillingReportsPage v-else-if="store.page === 'billing'" key="billing" data-page-context="billing" />
           <WeeklyReview v-else-if="store.page === 'weekly'" key="weekly" data-page-context="weekly" />
           <WorkOutcomes v-else-if="store.page === 'outcomes'" key="outcomes" data-page-context="outcomes" />
           <UsagePage v-else-if="store.page === 'usage'" key="usage" data-page-context="usage" :status="store.status" />

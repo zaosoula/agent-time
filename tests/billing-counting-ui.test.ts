@@ -11,7 +11,7 @@ function editor(){
  const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const writes:Array<{project:BillingProject;expectedRevision?:number}>=[];
  const request=async(_name:string,input:{project:BillingProject;expectedRevision?:number})=>{writes.push(input);return {...input.project,revision:(input.expectedRevision??0)+1};};
- const state=new Function('computed','ref','onMounted','onUnmounted','crypto','request','humanizeError','toast',compiled+';return {newPolicy,selectProject,setCountingMode,policyChanged,policy,original,save};')(computed,ref,()=>{},()=>{},{randomUUID},request,String,{success(){}});
+ const state=new Function('computed','ref','onMounted','onUnmounted','useStore','crypto','request','humanizeError','toast',compiled+';return {newPolicy,selectProject,setCountingMode,policyChanged,policy,original,save};')(computed,ref,()=>{},()=>{},()=>({billingProjectRevision:ref(0)}),{randomUUID},request,String,{success(){}});
  return {state,writes};
 }
 test('billing editor defaults new policies to minutes without changing legacy seconds on selection or resave',async()=>{

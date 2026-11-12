@@ -20,7 +20,7 @@ const renderer=createRenderer<Node,Node>({
  patchProp:(n,key,_old,value)=>{n.props[key]=value;},
 });
 
-test('the real app page boundary retains a pending job, drafts and results through all eight destinations',async()=>{
+test('the real app page boundary retains a pending job, drafts and results through all nine destinations',async()=>{
  const source=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8').match(/<KeepAlive[\s\S]*?<\/KeepAlive>/)![0];
  const compiled=compileTemplate({source,filename:'App.vue',id:'retention-test'});assert.deepEqual(compiled.errors,[]);
  const js=ts.transpileModule(compiled.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -32,10 +32,10 @@ test('the real app page boundary retains a pending job, drafts and results throu
  }});
  const Other=defineComponent({setup(){return()=>h('section','other');}});
  const app=renderer.createApp(defineComponent({data:()=>({store,busy:false}),methods:{toggleCapture(){},updateSettings(){},settingsError(){},reviewSite(){}},render:exports.render as any}));
- for(const name of ['TodayPage','ReviewPage','WeeklyReview','WorkOutcomes','UsagePage','CaptureHealthPage'])app.component(name,Other);
+ for(const name of ['TodayPage','ReviewPage','WeeklyReview','WorkOutcomes','UsagePage','CaptureHealthPage','BillingReportsPage'])app.component(name,Other);
  app.component('CaptureSettingsPage',Settings);const root=node('root');app.mount(root);
  context.draft.value='my unsaved policy';store.page='outcomes';await nextTick();resolveJob('completed in background');await nextTick();
- for(const page of ['today','sessions','review','weekly','usage','health','settings']){store.page=page;await nextTick();}
+ for(const page of ['today','sessions','review','weekly','billing','usage','health','settings']){store.page=page;await nextTick();}
  assert.equal(mounts,1);assert.equal(unmounts,0);assert.equal(context.draft.value,'my unsaved policy');assert.equal(context.result.value,'completed in background');
  assert(root.children.some(n=>n.text==='my unsaved policy:completed in background'));app.unmount();assert.equal(unmounts,1);
 });

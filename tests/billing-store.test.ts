@@ -4,7 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {mkdtempSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join,basename} from 'node:path';
-import {BillingStore,validateBillingProject} from '../src/capture/billing-store.ts';
+import {BillingStore,billingProjectForSource,validateBillingProject} from '../src/capture/billing-store.ts';
 import {EventStore} from '../src/capture/store.ts';
 import {compactCaptureCopy} from '../src/capture/compact-copy.ts';
 import {openEventDatabase} from '../src/capture/event-database.ts';
@@ -87,4 +87,14 @@ test('optional report counting disclosures validate without accepting malformed 
   const invalid=report(p);invalid.reportId=randomId();Object.assign(invalid,{countingModes:['hours']});assert.throws(()=>store.saveReport(invalid),/counting/i);
  }finally{events.close();}
  function randomId(){return `invalid-${Math.random()}`;}
+});
+
+test('reported contexts recognize configured project identities without inventing repository aliases',()=>{
+ const a={...project(),sources:{...project().sources,reportedProjects:[]}};
+ for(const name of ['billing-a','BILLING-A','Client A','CLIENT A','client'])assert.equal(billingProjectForSource([a],{reportedProject:name})?.id,a.id);
+ assert.equal(billingProjectForSource([a],{reportedProject:'unknown'}),null);
+ assert.equal(billingProjectForSource([a],{reportedProject:'repo'}),null);
+ const b={...a,id:'other',name:'CLIENT A',aliases:[],sources:{repositories:['/other'],workspaceIds:[],reportedProjects:[]}};
+ assert.throws(()=>billingProjectForSource([a,b],{reportedProject:'Client A'}),/ambiguous/i);
+ assert.throws(()=>billingProjectForSource([a,b],{path:'/other',reportedProject:'billing-a'}),/ambiguous/i);
 });

@@ -38,10 +38,11 @@ test('report worker persists immutable results without occupying the capture req
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });
 
-test('captured repository and reported project name in one billing group do not create a false conflict',()=>{
+for(const declared of ['caex','CAEX','client-caex'])test(`configured identity ${declared} does not conflict with its captured repository`,()=>{
  const {output,store}=fixture();try{
+ const configured=new BillingStore(store.database).listProjects()[0]!;new BillingStore(store.database).saveProject({...configured,sources:{...configured.sources,reportedProjects:[]}},configured.revision);
  const at=billingDayStart('2026-11-10','Europe/Paris')+36000;
- store.put(makeEvent('agent_report','work_context',{provider:'claude',sessionId:'same',observedAt:at-1,data:{project:'CAEX'}}));
+ store.put(makeEvent('agent_report','work_context',{provider:'claude',sessionId:'same',observedAt:at-1,data:{project:declared}}));
  store.put(makeEvent('hook','tool_start',{provider:'claude',hostId:'local',sessionId:'same',cwd:'/fixture/caex',observedAt:at,data:{toolId:'t'}}));
  store.put(makeEvent('hook','tool_end',{provider:'claude',hostId:'local',sessionId:'same',cwd:'/fixture/caex',observedAt:at+300,data:{toolId:'t'}}));
  const result=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'});assert.equal(result.report.totals.overlapMergedWallSeconds,300);

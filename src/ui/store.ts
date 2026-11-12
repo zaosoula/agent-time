@@ -42,6 +42,7 @@ export type Page =
   | 'today'
   | 'review'
   | 'sessions'
+  | 'billing'
   | 'weekly'
   | 'outcomes'
   | 'health'
@@ -123,6 +124,7 @@ function createStore() {
   // ---- Navigation and selection -------------------------------------------------------------
   const page = ref<Page>('today');
   const settingsSection = ref('general');
+  const billingProjectRevision = ref(0);
   const project = ref('all');
   const search = ref('');
   const selectedDate = ref(dateString(new Date()));
@@ -762,6 +764,7 @@ function createStore() {
     // navigation
     page,
     settingsSection,
+    billingProjectRevision,
     project,
     search,
     selectedDate,
