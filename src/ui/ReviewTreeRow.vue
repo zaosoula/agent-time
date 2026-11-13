@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import {computed,ref} from 'vue';
-import {ChevronRight,Ellipsis,Check} from '@lucide/vue';
+import {ChevronRight,Ellipsis,Folder} from '@lucide/vue';
 import {ContextMenuRoot,ContextMenuTrigger,ContextMenuPortal,ContextMenuContent,DropdownMenuRoot,DropdownMenuTrigger,DropdownMenuPortal,DropdownMenuContent} from 'reka-ui';
 import {reviewGroupId,reviewAssignmentLabel,reviewIsAssigned,type AppReviewGroup} from './review-apps.ts';
+import {projectColor} from './project-identity.ts';
 import type {ReviewNode} from './review-tree.ts';
 import ReviewProjectActions from './ReviewProjectActions.vue';
 
@@ -24,7 +25,6 @@ const assignment=computed(()=>{
   if(assigned.value&&currentProject.value)return currentProject.value.split('/').filter(Boolean).at(-1)||currentProject.value;
   return assigned.value?'Multiple projects':'Mixed assignment';
 });
-const assignmentTitle=computed(()=>[...new Set(props.node.groups.map(reviewAssignmentLabel))].join('\n'));
 const canInspect=computed(()=>props.node.kind==='visit'&&props.node.groups.length===1);
 function formatDuration(value:number){
   const seconds=Math.max(0,Math.round(value));
@@ -72,8 +72,7 @@ function keydown(event:KeyboardEvent){
           <button v-if="node.children.length" type="button" class="review-tree-expand" :aria-expanded="open" :aria-label="`${open?'Collapse':'Expand'} ${node.label}`" draggable="false" @dragstart.prevent.stop @click.stop="emit('toggle',node.key)"><ChevronRight :size="14" :class="{'is-open':open}" /></button>
           <span v-else class="review-tree-expand-spacer" />
           <input type="checkbox" class="review-tree-check" :checked="checked" :indeterminate="partial" :aria-checked="partial?'mixed':checked" :aria-label="`Select ${node.label} and its visits`" :disabled="busy||!node.groups.length" draggable="false" @dragstart.prevent.stop @click.stop @change="emit('select',node,($event.target as HTMLInputElement).checked)" />
-          <span class="review-tree-name"><span class="review-tree-label" :title="node.label">{{ node.label }}</span><span v-if="description" class="review-tree-description" :title="description">{{ description }}</span></span>
-          <span class="review-tree-assignment" :title="assignmentTitle"><Check v-if="assigned" :size="11" aria-hidden="true" /><span>{{ assignment }}</span></span>
+          <Folder v-if="node.kind==='project'" :size="15" :style="{color:projectColor(currentProject||'Unassigned')}" aria-hidden="true" /><span class="review-tree-name"><span class="review-tree-label" :title="node.label">{{ node.label }}</span><span v-if="description" class="review-tree-description" :title="description">{{ description }}</span></span>
           <span class="review-tree-duration">{{ duration }}</span>
           <DropdownMenuRoot>
             <DropdownMenuTrigger as-child><button type="button" class="review-tree-actions" :aria-label="`Assign ${node.label} to a project`" :disabled="busy" draggable="false" @dragstart.prevent.stop @click.stop><Ellipsis :size="16" /></button></DropdownMenuTrigger>

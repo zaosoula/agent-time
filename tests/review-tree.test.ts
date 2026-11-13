@@ -87,3 +87,27 @@ test('node selection uses selected descendants when present and ignores stale se
  assert.deepEqual(new Set(reviewNodeSelection(app,{stale:true})),new Set(groups));
  assert.deepEqual(buildReviewTree([]),[]);
 });
+
+test('project parents separate unassigned and assigned visits without changing source data or durations',async()=>{
+ const {buildProjectReviewTree}=await import('../src/ui/review-tree.ts');
+ const groups=buildAppReviewGroups([
+  page('a',0,40,'https://example.com/a',{workspaceId:'manual::/one/client',userAttribution:'assigned'}),
+  page('b',100,130,'https://example.com/a',{workspaceId:'auto::/one/client'}),
+  page('c',200,220,'https://example.com/a',{workspaceId:'manual::/two/client',userAttribution:'assigned'}),
+  page('s',300,310,'https://example.com/a',{reviewSegment:'before',workspaceId:'manual::/one/client',userAttribution:'assigned'}),
+  page('s',310,320,'https://example.com/a',{reviewSegment:'after',userAttribution:'unassigned'}),
+  page('u',400,425,'https://example.com/a'),
+ ]),before=JSON.stringify(groups),tree=buildProjectReviewTree(groups);
+ assert.equal(new Set(flatten(tree).map(n=>n.key)).size,flatten(tree).length);
+ assert.equal(tree.length,3);assert.ok(tree.every(n=>n.kind==='project'));
+ assert.deepEqual(tree.map(n=>n.seconds).sort((a,b)=>a-b),[20,35,80]);
+ assert.ok(tree.some(n=>n.label==='Unassigned'));
+ assert.equal(new Set(tree.map(n=>n.label)).size,3,'same basename projects stay distinguishable');
+ for(const project of tree){
+  assert.ok(project.children.every(n=>n.kind==='app'));
+  assert.equal(project.children.reduce((sum,n)=>sum+n.seconds,0),project.seconds);
+ }
+ assert.deepEqual(flatten(tree).filter(n=>n.kind==='visit').map(n=>reviewGroupId(n.groups[0]!)).sort(),groups.map(reviewGroupId).sort());
+ assert.equal(JSON.stringify(groups),before);
+ assert.equal(buildProjectReviewTree([groups[0]!])[0]!.seconds,40);
+});

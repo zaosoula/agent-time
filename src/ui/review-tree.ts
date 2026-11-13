@@ -1,11 +1,12 @@
+import {projectDisplay} from './project-identity.ts';
 import {preciseClock} from './format.ts';
-import {reviewAssignmentLabel,reviewContextTitle,reviewGroupId,reviewVisitTitle,type AppReviewGroup} from './review-apps.ts';
+import {reviewIsAssigned,reviewAssignmentLabel,reviewContextTitle,reviewGroupId,reviewVisitTitle,type AppReviewGroup} from './review-apps.ts';
 
 export interface ReviewNode {
   key:string;
   label:string;
   description?:string;
-  kind:'app'|'site'|'context'|'visit'|'short';
+  kind:'project'|'app'|'site'|'context'|'visit'|'short';
   groups:AppReviewGroup[];
   seconds:number;
   children:ReviewNode[];
@@ -72,10 +73,20 @@ function appChildren(groups:AppReviewGroup[],parent:string):ReviewNode[]{
 
 /** Read projection only: callers pass the current period/project/search subset.
  * Every parent contains the original descendant groups, never a time envelope. */
-export function buildReviewTree(groups:AppReviewGroup[]):ReviewNode[]{
+export function buildReviewTree(groups:AppReviewGroup[],parent=''):ReviewNode[]{
   return ordered([...buckets(groups,group=>group.appKey)].map(([appKey,appGroups])=>{
-    const appNodeKey=key('app','',appKey),label=[...new Set(appGroups.map(group=>group.appName))].sort((a,b)=>a.localeCompare(b))[0]!;
+    const appNodeKey=key('app',parent,appKey),label=[...new Set(appGroups.map(group=>group.appName))].sort((a,b)=>a.localeCompare(b))[0]!;
     return node('app',appNodeKey,label,appGroups,appChildren(appGroups,appNodeKey));
+  }));
+}
+
+/** Project assignment is the outer grouping; no observations or durations change. */
+export function buildProjectReviewTree(groups:AppReviewGroup[]):ReviewNode[]{
+  const identity=(group:AppReviewGroup)=>reviewIsAssigned(group)?group.projectPath!:'';
+  const projects=buckets(groups,identity),paths=[...projects.keys()].filter(Boolean);
+  return ordered([...projects].map(([path,projectGroups])=>{
+    const projectKey=key('project','',path);
+    return node('project',projectKey,path?projectDisplay(path,paths):'Unassigned',projectGroups,buildReviewTree(projectGroups,projectKey));
   }));
 }
 

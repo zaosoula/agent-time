@@ -96,7 +96,9 @@ test('tree assignments include split parts and pending actions prevent selection
 test('U unassigns the event focused DOM row rather than the cached row', async () => {
   const p = editor([interval('browser', 0), interval('native', 30, { foregroundBundleId: 'editor', foregroundName: 'Editor', browserUrl: undefined, browserTitle: undefined })]);
   try {
-    const rows = p.state.tree.value as reviewTree.ReviewNode[];
+    const root = p.state.tree.value[0] as reviewTree.ReviewNode;
+    p.state.expandedTree.value[root.key]=true;
+    const rows = root.children;
     assert.equal(rows.length, 2);
     const cached = rows[0]!, actual = rows[1]!;
     p.state.focused.value = cached.key;

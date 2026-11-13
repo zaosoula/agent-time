@@ -18,7 +18,7 @@ import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTreeRow from './ReviewTreeRow.vue';
-import {buildReviewTree,type ReviewNode} from './review-tree.ts';
+import {buildProjectReviewTree,type ReviewNode} from './review-tree.ts';
 import {reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
 import ReviewTimeline from './ReviewTimeline.vue';
 import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
@@ -376,7 +376,7 @@ onUnmounted(() => window.removeEventListener('keydown', keyboard));
 
 // ---- Hierarchical review ---------------------------------------------------------------
 const expandedTree=ref<Record<string,boolean>>({});
-const tree=computed(()=>buildReviewTree(activeGroups.value));
+const tree=computed(()=>buildProjectReviewTree(activeGroups.value));
 const inspectedId=ref('');
 const detailGroup=computed(()=>activeGroups.value.find(g=>id(g)===inspectedId.value));
 const selectionSummary=computed(()=>({seconds:selectedSeconds.value,visits:bulkGroups.value.length}));
@@ -597,7 +597,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<AppButton compact variant="quiet" @click="store.reviewSiteFilter=''">Clear filter</AppButton></span>
         <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
       </div>
-      <div class="app-review-tools"><AppButton compact variant="quiet" :disabled="!apps.length" @click="toggleTree">Expand / collapse apps</AppButton><AppButton compact variant="quiet" :disabled="Boolean(pending)||!activeGroups.length" @click="selectVisibleTree">Select filtered activity</AppButton></div>
+      <div class="app-review-tools"><AppButton compact variant="quiet" :disabled="!apps.length" @click="toggleTree">Expand / collapse groups</AppButton><AppButton compact variant="quiet" :disabled="Boolean(pending)||!activeGroups.length" @click="selectVisibleTree">Select filtered activity</AppButton></div>
       <p v-if="pending" class="human-review-notice" role="status">Saving assignments and refreshing activity…</p>
       <p v-if="error" class="human-review-error" role="alert">{{ error }} <AppButton compact variant="quiet" @click="error=''">Dismiss</AppButton></p>
       <p v-if="notice" class="human-review-notice" role="status">{{ notice }}<AppButton compact v-if="undoAvailable"  :disabled="Boolean(pending)" @click="undo(dayHistory.find(action=>action.canUndo)!)">Undo ⌘Z</AppButton><AppButton compact variant="quiet" @click="notice=''">Dismiss</AppButton></p>
