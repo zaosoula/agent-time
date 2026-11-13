@@ -355,7 +355,7 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
-        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
+        <LoadingStatus class="page-loading" v-if="!store.summaryLoaded && ['today', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
         <KeepAlive :max="5">
           <TodayPage
             v-if="store.page === 'today'"
@@ -406,4 +406,8 @@ onUnmounted(() => {
 
 <style scoped>
 .statusbar{gap:12px}.statusbar > .capture-status-link{flex-shrink:0}.background-activities{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0;overflow-x:auto}.background-activities button{white-space:nowrap}
+.page-loading { --loading-inset: 32px; flex-shrink: 0; }
+@media (min-width: 1500px) { .page-loading { --loading-inset: max(32px, calc((100% - 1160px) / 2)); } }
+@media (max-width: 1120px) { .page-loading { --loading-inset: 24px; } }
+@media (max-width: 700px) { .page-loading { --loading-inset: 18px; } }
 </style>

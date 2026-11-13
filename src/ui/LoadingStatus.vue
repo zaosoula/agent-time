@@ -18,7 +18,7 @@ onUnmounted(() => clearInterval(timer));
   </div>
 </template>
 <style scoped>
-.loading-status { padding: 12px 0; margin: 12px 0; }
+.loading-status { padding: 12px var(--loading-inset, 0px); margin: 12px 0; }
 .loading-title { display: flex; align-items: center; gap: 12px; font-size: var(--text-caption, 13px); }
 .loading-title strong { font-weight: 500; }
 .loading-title span { margin-left: auto; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
