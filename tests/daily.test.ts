@@ -64,3 +64,15 @@ test('day summary sends only relevant sessions and caveats while retaining healt
  assert.deepEqual(day.issueReasons,['Today','Historical','Tomorrow']);
  assert.equal(full.sessions.length,5);assert.equal(full.coverage.length,2);
 });
+
+test('today gets only the new answer when yesterday background work is followed by a resumed invocation',async()=>{
+ const {summarize}=await import('../src/capture/correlate.ts');
+ const midnight=new Date(2026,10,13).getTime()/1000;
+ const hook=(id:string,offset:number,kind:string,data:Record<string,unknown>={}):CaptureEvent=>({eventId:id,source:'hook',kind,collectorEpoch:'same-history',observedAt:midnight+offset,monotonicAt:midnight+offset,hostId:'local',sessionId:'same-conversation',terminalHandle:'t',provider:'claude',data});
+ const old=[hook('launch',-3600,'tool_end',{toolId:'shell',backgroundTaskId:'b1'}),hook('last-stop',-3590,'response_stop',{backgroundTasks:['b1']})];
+ const after=summarize([...old,hook('resume',8*3600,'session_start',{source:'resume'}),hook('prompt',8*3600+1,'prompt_submitted'),hook('answer',8*3600+11,'response_stop',{backgroundTasks:[]})]);
+ const today=summaryForDate(after,'2026-11-13');
+ assert.equal(today.agentSeconds,60);
+ assert(today.intervals.filter(i=>i.state==='grouped').every(i=>i.start>=midnight+8*3600));
+ assert.equal(summaryForDate(after,'2026-11-12').agentSeconds,60,'last confirmed work yesterday is retained');
+});

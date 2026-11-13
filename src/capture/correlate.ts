@@ -163,6 +163,16 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   if(intervals.length>count)intervals[intervals.length-1]!.background=true;
  }
  function trackBackground(e:CaptureEvent,key:string,s:Session){
+  // A resumed invocation reuses the conversation ID, not proof that its old
+  // shells kept running while it was closed. Preserve only confirmed sightings.
+  // Context compaction happens within the same invocation and is not a fence.
+  if(e.kind==='session_start'&&['startup','resume'].includes(String(e.data?.source))){
+   for(const [id,b] of [...background])if(nativeIdentity(b.event)===nativeIdentity(e)){
+    if(b.seen)addBackground(b,b.seen,'observed');
+    unresolved.push({reason:'Background shell continuity is unknown after session restart',eventId:b.event.eventId});
+    background.delete(id);
+   }
+  }
   const taskId=typeof e.data?.backgroundTaskId==='string'?e.data.backgroundTaskId:undefined;
   if(e.kind==='tool_end'&&taskId){if(!background.has(key+':'+taskId))background.set(key+':'+taskId,{event:e,session:s,key,taskId});return;}
   if(e.kind==='prompt_submitted'&&taskId){
@@ -182,6 +192,12 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  function applyBinding(e:CaptureEvent,b:CaptureEvent):CaptureEvent {return {...e,workspaceId:b.workspaceId,runId:b.runId,taskId:b.taskId,dispatchId:b.dispatchId};}
  function resolve(e:CaptureEvent):CaptureEvent {
   if(!e.sessionId)return e;
+  if(e.kind==='session_start'&&['startup','resume'].includes(String(e.data?.source))){
+   const native=nativeIdentity(e);
+   promotedBindings.delete(native);
+   for(const [id,binding] of bindings)if(nativeIdentity(binding)===native)bindings.delete(id);
+   // toolBindings deliberately survives: late tool ends still belong to their original invocation.
+  }
   const closing=['tool_end','response_stop','session_end','child_stop'].includes(e.kind);
   const originalTool=e.kind==='tool_end'?toolBindings.get(toolIdentity(e)):undefined;
   if(originalTool&&(originalTool.dispatchId||!e.dispatchId))return applyBinding(e,originalTool);

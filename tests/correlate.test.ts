@@ -236,3 +236,23 @@ test('a background shell missing from Stop ends there, and an unfinished one sto
  const legacy=summarize([e('te',10,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('stop',900,'response_stop',h)]).intervals.find(i=>i.background);
  assert.equal(legacy,undefined);
 });
+
+test('resuming a conversation cannot extend an old background shell across the night',()=>{
+ const h={sessionId:'resumed',terminalHandle:'t',hostId:'local',provider:'claude'};
+ const old=[e('launch',0,'tool_end',{...h,data:{toolId:'shell',backgroundTaskId:'b1'}}),e('last-stop',10,'response_stop',{...h,data:{backgroundTasks:['b1']}})];
+ const resumed=summarize([...old,e('resume',9*3600,'session_start',{...h,data:{source:'resume'}}),e('prompt',9*3600+1,'prompt_submitted',h),e('answer',9*3600+11,'response_stop',{...h,data:{backgroundTasks:[]}})]);
+ assert.deepEqual(resumed.intervals.filter(i=>i.background).map(i=>[i.start,i.end]),[[0,10]]);
+ assert.equal(resumed.agentSeconds,120);
+ // In-place context compaction is not a new invocation; confirmed background work survives it.
+ const compacted=summarize([...old,e('compact',600,'session_start',{...h,data:{source:'compact'}}),e('done',1800,'prompt_submitted',{...h,data:{backgroundTaskId:'b1',backgroundStatus:'completed'}})]);
+ assert.equal(compacted.intervals.find(i=>i.background)?.end,1800);
+});
+
+test('resume clears stale Dispatch binding without joining yesterday background time to today',()=>{
+ const h={sessionId:'resumed',terminalHandle:'t1',hostId:'local',provider:'claude'};
+ const summary=summarize([worker('worker',-1),e('startup',0,'session_start',{...h,data:{source:'startup'}}),e('launch',1,'tool_end',{...h,data:{toolId:'shell',backgroundTaskId:'b1'}}),e('last-stop',10,'response_stop',{...h,data:{backgroundTasks:['b1']}}),e('resume',32400,'session_start',{...h,data:{source:'resume'}}),e('prompt',32401,'prompt_submitted',h),e('answer',32411,'response_stop',{...h,data:{backgroundTasks:[]}})]);
+ assert.deepEqual(summary.intervals.filter(i=>i.background).map(i=>[i.start,i.end]),[[1,10]]);
+ assert.equal(summary.agentSeconds,120);
+ const answer=summary.intervals.find(i=>i.state==='grouped'&&i.start===32401);
+ assert(answer);assert.equal(answer.dispatchId,undefined,'the new invocation must not inherit yesterday Dispatch');
+});
