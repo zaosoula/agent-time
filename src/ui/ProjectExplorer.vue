@@ -14,7 +14,7 @@ import type { Interval } from '../capture/events.ts';
  * Projects of the day as compact rows that expand into a session explorer. Expanding never
  * changes the main chart; "Focus main chart" does, and clearing focus keeps rows expanded.
  */
-const props = defineProps<{ focus: string; compact?: boolean }>();
+defineProps<{ focus: string }>();
 const emit = defineEmits<{ 'update:focus': [name: string] }>();
 const store = reactive(useStore());
 
@@ -62,7 +62,7 @@ const reportedCounts = computed(() => {
     <div class="explorer-head">
       <div>
         <h2>Project activity <span class="project-count">{{ groups.length }}</span></h2>
-        <p>{{ props.compact ? 'A summary of your projects. Open Agents for sessions and executions.' : 'Explore the sessions and agents behind your day.' }}</p>
+        <p>Explore the sessions and agents behind your day.</p>
       </div>
       <label class="search-field">
         <Search :size="14" />
@@ -110,22 +110,22 @@ const reportedCounts = computed(() => {
           <span class="explorer-caption">Sessions in {{ projectDisplay(group.name, store.projects) }}</span>
           <div class="body-actions">
             <button
-              v-if="props.compact && focus !== group.name"
+              v-if="focus !== group.name"
               class="btn btn-sm"
               :disabled="!group.sessions.length"
               @click="emit('update:focus', group.name)"
             >
               <Crosshair :size="13" />Focus main chart
             </button>
-            <button v-else-if="props.compact" class="btn btn-sm" @click="emit('update:focus', '')"><X :size="13" />Clear focus</button>
-            <button v-if="!props.compact" class="btn btn-sm" @click="store.navigate('today',group.name)">View timeline</button>
+            <button v-else class="btn btn-sm" @click="emit('update:focus', '')"><X :size="13" />Clear focus</button>
+
             <button class="btn btn-sm" @click="store.openProject(group.name,'overview')">
               <ExternalLink :size="13" />Open project page
             </button>
           </div>
         </div>
-        <SessionExplorer v-if="!props.compact" :sessions="sessionsFor(group)" :now="store.minute" />
-        <div v-else class="project-activity-link"><p>{{ rootCount(group) }} sessions · {{ childCount(group) }} subagents</p><button class="btn" @click="store.navigate('sessions',group.name)">View agents and sessions <ChevronRight :size="14" /></button></div>
+        <SessionExplorer :sessions="sessionsFor(group)" :now="store.minute" />
+
       </div>
     </div>
     <p v-if="!groups.length && !store.summaryLoaded" class="empty">Loading project activity…</p>

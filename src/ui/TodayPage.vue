@@ -253,9 +253,8 @@ const websites = computed(() => {
     </div>
 
     <section class="activity-panel">
-      <p v-if="props.mode==='today' && store.search.trim()" class="retained-filter">Filtered by your Agents search: <strong>{{ store.search }}</strong> <button class="btn btn-quiet btn-sm" @click="store.search=''">Clear session search</button></p>
-      <div v-if="props.mode==='sessions'" class="panel-toolbar"><label class="search-field"><Search :size="14" /><input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions, providers or projects…" /></label></div>
-      <ProjectExplorer v-model:focus="chartFocus" :compact="props.mode==='today'" />
+      <div class="panel-toolbar"><label class="search-field"><Search :size="14" /><input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions, providers or projects…" /></label><button class="btn btn-sm" @click="store.openUsageLimits()">Account limits</button></div>
+      <ProjectExplorer v-model:focus="chartFocus" />
     </section>
 
     <details v-if="props.mode === 'today' && (humanTabs.length || websites.length)" class="human-tabs">

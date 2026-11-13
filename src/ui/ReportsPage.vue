@@ -3,11 +3,12 @@ import {nextTick,reactive,ref,watch} from 'vue';
 import {useStore} from './store.ts';
 import SectionHeading from './SectionHeading.vue';
 import WeeklyReview from './WeeklyReview.vue';
+import BillingReports from './BillingReports.vue';
 import UsagePage from './UsagePage.vue';
 import WorkOutcomes from './WorkOutcomes.vue';
 import {capturePageScroll,restorePageScroll} from './page-scroll.ts';
 const store=reactive(useStore());
-const sections=[{id:'time',label:'Time'},{id:'usage',label:'Usage'},{id:'evidence',label:'Evidence'}] as const;
+const sections=[{id:'time',label:'Time'},{id:'billing',label:'Billing'},{id:'usage',label:'Usage'},{id:'evidence',label:'Evidence'}] as const;
 const root=ref<HTMLElement|null>(null);
 const scroll=new Map<string,ReturnType<typeof capturePageScroll>>();
 watch(()=>store.reportsSection,(next,previous)=>{
@@ -20,9 +21,10 @@ watch(()=>store.reportsSection,(next,previous)=>{
   <SectionHeading class="workspace-heading" title="Reports" description="Review your time, usage and supporting evidence." :level="1" size="page">
    <nav class="workspace-tabs" aria-label="Report views"><button v-for="section in sections" :key="section.id" :class="['workspace-tab',{active:store.reportsSection===section.id}]" :aria-current="store.reportsSection===section.id?'page':undefined" @click="store.reportsSection=section.id">{{ section.label }}</button></nav>
   </SectionHeading>
-  <KeepAlive :max="3">
+  <KeepAlive :max="4">
    <WeeklyReview v-if="store.reportsSection==='time'" key="time" />
    <UsagePage v-else-if="store.reportsSection==='usage'" key="usage" :status="store.status" />
+   <BillingReports v-else-if="store.reportsSection==='billing'" key="billing" />
    <WorkOutcomes v-else key="evidence" :active="store.page === 'reports' && store.reportsSection === 'evidence'" />
   </KeepAlive>
  </section>

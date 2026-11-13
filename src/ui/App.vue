@@ -8,15 +8,12 @@ import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTri
 import {
   Activity,
   BarChart3,
-  Bot,
   CalendarDays,
   CircleHelp,
   ClipboardCheck,
   Download,
-  ReceiptText,
   Folder,
   GitCommitHorizontal,
-  Layers3,
   Pause,
   Play,
   Settings2,
@@ -28,7 +25,6 @@ import { useStore, type Page } from './store.ts';
 import { toast, clearToast } from './toast.ts';
 import { dateString } from './format.ts';
 import { projectColor, projectDisplay } from './project-identity.ts';
-import BillingReportsPage from './BillingReports.vue';
 import BetaUpdates from './BetaUpdates.vue';
 import CaptureSettingsPage from './CaptureSettings.vue';
 import ExportDialog from './ExportDialog.vue';
@@ -39,7 +35,6 @@ import TodayPage from './TodayPage.vue';
 import ReportsPage from './ReportsPage.vue';
 import ProjectsPage from './ProjectsPage.vue';
 import appIcon from './icon.svg';
-import AppearanceControl from './AppearanceControl.vue';
 
 const betaUpdatesEnabled = import.meta.env.VITE_BETA_UPDATES === '1';
 const store = reactive(useStore());
@@ -52,22 +47,20 @@ const busy = computed(() => captureBusy.value || settingsBusy.value);
 const pages: Array<{ id: Page; title: string; icon: typeof CalendarDays }> = [
   { id: 'today', title: 'Home', icon: CalendarDays },
   { id: 'review', title: 'Review', icon: ClipboardCheck },
-  { id: 'sessions', title: 'Agents', icon: Layers3 },
   { id: 'projects', title: 'Projects', icon: Folder },
-  { id: 'billing', title: 'Billing', icon: ReceiptText },
   { id: 'reports', title: 'Reports', icon: BarChart3 },
 ];
 const pageTitle = computed(() => store.page === 'settings' ? 'Settings' : pages.find((item) => item.id === store.page)?.title || 'Home');
-const dayPages: Page[] = ['today', 'sessions', 'review'];
-const projectPages: Page[] = ['today', 'sessions', 'projects'];
+const dayPages: Page[] = ['today', 'review'];
+const projectPages: Page[] = ['today', 'projects'];
 const showsProject = computed(() => projectPages.includes(store.page) || store.page === 'reports' && store.reportsSection === 'evidence');
-const activityFilter = computed(() => store.page === 'today' || store.page === 'sessions');
+const activityFilter = computed(() => store.page === 'today');
 
 // ---- Navigation ---------------------------------------------------------------------------
 function navigate(destination: Page, nextProject?: string) {
   store.navigate(destination, nextProject);
 }
-// Keep DOM scroll positions alongside the seven cached workspace instances. This
+// Keep DOM scroll positions alongside the five cached workspace instances. This
 // also covers deep links and tray navigation, which can change the page directly.
 const pageScroll = new Map<Page, ReturnType<typeof capturePageScroll>>();
 watch(() => store.page, (next, previous) => {
@@ -216,10 +209,10 @@ onUnmounted(() => {
     <HookSetup mode="onboarding" />
     <div class="app-shell">
       <aside class="sidebar">
-        <div class="titlebar-space" data-tauri-drag-region></div>
+        <div v-if="native" class="titlebar-space" data-tauri-drag-region></div>
         <div class="brand">
           <div class="brand-mark"><img :src="appIcon" alt="" /></div>
-          <span>Agent Time</span>
+          <span>Agent Time</span><span class="beta-badge">BETA</span>
         </div>
         <p class="brand-caption">Your work, with agents.</p>
         <nav class="sidebar-section" aria-label="Pages">
@@ -237,9 +230,6 @@ onUnmounted(() => {
               :aria-label="`${store.reviewBadge} to review`"
             >
               {{ store.reviewBadge }}
-            </span>
-            <span v-else-if="item.id === 'sessions' && store.summaryLoaded" class="nav-count">
-              {{ store.creditedSessions.length }}
             </span>
             <span
               v-else-if="item.id === 'health' && store.issues.length"
@@ -273,9 +263,7 @@ onUnmounted(() => {
         </div>
         <div class="sidebar-footer">
           <button :class="['nav-row',{active:store.page==='settings'}]" :aria-current="store.page==='settings'?'page':undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
-          <div class="workspace-identity"><span class="workspace-mark" aria-hidden="true"><Layers3 :size="18" /></span><div><strong>Personal workspace</strong><span>Stored on this Mac</span></div></div>
-          <p class="appearance-label">Appearance</p>
-          <AppearanceControl />
+
         </div>
       </aside>
 
@@ -291,7 +279,6 @@ onUnmounted(() => {
           </div>
           <div class="toolbar-actions">
             <select v-if="activityFilter" class="toolbar-project" :value="store.project" aria-label="Filter activity by project" @change="navigate(store.page,($event.target as HTMLSelectElement).value)"><option value="all">All projects</option><option v-for="path in store.projects" :key="path" :value="path">{{ projectDisplay(path,store.projects) }}</option></select>
-            <button v-if="store.page==='sessions'" class="btn btn-sm" @click="store.openUsageLimits()"><Bot :size="14" /> Account limits</button>
             <TooltipRoot v-if="dayPages.includes(store.page)">
               <TooltipTrigger as-child>
                 <button class="icon-button" aria-label="Export this day as CSV" @click="exportOpen = true">
@@ -368,18 +355,17 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
-        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
-        <KeepAlive :max="7">
+        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
+        <KeepAlive :max="5">
           <TodayPage
-            v-if="store.page === 'today' || store.page === 'sessions'"
-            :key="store.page"
-            :mode="store.page"
+            v-if="store.page === 'today'"
+            key="today"
+            mode="today"
             :data-page-context="store.page"
             :busy="busy"
             @start="toggleCapture"
           />
           <ReviewPage v-else-if="store.page === 'review'" key="review" data-page-context="review" />
-          <BillingReportsPage v-else-if="store.page === 'billing'" key="billing" data-page-context="billing" />
           <ProjectsPage v-else-if="store.page === 'projects'" key="projects" data-page-context="projects" />
           <ReportsPage v-else-if="store.page === 'reports'" key="reports" data-page-context="reports" />
           <CaptureSettingsPage

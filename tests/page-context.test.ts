@@ -20,7 +20,7 @@ const renderer=createRenderer<Node,Node>({
  patchProp:(n,key,_old,value)=>{n.props[key]=value;},
 });
 
-test('the real app page boundary retains a pending job, drafts and results through all seven workspaces',async()=>{
+test('the real app page boundary retains a pending job, drafts and results through all five workspaces',async()=>{
  const source=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8').match(/<KeepAlive[\s\S]*?<\/KeepAlive>/)![0];
  const compiled=compileTemplate({source,filename:'App.vue',id:'retention-test'});assert.deepEqual(compiled.errors,[]);
  const js=ts.transpileModule(compiled.code,{compilerOptions:{module:ts.ModuleKind.CommonJS,target:ts.ScriptTarget.ES2022}}).outputText;
@@ -35,7 +35,7 @@ test('the real app page boundary retains a pending job, drafts and results throu
  for(const name of ['TodayPage','ReviewPage','ProjectsPage','ReportsPage','BillingReportsPage'])app.component(name,Other);
  app.component('CaptureSettingsPage',Settings);const root=node('root');app.mount(root);
  context.draft.value='my unsaved policy';store.page='reports';await nextTick();resolveJob('completed in background');await nextTick();
- for(const page of ['today','sessions','review','projects','billing','reports','settings']){store.page=page;await nextTick();}
+ for(const page of ['today','review','projects','reports','settings']){store.page=page;await nextTick();}
  assert.equal(mounts,1);assert.equal(unmounts,0);assert.equal(context.draft.value,'my unsaved policy');assert.equal(context.result.value,'completed in background');
  assert(root.children.some(n=>n.text==='my unsaved policy:completed in background'));app.unmount();assert.equal(unmounts,1);
 });
@@ -89,7 +89,8 @@ test('legacy destinations open the matching new workspace without dropping proje
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022}}).outputText;
  const page=ref('today'),project=ref('/project'),selectedSessionKey=ref('selected'),reportsSection=ref('time'),settingsSection=ref('general'),connectionsSection=ref('sources');
  const navigate=new Function('page','project','selectedSessionKey','reportsSection','settingsSection','connectionsSection',js+';return navigate;')(page,project,selectedSessionKey,reportsSection,settingsSection,connectionsSection);
- for(const [destination,section]of [['weekly','time'],['usage','usage'],['outcomes','evidence']]){navigate(destination);assert.equal(page.value,'reports');assert.equal(reportsSection.value,section);}
+ for(const [destination,section]of [['weekly','time'],['usage','usage'],['outcomes','evidence'],['billing','billing']]){navigate(destination);assert.equal(page.value,'reports');assert.equal(reportsSection.value,section);}
+ navigate('sessions');assert.equal(page.value,'today');assert.equal(selectedSessionKey.value,'selected');
  navigate('health');assert.equal(page.value,'settings');assert.equal(settingsSection.value,'connections');assert.equal(connectionsSection.value,'health');assert.equal(project.value,'/project');assert.equal(selectedSessionKey.value,'selected');
 });
 
@@ -101,9 +102,9 @@ test('the real Reports boundary retains each nested report view',async()=>{
  const store=reactive({reportsSection:'time',status:null});const drafts:any={};let mounts=0;
  const View=(key:string)=>defineComponent({setup(){mounts++;const draft=ref(key);drafts[key]=draft;return()=>h('section',draft.value);}});
  const app=renderer.createApp(defineComponent({data:()=>({store}),render:exports.render as any}));
- app.component('WeeklyReview',View('time'));app.component('UsagePage',View('usage'));app.component('WorkOutcomes',View('evidence'));
- app.mount(node('root'));drafts.time.value='retained week';for(const section of ['usage','evidence','time','usage','time']){store.reportsSection=section;await nextTick();}
- assert.equal(mounts,3);assert.equal(drafts.time.value,'retained week');app.unmount();
+ app.component('WeeklyReview',View('time'));app.component('UsagePage',View('usage'));app.component('WorkOutcomes',View('evidence'));app.component('BillingReports',View('billing'));
+ app.mount(node('root'));drafts.time.value='retained week';for(const section of ['usage','evidence','billing','time','usage','billing','time']){store.reportsSection=section;await nextTick();}
+ assert.equal(mounts,4);assert.equal(drafts.time.value,'retained week');assert.equal(drafts.billing.value,'billing');app.unmount();
 });
 
 

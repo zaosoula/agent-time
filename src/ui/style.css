@@ -2569,3 +2569,15 @@ tbody tr:last-child td { border-bottom: 0; }
   color: var(--bg);
   font-weight: 600;
 }
+
+/* One scroll surface for the complete workspace navigation. */
+.sidebar { overflow-y: auto; overscroll-behavior: contain; }
+.sidebar > * { flex-shrink: 0; }
+.sidebar .project-list { overflow: visible; max-height: none; }
+.titlebar-space { height: 28px; }
+.brand { padding-top: 12px; padding-bottom: 8px; gap: 10px; }
+.beta-badge { font-size: 10px; line-height: 1.4; font-weight: 650; letter-spacing: .04em; padding: 3px 5px; border-radius: 5px; background: var(--accent-soft); color: var(--accent-text); }
+@media (max-width: 700px) {
+  .sidebar { overflow-y: visible; }
+  .sidebar .project-list { overflow-x: auto; overflow-y: hidden; }
+}

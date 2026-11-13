@@ -129,9 +129,9 @@ onMounted(()=>void refresh());
 onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevision.value)void refresh(true);});
 </script>
 <template>
-  <section class="day-content app-page billing-page">
+  <section class="day-content app-page billing-page billing-embedded">
     <div class="billing-content">
-      <SectionHeading class="day-heading" title="Billing reports" description="Calculate project billing, review the evidence, and export a saved report." :level="1" size="page"><template #actions><AppButton @click="configure">Edit policy</AppButton></template></SectionHeading>
+      <SectionHeading class="day-heading" title="Billing reports" description="Calculate project billing, review the evidence, and export a saved report." :level="2" size="section"><template #actions><AppButton @click="configure">Edit policy</AppButton></template></SectionHeading>
       <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
       <template v-else>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
@@ -189,4 +189,8 @@ details { margin-top: 16px; } summary { cursor: pointer; color: var(--muted); } 
 .report-actions { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-top: 14px; } .report-actions > span { flex: 1; } .export-result { margin-top: 14px; padding: 14px; border: 1px solid var(--border); border-radius: 6px; } code { display: block; overflow-wrap: anywhere; margin: 10px 0; font-size: 11px; }
 @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } .totals { grid-template-columns: repeat(2, minmax(0, 1fr)); } .period { flex-wrap: wrap; } .project-picker { flex-wrap: wrap; } }
 
+</style>
+
+<style scoped>
+.billing-embedded{overflow:visible;flex:none}
 </style>

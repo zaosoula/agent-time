@@ -128,7 +128,7 @@ function createStore() {
   const settingsSection = ref('general');
   const settingsNavigationRequest = ref(0);
   const connectionsSection = ref<'agents'|'sources'|'linear'|'health'>('sources');
-  const reportsSection = ref<'time'|'usage'|'evidence'>('time');
+  const reportsSection = ref<'time'|'usage'|'evidence'|'billing'>('time');
   const projectsSection = ref<'overview'|'attribution'|'billing'|'evidence'>('overview');
   const billingSettingsProject = ref('');
   const usageFocus = ref<'limits'|''>('');
@@ -147,9 +147,11 @@ function createStore() {
 
   function navigate(destination: Page, nextProject?: string) {
     // Native menus and older links retain their destination IDs.
-    if (destination === 'weekly' || destination === 'usage' || destination === 'outcomes') {
-      reportsSection.value = destination === 'weekly' ? 'time' : destination === 'usage' ? 'usage' : 'evidence';
+    if (destination === 'weekly' || destination === 'usage' || destination === 'outcomes' || destination === 'billing') {
+      reportsSection.value = destination === 'weekly' ? 'time' : destination === 'usage' ? 'usage' : destination === 'billing' ? 'billing' : 'evidence';
       destination = 'reports';
+    } else if (destination === 'sessions') {
+      destination = 'today';
     } else if (destination === 'health') {
       settingsSection.value = 'connections';connectionsSection.value = 'health';destination = 'settings';
     }

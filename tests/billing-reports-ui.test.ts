@@ -28,7 +28,8 @@ test('dedicated report page generates from saved project settings and retains it
 
 test('billing configuration retains policy editing but no longer owns report generation',()=>{
  const settings=readFileSync(new URL('../src/ui/BillingSettings.vue',import.meta.url),'utf8');assert(!settings.includes("'billing_report'"));assert(settings.includes('Open billing reports'));assert(settings.includes('Billing policy'));
- const app=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8');assert(app.includes("id: 'billing', title: 'Billing'"));
+ const app=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8');assert(!app.includes("id: 'billing', title: 'Billing'"));
+ const reports=readFileSync(new URL('../src/ui/ReportsPage.vue',import.meta.url),'utf8');assert(reports.includes("id:'billing',label:'Billing'"));assert(reports.includes('<BillingReports'));
 });
 
 test('saved reports browse without disturbing the pending generated report and open by immutable ID',async()=>{

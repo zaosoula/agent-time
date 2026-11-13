@@ -180,7 +180,6 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
           <component :is="tab.icon" :size="16" /><span>{{ tab.title }}</span>
         </TabsTrigger>
       </TabsList>
-      <p>Preferences save automatically.</p>
     </nav>
     <div class="settings-document">
       <TabsContent v-if="visitedTabs.has('general')" value="general" class="settings-panel">
@@ -595,9 +594,9 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 <style scoped>
 .settings-heading { margin-bottom: var(--space-4); }
 .setup-assistant { margin-bottom: 18px; }
-.connection-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
-.connection-tab { min-height: var(--control-height); padding: var(--control-padding-block) var(--control-padding-inline); border: 1px solid var(--border); border-radius: var(--control-radius); color: var(--muted); font-size: var(--control-font-size); line-height: var(--control-line-height); box-sizing: border-box; }
-.connection-tab[data-state='active'] { background: var(--selected); color: var(--selected-text); }
+.connection-tabs { display: flex; overflow-x: auto; gap: 4px; margin-bottom: 24px; border-bottom: 1px solid var(--border); }
+.connection-tab { min-height: var(--control-height); padding: var(--control-padding-block) var(--control-padding-inline); border: 0; border-bottom: 2px solid transparent; border-radius: 0; color: var(--muted); font-size: var(--control-font-size); line-height: var(--control-line-height); box-sizing: border-box; white-space: nowrap; flex-shrink: 0; }
+.connection-tab[data-state='active'] { border-bottom-color: var(--accent-text); color: var(--text); font-weight: 600; }
 .connection-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 
 .settings-layout {
