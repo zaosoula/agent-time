@@ -2,25 +2,24 @@
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { SwitchRoot, SwitchThumb, TabsRoot, TabsList, TabsTrigger, TabsContent } from 'reka-ui';
 import {
-  Bot,
   Layers3,
+  Clock3,
   ShieldCheck,
   ArrowUpRight,
-  FolderKanban,
   Settings2,
   Lock,
   Database,
-  Wrench,
 } from '@lucide/vue';
 import HookSetup from './HookSetup.vue';
 import TrackingCleanup from './TrackingCleanup.vue';
 import PrivacyExclusions from './PrivacyExclusions.vue';
 import ArchiveExport from './ArchiveExport.vue';
 import StorageUsage from './StorageUsage.vue';
-import BillingSettings from './BillingSettings.vue';
+import CaptureHealth from './CaptureHealth.vue';
+import SettingsAbout from './SettingsAbout.vue';
+import { normalizeSettingsRoute } from './settings-navigation.ts';
 import { useStore } from './store.ts';
 const store = useStore();
-import WebsiteRules from './WebsiteRules.vue';
 import LinearConnection from './LinearConnection.vue';
 import {
   native,
@@ -33,27 +32,48 @@ import {
 import type { CaptureSettings } from '../capture/settings.ts';
 import { humanizeError } from './errors.ts';
 const props = defineProps<{ status: CaptureStatus | null; busy: boolean }>();
-const emit = defineEmits<{ change: [settings: Partial<CaptureSettings>]; error: [cause: unknown] }>();
+const emit = defineEmits<{ change: [settings: Partial<CaptureSettings>]; error: [cause: unknown]; reviewSite: [key: string] }>();
 const tabs = [
   { id: 'general', title: 'General', icon: Settings2 },
-  { id: 'agents', title: 'Agents', icon: Bot },
-  { id: 'sources', title: 'Sources', icon: Layers3 },
-  { id: 'projects', title: 'Projects & rules', icon: FolderKanban },
-  { id: 'billing', title: 'Billing', icon: FolderKanban },
+  { id: 'counting', title: 'Time counting', icon: Clock3 },
+  { id: 'connections', title: 'Capture & connections', icon: Layers3 },
   { id: 'privacy', title: 'Privacy', icon: Lock },
   { id: 'data', title: 'Data & backup', icon: Database },
-  { id: 'advanced', title: 'Advanced', icon: Wrench },
+] as const;
+const connectionTabs = [
+  { id: 'agents', title: 'Agents & MCP' },
+  { id: 'sources', title: 'Mac & browsers' },
+  { id: 'linear', title: 'Linear' },
+  { id: 'health', title: 'Capture health' },
 ] as const;
 const tabKey = 'agent-time.settings-tab';
-const savedTab = sessionStorage.getItem(tabKey);
-const active = ref<string>(tabs.some((tab) => tab.id === savedTab) ? savedTab! : 'general');
+// An explicit navigation target wins over the previous visit saved in this window.
+const initialRoute = normalizeSettingsRoute(store.settingsNavigationRequest?.value || store.settingsSection.value !== 'general'
+  ? store.settingsSection.value : sessionStorage.getItem(tabKey));
+const active = ref<string>(initialRoute.section);
+if (initialRoute.connection) store.connectionsSection.value = initialRoute.connection;
+store.settingsSection.value = initialRoute.section;
+sessionStorage.setItem(tabKey, initialRoute.section);
+const connection = computed({
+  get: () => store.connectionsSection.value,
+  set: (value) => { store.connectionsSection.value = value; },
+});
 const visitedTabs = ref(new Set([active.value]));
-store.settingsSection.value = active.value;
-watch(() => store.settingsSection.value, (value) => { if (active.value !== value) active.value = value; });
+const visitedConnections = ref(new Set(active.value === 'connections' ? [connection.value] : []));
+watch(() => store.settingsSection.value, (value) => {
+  const route = normalizeSettingsRoute(value);
+  if (route.connection) connection.value = route.connection;
+  active.value = route.section;
+  if (route.projectSection) store.openProject(undefined, route.projectSection);
+});
 watch(active, (value) => {
   visitedTabs.value.add(value);
+  if (value === 'connections') visitedConnections.value.add(connection.value);
   store.settingsSection.value = value;
   sessionStorage.setItem(tabKey, value);
+});
+watch(connection, (value) => {
+  if (active.value === 'connections') visitedConnections.value.add(value);
 });
 const agents = computed(() => props.status?.sources.filter((source) => source.kind === 'agent') || []);
 const pollers = computed(() => props.status?.sources.filter((source) => source.kind === 'poller') || []);
@@ -96,7 +116,7 @@ const startup = ref<StartupItemStatus | null>(null),
   startupBusy = ref(false),
   startupError = ref('');
 async function refreshStartup() {
-  if (store.page.value !== 'settings') return;
+  if (store.page.value !== 'settings' || active.value !== 'general') return;
   if (!native) return;
   try {
     startup.value = await startupItem('status');
@@ -141,9 +161,11 @@ async function openPermission() {
   }
 }
 onMounted(() => {
+  if (initialRoute.projectSection) store.openProject(undefined, initialRoute.projectSection);
   void refreshStartup();
   window.addEventListener('focus', refreshStartup);
 });
+watch([active, () => store.page.value], () => { void refreshStartup(); });
 onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 </script>
 <template>
@@ -155,13 +177,13 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
           <component :is="tab.icon" :size="16" /><span>{{ tab.title }}</span>
         </TabsTrigger>
       </TabsList>
-      <p>General preferences save automatically. Save billing edits in their form.</p>
+      <p>Preferences save automatically.</p>
     </nav>
     <div class="settings-document">
       <TabsContent v-if="visitedTabs.has('general')" value="general" class="settings-panel">
         <section class="settings-section">
           <h2>General</h2>
-          <p class="section-intro">How Agent Time starts and when it stops counting.</p>
+          <p class="section-intro">Startup, app information and updates.</p>
           <div class="control-list">
             <div class="control-row">
               <div class="control-copy">
@@ -204,6 +226,17 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 Open Login Items <ArrowUpRight :size="13" />
               </button>
             </div>
+          </div>
+          <footer class="settings-footnote"><p>Closing the window keeps capture running. Quit Agent Time to stop it.</p></footer>
+          <SettingsAbout />
+        </section>
+      </TabsContent>
+
+      <TabsContent v-if="visitedTabs.has('counting')" value="counting" class="settings-panel">
+        <section class="settings-section">
+          <h2>Time counting</h2>
+          <p class="section-intro">When activity pauses and which agent time is counted.</p>
+          <div class="control-list">
             <div class="control-row">
               <div class="control-copy">
                 <label for="agent-idle"><strong>Stop counting agent time after</strong></label>
@@ -269,12 +302,21 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
           </div>
           <footer class="settings-footnote">
             <p>Changes apply immediately. Existing history is kept.</p>
-            <p>Closing the window keeps capture running. Quit Agent Time to stop it.</p>
           </footer>
         </section>
       </TabsContent>
 
-      <TabsContent v-if="visitedTabs.has('agents')" value="agents" class="settings-panel">
+      <TabsContent v-if="visitedTabs.has('connections')" value="connections" class="settings-panel">
+        <h2>Capture &amp; connections</h2>
+        <p class="section-intro">Connect agents, activity sources and project services, or check capture health.</p>
+        <div class="setup-assistant">
+          <button class="btn btn-sm" @click="relaunchHookSetup">Run setup assistant</button>
+        </div>
+        <TabsRoot v-model="connection" :unmount-on-hide="false">
+          <TabsList class="connection-tabs" aria-label="Capture and connection sections">
+            <TabsTrigger v-for="tab in connectionTabs" :key="tab.id" :value="tab.id" class="connection-tab">{{ tab.title }}</TabsTrigger>
+          </TabsList>
+      <TabsContent v-if="visitedConnections.has('agents')" value="agents" class="settings-panel">
         <HookSetup mode="settings">
           <template #global-controls>
             <div class="control-list">
@@ -374,7 +416,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </HookSetup>
       </TabsContent>
 
-      <TabsContent v-if="visitedTabs.has('sources')" value="sources" class="settings-panel">
+      <TabsContent v-if="visitedConnections.has('sources')" value="sources" class="settings-panel">
         <section class="settings-section">
           <h2>Sources</h2>
           <p class="section-intro">Where Agent Time looks for activity besides agent hooks.</p>
@@ -511,20 +553,16 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent v-if="visitedTabs.has('projects')" value="projects" class="settings-panel">
-        <section class="settings-section">
-          <h2>Projects &amp; rules</h2>
-          <p class="section-intro">
-            Connect Linear repository links, review websites assigned to each project, and add exact matching
-            rules.
-          </p>
-          <LinearConnection />
-          <WebsiteRules />
-        </section>
-      </TabsContent>
-
-      <TabsContent v-if="visitedTabs.has('billing')" value="billing" class="settings-panel">
-        <BillingSettings />
+          <TabsContent v-if="visitedConnections.has('linear')" value="linear" class="settings-panel">
+            <LinearConnection />
+          </TabsContent>
+          <TabsContent v-if="visitedConnections.has('health')" value="health" class="settings-panel">
+            <CaptureHealth :status="status" :issues="store.issues.value"
+              :active="store.page.value === 'settings' && active === 'connections' && connection === 'health'"
+              @review-site="emit('reviewSite', $event)" />
+          </TabsContent>
+        </TabsRoot>
+        <p class="section-note">Events from agents whose hook capture is off are discarded.</p>
       </TabsContent>
 
       <TabsContent v-if="visitedTabs.has('privacy')" value="privacy" class="settings-panel">
@@ -548,31 +586,16 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
         </section>
       </TabsContent>
 
-      <TabsContent v-if="visitedTabs.has('advanced')" value="advanced" class="settings-panel">
-        <section class="settings-section">
-          <h2>Advanced</h2>
-          <p class="section-intro">Setup and troubleshooting.</p>
-          <div class="control-list">
-            <div class="control-row">
-              <div class="control-copy">
-                <strong>Setup assistant</strong>
-                <p>Run the agent hook setup again, for example after installing a new agent.</p>
-              </div>
-              <button class="btn" @click="relaunchHookSetup">Run setup assistant</button>
-            </div>
-            <div class="control-row">
-              <div class="control-copy">
-                <strong>Disabled hooks</strong>
-                <p>Events received from agents whose hook capture is off are discarded, not stored.</p>
-              </div>
-            </div>
-          </div>
-        </section>
-      </TabsContent>
     </div>
   </TabsRoot>
 </template>
 <style scoped>
+.setup-assistant { margin-bottom: 18px; }
+.connection-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
+.connection-tab { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: var(--text-sm); }
+.connection-tab[data-state='active'] { background: var(--selected); color: var(--selected-text); }
+.connection-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+
 .settings-layout {
   display: flex;
   flex: 1;

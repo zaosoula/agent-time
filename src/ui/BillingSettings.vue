@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue';
+import { computed, onMounted, ref, watch } from 'vue';
 import type { BillingProject, BillingPolicy } from '../capture/billing-types.ts';
 import { request } from './transport.ts';
 import { humanizeError } from './errors.ts';
@@ -8,6 +8,10 @@ import {useStore} from './store.ts';
 const store=useStore();
 import { toast } from './toast.ts';
 
+const props = defineProps<{ selectedProjectId?: string }>();
+const emit = defineEmits<{ selected: [id: string] }>();
+const saveErrors = new Map<string, string>();
+const drafts = new Map<string, { draft: BillingProject; original: BillingProject | null; policy: BillingPolicy; aliases: string; repositories: string; workspaces: string; reportedNames: string }>();
 const projects = ref<BillingProject[]>([]), knownSources = ref<string[]>([]);
 const loading = ref(true), saving = ref(false), error = ref('');
 const draft = ref<BillingProject | null>(null), policy = ref<BillingPolicy | null>(null);
@@ -34,20 +38,36 @@ function newPolicy(): BillingPolicy {
     agentOnlyHourlyRate: null, agentWeight: '1', rounding: { minutes: 1, mode: 'nearest', scope: 'period' },
     dailyCapMinutes: null, presenceWindowMinutes: null, aiFees: { mode: 'none' } };
 }
-function selectProject(project?: BillingProject) {
+function selectProject(project?: BillingProject, fresh = false) {
+  const currentKey = original.value?.id || '';
+  if (!fresh && draft.value && policy.value) drafts.set(currentKey, clone({ draft: draft.value, original: original.value, policy: policy.value, aliases: aliases.value, repositories: repositories.value, workspaces: workspaces.value, reportedNames: reportedNames.value }));
+  error.value = saveErrors.get(project?.id || '') || '';
+  const retained = !fresh && drafts.get(project?.id || '');
+  if (retained) {
+    draft.value = clone(retained.draft); original.value = clone(retained.original); policy.value = clone(retained.policy);
+    aliases.value = retained.aliases; repositories.value = retained.repositories; workspaces.value = retained.workspaces; reportedNames.value = retained.reportedNames;
+    emit('selected', project?.id || ''); return;
+  }
   original.value = project ? clone(project) : null;
   draft.value = project ? clone(project) : { id: '', name: '', aliases: [], sources: { repositories: [], workspaceIds: [], reportedProjects: [] },
     timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, policies: [] };
   policy.value = clone([...draft.value.policies].reverse().sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))[0] || newPolicy());
   aliases.value = draft.value.aliases.join('\n'); repositories.value = draft.value.sources.repositories.join('\n');
   workspaces.value = draft.value.sources.workspaceIds.join('\n'); reportedNames.value = draft.value.sources.reportedProjects.join('\n');
-  error.value = '';
+  emit('selected', project?.id || '');
 }
+function selectRequestedProject() {
+  if (!props.selectedProjectId || props.selectedProjectId === original.value?.id) return;
+  const requested = projects.value.find((item) => item.id === props.selectedProjectId);
+  if (requested) selectProject(requested);
+}
+watch(() => props.selectedProjectId, selectRequestedProject);
 async function refresh() {
   loading.value = true;
   try {
     const result = await request<{ projects: BillingProject[]; knownSources: string[] }>('billing_projects', {});
     projects.value = result.projects; knownSources.value = result.knownSources;
+    selectRequestedProject();
   } catch (cause) { error.value = humanizeError(cause); }
   finally { loading.value = false; }
 }
@@ -74,8 +94,9 @@ function setFeeMode(event: Event) {
   policy.value.aiFees = mode === 'flat' ? { mode: 'flat', amount: '0', scope: 'period' } : mode === 'actual' ? { mode: 'actual' } : { mode: 'none' };
 }
 async function save() {
-  if (!draft.value || !policy.value) return;
-  saving.value = true; error.value = '';
+  if (!draft.value || !policy.value || saving.value) return;
+  const submittedKey = original.value?.id || '';
+  saving.value = true; error.value = ''; saveErrors.delete(submittedKey);
   try {
     new Intl.DateTimeFormat('en', { timeZone: draft.value.timezone }).format();
     const project = clone(draft.value);
@@ -94,8 +115,13 @@ async function save() {
     const index = projects.value.findIndex((item) => item.id === saved.id);
     if (index < 0) projects.value.push(saved); else projects.value[index] = saved;
     store.billingProjectRevision.value++;
-    selectProject(saved); toast.success('Billing project saved.');
-  } catch (cause) { error.value = humanizeError(cause); }
+    drafts.delete(submittedKey); drafts.delete(saved.id);
+    if ((original.value?.id || '') === submittedKey) selectProject(saved, true);
+    toast.success('Billing project saved.');
+  } catch (cause) {
+    const message = humanizeError(cause); saveErrors.set(submittedKey, message);
+    if ((original.value?.id || '') === submittedKey) error.value = message;
+  }
   finally { saving.value = false; }
 }
 onMounted(refresh);
@@ -103,21 +129,21 @@ onMounted(refresh);
 
 <template>
   <section class="billing-settings">
-    <header class="heading"><div><h2>Project billing</h2><p>Group related work and configure versioned billing rules. Generate and export calculations from Billing reports.</p></div>
-      <button class="btn" :disabled="loading || saving" @click="selectProject()">New project</button></header>
+    <header class="heading"><div><h2>Billing groups</h2><p>Group related work and configure versioned billing rules. Generate and export calculations from Billing reports.</p></div>
+      <button class="btn" :disabled="loading || saving" @click="selectProject()">New billing group</button></header>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
-    <div v-else class="project-picker"><label for="billing-project">Billable project</label><select id="billing-project" :value="original?.id || ''" :disabled="saving" @change="selectProject(projects.find((item) => item.id === ($event.target as HTMLSelectElement).value))">
-      <option value="">{{ projects.length ? 'Choose a project…' : 'No projects yet — create your first project' }}</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
+    <div v-else class="project-picker"><label for="billing-project">Billing group</label><select id="billing-project" :value="original?.id || ''" :disabled="saving" @change="selectProject(projects.find((item) => item.id === ($event.target as HTMLSelectElement).value))">
+      <option value="">{{ projects.length ? 'Choose a billing group…' : 'No groups yet — create your first billing group' }}</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
     </select><button class="btn btn-sm" :disabled="saving" @click="refresh">Refresh</button></div>
     <template v-if="draft && policy">
       <form class="editor" @submit.prevent="save">
         <fieldset :disabled="saving"><legend>Project &amp; sources</legend>
-          <div class="grid"><label>Project ID<input v-model="draft.id" required :readonly="Boolean(original)" placeholder="client-project" /></label><label>Project name<input v-model="draft.name" required placeholder="Client project" /></label>
+          <div class="grid"><label>Group name<input v-model="draft.name" required placeholder="Client project" /></label>
             <label>Timezone<input v-model="draft.timezone" required placeholder="Europe/Paris" /></label><label>Aliases <small>One name per line</small><textarea v-model="aliases" rows="2" /></label></div>
           <p class="hint">Sources grouped here share one billable project clock. Repository roots include their worktrees.</p>
           <div class="grid"><label>Repository roots <small>One full path per line</small><textarea v-model="repositories" rows="3" placeholder="/Users/you/projects/app" /></label>
-            <label>Workspace IDs <small>One ID per line</small><textarea v-model="workspaces" rows="3" /></label><label>Reported project names <small>Exact names, one per line</small><textarea v-model="reportedNames" rows="3" /></label></div>
+            </div><details :open="!original"><summary>Technical source identifiers</summary><div class="grid"><label>Project ID<input v-model="draft.id" required :readonly="Boolean(original)" placeholder="client-project" /></label><label>Workspace IDs <small>One ID per line</small><textarea v-model="workspaces" rows="3" /></label><label>Reported project names <small>Exact names, one per line</small><textarea v-model="reportedNames" rows="3" /></label></div></details>
           <details v-if="knownSources.length"><summary>Known sources ({{ knownSources.length }})</summary><ul class="sources"><li v-for="source in knownSources" :key="source">{{ source }}</li></ul></details>
         </fieldset>
         <fieldset :disabled="saving"><legend>Billing policy</legend>
@@ -129,18 +155,18 @@ onMounted(refresh);
           <div class="grid"><label>Currency<input v-model="policy.currency" required pattern="[A-Za-z]{3}" maxlength="3" placeholder="EUR" /></label>
             <label>Hourly rate <small>Leave blank if unknown</small><input :value="policy.hourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Unknown" @input="setNullableMoney('hourlyRate', $event)" /></label>
             <template v-if="policy.basis === 'weightedAgentOnly' || policy.basis === 'weightedAgentRunning'"><label>Agent fraction<input v-model="policy.agentWeight" required inputmode="decimal" pattern="([0-9]+(\.[0-9]+)?|[0-9]+/[1-9][0-9]*)" placeholder="1/6" /></label></template>
-              <label v-if="policy.basis !== 'humanActive'">Agent-only hourly rate <small>Optional; otherwise use hourly rate</small><input :value="policy.agentOnlyHourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Use hourly rate" @input="setNullableMoney('agentOnlyHourlyRate', $event)" /></label>
+
             <label>Commercial rounding increment<select v-model="policy.rounding.minutes"><option :value="1">1 minute</option><option :value="15">15 minutes</option><option :value="60">1 hour</option></select></label>
             <label>Commercial rounding direction<select v-model="policy.rounding.mode"><option value="nearest">Nearest</option><option value="up">Up</option><option value="down">Down</option></select></label>
             <label>Apply rounding<select v-model="policy.rounding.scope"><option value="period">Once per period</option><option value="day">Each day</option></select></label>
-            <label>Daily cap (minutes) <small>Optional</small><input :value="policy.dailyCapMinutes ?? ''" type="number" min="1" step="1" placeholder="No cap" @input="setOptionalMinutes('dailyCapMinutes', $event)" /></label>
-            <label>Recent human-message window (minutes) <small>Optional; requires captured message evidence</small><input :value="policy.presenceWindowMinutes ?? ''" type="number" min="1" step="1" placeholder="No presence gate" @input="setOptionalMinutes('presenceWindowMinutes', $event)" /></label>
+
+
             <label>AI fees<select :value="policy.aiFees.mode" @change="setFeeMode"><option value="none">No AI fees</option><option value="actual">Actual recorded cost</option><option value="flat">Flat fee</option></select></label>
             <template v-if="policy.aiFees.mode === 'flat'"><label>Flat amount<input v-model="policy.aiFees.amount" required inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" /></label><label>Flat fee applies<select v-model="policy.aiFees.scope"><option value="period">Per period</option><option value="day">Per day</option></select></label></template>
-          </div><p v-if="policy.aiFees.mode === 'actual'" class="hint">Missing, incomplete or unverified costs are flagged. Unknown amounts stay unknown.</p>
+          </div><details class="optional-policy"><summary>Optional billing rules</summary><div class="grid"><label v-if="policy.basis !== 'humanActive'">Agent-only hourly rate <small>Optional; otherwise use hourly rate</small><input :value="policy.agentOnlyHourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Use hourly rate" @input="setNullableMoney('agentOnlyHourlyRate', $event)" /></label><label>Daily cap (minutes) <small>Optional</small><input :value="policy.dailyCapMinutes ?? ''" type="number" min="1" step="1" placeholder="No cap" @input="setOptionalMinutes('dailyCapMinutes', $event)" /></label><label>Recent human-message window (minutes) <small>Optional; requires captured message evidence</small><input :value="policy.presenceWindowMinutes ?? ''" type="number" min="1" step="1" placeholder="No presence gate" @input="setOptionalMinutes('presenceWindowMinutes', $event)" /></label></div></details><p v-if="policy.aiFees.mode === 'actual'" class="hint">Missing, incomplete or unverified costs are flagged. Unknown amounts stay unknown.</p>
           <details v-if="original?.policies.length"><summary>Saved policy versions ({{ original.policies.length }}) · project revision {{ original.revision ?? 0 }}</summary><ul><li v-for="version in [...original.policies].reverse().sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))" :key="version.id">{{ version.effectiveFrom }} · {{ countingLabel(version.countingMode) }} · {{ bases.find((basis) => basis.value === version.basis)?.label }} · {{ version.hourlyRate ?? 'Unknown' }} {{ version.currency }}/h <small>{{ version.id }}</small></li></ul></details>
         </fieldset>
-        <footer class="save-row"><span class="muted">{{ original && policyChanged ? 'Saving will append a policy version.' : 'Configuration is saved locally on this Mac.' }}</span><button class="btn primary" type="submit" :disabled="saving">{{ saving ? 'Saving…' : 'Save project' }}</button></footer>
+        <footer class="save-row"><span class="muted">{{ original && policyChanged ? 'Saving will append a policy version.' : 'Configuration is saved locally on this Mac.' }}</span><button class="btn primary" type="submit" :disabled="saving">{{ saving ? 'Saving…' : 'Save billing group' }}</button></footer>
       </form>
       <div class="report-link"><p class="hint">Generate and export reports from the dedicated Billing reports page using your saved settings.</p><button class="btn" @click="store.navigate('billing')">Open billing reports</button></div>
     </template>

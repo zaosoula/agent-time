@@ -3,11 +3,11 @@ function page(){
  const source=readFileSync(new URL('../src/ui/BillingReports.vue',import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!.replace(/^import .*;\n/gm,'');
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const calls:Array<{method:string;params:any}>=[],activated:Array<()=>void>=[];const revision=ref(0);let finish!:(value:any)=>void;
- const store={billingProjectRevision:revision,settingsSection:ref('general'),navigate:(page:string)=>calls.push({method:'navigate',params:page})};
+ const store={billingProjectRevision:revision,settingsSection:ref('general'),openProject:(...params:any[])=>calls.push({method:'open-project',params}),navigate:(page:string)=>calls.push({method:'navigate',params:page})};
  const project={id:'example',name:'Example',policies:[{effectiveFrom:'2026-01-01'}]};
- const request=async(method:string,params:any)=>{calls.push({method,params});if(method==='billing_projects')return{projects:[project]};if(method==='billing_report')return new Promise(resolve=>{finish=resolve;});return null;};
+ const request=async(method:string,params:any)=>{calls.push({method,params});if(method==='billing_projects')return{projects:[project]};if(method==='billing_report_history')return{reports:[{reportId:'historical',projectId:'example',fromDate:'2026-10-01',toDate:'2026-10-02'}],nextHistoryCursor:'9'};if(method==='billing_report')return new Promise(resolve=>{finish=resolve;});return null;};
  const bindings={sessionStorage:{setItem:(key:string,value:string)=>calls.push({method:'saved-setting',params:{key,value}})},computed,ref,onMounted:()=>{},onUnmounted:()=>{},onActivated:(fn:()=>void)=>activated.push(fn),useStore:()=>store,request,humanizeError:String,toast:{success(){}},crypto:{randomUUID},setTimeout:()=>1,clearTimeout:()=>{}};
- const state=new Function(...Object.keys(bindings),js+';return{refresh,selectProject,loadReport,configure,projectId,fromDate,toDate,report,reporting,cursor};')(...Object.values(bindings));
+ const state=new Function(...Object.keys(bindings),js+';return{refresh,selectProject,loadReport,configure,projectId,fromDate,toDate,report,reporting,cursor,view,showSaved,loadHistory,loadSavedReport,history,historyCursor,savedReport,generatedReport,generatedCursor,savedCursor};')(...Object.values(bindings));
  return{state,calls,activated,revision,store,finish:(value:any)=>finish(value)};
 }
 test('dedicated report page generates from saved project settings and retains its result on activation',async()=>{
@@ -20,10 +20,30 @@ test('dedicated report page generates from saved project settings and retains it
  for(const activate of p.activated)activate();assert.equal(p.calls.filter(c=>c.method==='billing_projects').length,1);assert.deepEqual(p.state.report.value,report);
  p.revision.value++;for(const activate of p.activated)activate();await new Promise(resolve=>setTimeout(resolve,0));
  assert.equal(p.calls.filter(c=>c.method==='billing_projects').length,2);assert.deepEqual(p.state.report.value,report);assert.equal(p.state.fromDate.value,'2026-11-06');assert.equal(p.calls.filter(c=>c.method==='billing_report').length,1);
- p.state.configure();assert.deepEqual(p.calls.find(c=>c.method==='saved-setting')?.params,{key:'agent-time.settings-tab',value:'billing'});assert.equal(p.store.settingsSection.value,'billing');assert.equal(p.calls.at(-1)!.method,'navigate');assert.equal(p.calls.at(-1)!.params,'settings');
+ p.state.configure();assert.deepEqual(p.calls.at(-1),{method:'open-project',params:[undefined,'billing','example']});
 });
 
 test('billing configuration retains policy editing but no longer owns report generation',()=>{
  const settings=readFileSync(new URL('../src/ui/BillingSettings.vue',import.meta.url),'utf8');assert(!settings.includes("'billing_report'"));assert(settings.includes('Open billing reports'));assert(settings.includes('Billing policy'));
- const app=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8');assert(app.includes("id: 'billing', title: 'Billing reports'"));assert(app.includes('<KeepAlive :max="9">'));
+ const app=readFileSync(new URL('../src/ui/App.vue',import.meta.url),'utf8');assert(app.includes("id: 'billing', title: 'Billing'"));
+});
+
+test('saved reports browse without disturbing the pending generated report and open by immutable ID',async()=>{
+ const p=page();await p.state.refresh();p.state.fromDate.value='2026-11-01';p.state.toDate.value='2026-11-03';
+ const pending=p.state.loadReport();p.state.showSaved();await Promise.resolve();
+ assert.equal(p.state.history.value.length,1);await p.state.loadSavedReport(p.state.history.value[0]);
+ assert.equal(p.calls.filter(c=>c.method==='billing_report').length,1);
+ const generated={reportId:'new',projectId:'example',fromDate:'2026-11-01',toDate:'2026-11-03',days:[{date:'2026-11-01'}]};
+ p.finish({report:generated,nextCursor:'31'});await pending;
+ assert.deepEqual(p.state.generatedReport.value,generated);assert.equal(p.state.savedReport.value,null);
+ const opening=p.state.loadSavedReport(p.state.history.value[0]);const input=p.calls.at(-1)!.params;
+ assert.equal(input.reportId,'historical');assert.equal(input.fromDate,'2026-10-01');assert.equal(input.progressId,undefined);
+ const historical={reportId:'historical',projectId:'example',fromDate:'2026-10-01',toDate:'2026-10-02',days:[]};p.finish({report:historical,nextCursor:'62'});await opening;
+ assert.deepEqual(p.state.report.value,historical);assert.equal(p.state.savedCursor.value,'62');assert.equal(p.state.generatedCursor.value,'31');assert.equal(p.state.historyCursor.value,'9');
+ p.state.view.value='generate';assert.deepEqual(p.state.report.value,generated);assert.equal(p.state.fromDate.value,'2026-11-01');
+ for(const activate of p.activated)activate();assert.equal(p.calls.filter(c=>c.method==='billing_report').length,2);
+ p.state.view.value='saved';const exporting=p.state.loadReport(false,'csv');assert.equal(p.calls.at(-1)!.params.reportId,'historical');assert.equal(p.calls.at(-1)!.params.cursor,undefined);p.finish({report:historical,nextCursor:null,export:{path:'/synthetic.csv'}});await exporting;
+ await p.state.loadHistory(true);assert.equal(p.calls.at(-1)!.params.historyCursor,'9');assert.equal(p.calls.at(-1)!.params.cursor,undefined);
+ const historyCalls=p.calls.filter(c=>c.method==='billing_report_history').length,retainedRows=p.state.history.value.length;p.state.view.value='generate';p.state.showSaved();await Promise.resolve();assert.equal(p.calls.filter(c=>c.method==='billing_report_history').length,historyCalls);assert.equal(p.state.history.value.length,retainedRows);
+ await p.state.loadHistory();assert.equal(p.calls.filter(c=>c.method==='billing_report_history').length,historyCalls+1);assert.equal(p.calls.at(-1)!.params.historyCursor,undefined);assert.equal(p.state.history.value.length,1);
 });

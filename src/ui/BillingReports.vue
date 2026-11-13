@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {computed,onMounted,onUnmounted,onActivated,ref} from 'vue';
-import type {BillingProject,BillingReport} from '../capture/billing-types.ts';
+import type {BillingProject,BillingReport,BillingReportSummary,BillingHistoryReply} from '../capture/billing-types.ts';
 import type {BillingProgress} from '../capture/billing-progress.ts';
 import {request} from './transport.ts';
 import {useStore} from './store.ts';
@@ -12,7 +12,38 @@ const store=useStore();
 const projects=ref<BillingProject[]>([]),projectId=ref('');
 const loading=ref(true),reporting=ref(false),error=ref('');
 type DisplayReport=Omit<BillingReport,'projectSnapshot'>;
-const report=ref<DisplayReport|null>(null),cursor=ref<string|null>(null),exportPath=ref('');
+const generatedReport=ref<DisplayReport|null>(null),generatedCursor=ref<string|null>(null),generatedExportPath=ref('');
+const view=ref<'generate'|'saved'>('generate');
+const savedReport=ref<DisplayReport|null>(null),savedCursor=ref<string|null>(null),savedExportPath=ref('');
+const history=ref<BillingReportSummary[]>([]),historyCursor=ref<string|null>(null),historyLoading=ref(false),historyLoaded=ref(false),historyReporting=ref(false),historyError=ref('');
+const report=computed(()=>view.value==='saved'?savedReport.value:generatedReport.value);
+const cursor=computed(()=>view.value==='saved'?savedCursor.value:generatedCursor.value);
+const exportPath=computed(()=>view.value==='saved'?savedExportPath.value:generatedExportPath.value);
+const reportBusy=computed(()=>reporting.value||historyReporting.value);
+let historyAttempt=0;
+async function loadHistory(more=false){
+ if(!projectId.value||historyLoading.value)return;
+ const id=projectId.value,attempt=++historyAttempt;historyLoading.value=true;historyError.value='';
+ try{
+  const result=await request<BillingHistoryReply>('billing_report_history',{project:id,...(more&&historyCursor.value?{historyCursor:historyCursor.value}:{})});
+  if(attempt!==historyAttempt||id!==projectId.value)return;
+  history.value=more?[...history.value,...result.reports]:result.reports;historyCursor.value=result.nextHistoryCursor;historyLoaded.value=true;
+ }catch(cause){if(attempt===historyAttempt)historyError.value=humanizeError(cause);}
+ finally{if(attempt===historyAttempt)historyLoading.value=false;}
+}
+function showSaved(){view.value='saved';if(!historyLoaded.value)void loadHistory();}
+async function loadSavedReport(item:BillingReportSummary|DisplayReport,more=false,format:'json'|'csv'|'markdown'='json'){
+ if(reportBusy.value)return;
+ historyReporting.value=true;historyError.value='';
+ try{
+  const result=await request<ReportResponse>('billing_report',{project:item.projectId,fromDate:item.fromDate,toDate:item.toDate,reportId:item.reportId,format,detail:'daily',...(more&&savedCursor.value?{cursor:savedCursor.value}:{})});
+  if(format==='json'){
+   savedReport.value=more&&savedReport.value?{...result.report,days:[...savedReport.value.days,...result.report.days]}:result.report;
+   savedCursor.value=result.nextCursor;savedExportPath.value='';
+  }else savedExportPath.value=result.export?.path||'';
+ }catch(cause){historyError.value=humanizeError(cause);}
+ finally{historyReporting.value=false;}
+}
 const localDate=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const today=localDate(new Date());
 const fromDate=ref(`${today.slice(0,7)}-01`),toDate=ref(today);
@@ -28,12 +59,13 @@ async function refresh(background=false){
  finally{refreshing=false;if(!background)loading.value=false;}
 }
 function selectProject(id:string){
- if(reporting.value||id===projectId.value)return;
- projectId.value=id;report.value=null;cursor.value=null;exportPath.value='';error.value='';
+ if(reportBusy.value||id===projectId.value)return;
+ projectId.value=id;generatedReport.value=null;generatedCursor.value=null;generatedExportPath.value='';error.value='';
+ historyAttempt++;historyLoading.value=false;historyLoaded.value=false;history.value=[];historyCursor.value=null;savedReport.value=null;savedCursor.value=null;savedExportPath.value='';historyError.value='';if(view.value==='saved')void loadHistory();
  const first=projects.value.find(p=>p.id===id)?.policies[0]?.effectiveFrom;
  if(first){fromDate.value=first>`${today.slice(0,7)}-01`?first:`${today.slice(0,7)}-01`;if(toDate.value<fromDate.value)toDate.value=fromDate.value;}
 }
-function configure(){sessionStorage.setItem('agent-time.settings-tab','billing');store.settingsSection.value='billing';store.navigate('settings');}
+function configure(){store.openProject(undefined,'billing',projectId.value||undefined);}
 const countingLabel=(mode:'minutes'|'seconds'|undefined)=>mode==='minutes'?'Minutes per activity block':'Actual seconds';
 const progress = ref<BillingProgress | null>(null);
 const reportOperation = ref('Preparing report');
@@ -57,21 +89,22 @@ onUnmounted(() => { reportAttempt++; stopProgress(); });
 
 type ReportResponse = { report: DisplayReport; nextCursor: string | null; export?: { path: string; format: string } };
 async function loadReport(more = false, format: 'json' | 'csv' | 'markdown' = 'json') {
-  if (!projectId.value || reporting.value) return;
+  if(view.value==='saved'){if(savedReport.value)await loadSavedReport(savedReport.value,more,format);return;}
+  if (!projectId.value || reportBusy.value) return;
   reporting.value = true; error.value = ''; progress.value = null;
   const attempt = ++reportAttempt, progressId = crypto.randomUUID();
   reportOperation.value = more ? 'Loading saved report days' : format !== 'json' ? 'Preparing export' : 'Preparing report';
   watchProgress(progressId, attempt);
   try {
     if (!fromDate.value || !toDate.value || fromDate.value > toDate.value) throw new Error('Choose a valid period with the start date before the end date.');
-    const saved = more || format !== 'json' ? report.value : null;
+    const saved = more || format !== 'json' ? generatedReport.value : null;
     const result = await request<ReportResponse>('billing_report', { project: projectId.value,
       fromDate: saved?.fromDate || fromDate.value, toDate: saved?.toDate || toDate.value, format, detail: 'daily', progressId,
-      ...(saved ? { reportId: saved.reportId } : {}), ...(more && cursor.value ? { cursor: cursor.value } : {}) });
+      ...(saved ? { reportId: saved.reportId } : {}), ...(more && generatedCursor.value ? { cursor: generatedCursor.value } : {}) });
     if (format === 'json') {
-      report.value = more && report.value ? { ...result.report, days: [...report.value.days, ...result.report.days] } : result.report;
-      cursor.value = result.nextCursor; exportPath.value = '';
-    } else exportPath.value = result.export?.path || '';
+      generatedReport.value = more && generatedReport.value ? { ...result.report, days: [...generatedReport.value.days, ...result.report.days] } : result.report;
+      generatedCursor.value = result.nextCursor; generatedExportPath.value = '';
+    } else generatedExportPath.value = result.export?.path || '';
   } catch (cause) { error.value = humanizeError(cause); }
   finally { if (attempt === reportAttempt) { reporting.value = false; stopProgress(); } }
 }
@@ -88,23 +121,37 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
 <template>
   <section class="day-content billing-page">
     <div class="billing-content">
-      <header class="day-heading"><div><h1>Billing reports</h1><p>Calculate project billing, review the evidence, and export a saved report.</p></div><button class="btn" @click="configure">Billing settings</button></header>
+      <header class="day-heading"><div><h1>Billing reports</h1><p>Calculate project billing, review the evidence, and export a saved report.</p></div><button class="btn" @click="configure">Edit policy</button></header>
       <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
       <template v-else>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <div v-if="!projects.length" class="empty-state"><h2>Set up your first billing project</h2><p>Group repositories and choose billing rules in Settings before generating a report.</p><button class="btn primary" @click="configure">Configure billing</button></div>
-        <div v-else class="project-picker"><label for="report-project">Billable project</label><select id="report-project" :value="projectId" :disabled="reporting" @change="selectProject(($event.target as HTMLSelectElement).value)"><option value="">Choose a project…</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select><button class="btn" :disabled="reporting" @click="refresh(true)">Refresh projects</button></div>
-      <section v-if="projectId" class="report-section"><p class="hint">Reports use the saved project settings. Each saved report keeps its original rules and results.</p>
-        <form class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reporting" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reporting" /></label><button class="btn primary" :disabled="reporting">{{ reporting ? 'Working…' : 'Generate report' }}</button></form>
+        <div v-if="!projects.length" class="empty-state"><h2>Set up your first billing project</h2><p>Group repositories and choose billing rules in Projects before generating a report.</p><button class="btn primary" @click="configure">Configure billing</button></div>
+        <div v-else class="project-picker"><label for="report-project">Billable project</label><select id="report-project" :value="projectId" :disabled="reportBusy" @change="selectProject(($event.target as HTMLSelectElement).value)"><option value="">Choose a project…</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select><button class="btn" :disabled="reportBusy" @click="refresh(true)">Refresh projects</button></div>
+      <section v-if="projectId" class="report-section">
+        <nav class="report-actions" aria-label="Billing report views"><button class="btn" :aria-pressed="view==='generate'" @click="view='generate'">Generate</button><button class="btn" :aria-pressed="view==='saved'" @click="showSaved">Saved reports</button></nav>
+        <div v-show="view==='saved'" class="saved-history">
+          <p class="hint">Saved reports keep their original rules and totals, even after a policy changes. Most recently saved first.</p>
+          <button class="btn" :disabled="historyLoading" @click="loadHistory()">Refresh reports</button>
+          <p v-if="historyError" class="error" role="alert">{{ historyError }}</p>
+          <LoadingStatus v-if="historyLoading" label="Loading saved reports" />
+          <p v-if="!historyLoading&&!history.length" class="hint">No saved reports for this project yet. Generate a report to save it here.</p>
+          <ul class="history-list"><li v-for="item in history" :key="item.reportId"><button class="btn" :disabled="reportBusy" @click="loadSavedReport(item)"><strong>{{ item.projectName }} · {{ item.fromDate }} – {{ item.toDate }}</strong><span>Saved {{ new Date(item.createdAt).toLocaleString() }} · {{ duration(item.totals.billableSeconds) }} · {{ item.totals.totalAmount ?? 'Unknown' }} {{ item.currency }}</span><span>{{ (item.countingModes ?? ['seconds']).map(countingLabel).join(' · ') }}</span></button></li></ul>
+          <button v-if="historyCursor" class="btn" :disabled="historyLoading" @click="loadHistory(true)">Load more reports</button>
+          <p v-if="reporting" class="hint">Your new report is still running. You can open saved reports when it finishes.</p>
+          <LoadingStatus v-if="historyReporting" label="Opening saved report" />
+        </div>
+        <p class="hint">Reports use the saved project settings. Each saved report keeps its original rules and results.</p>
+        <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><button class="btn primary" :disabled="reportBusy">{{ reporting ? 'Working…' : 'Generate report' }}</button></form>
         <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
+          <details class="metrics"><summary>Why this total?</summary><dl><dt>Human active</dt><dd>{{ duration(report.totals.humanActiveSeconds) }}</dd><dt>Agent wall time</dt><dd>{{ duration(report.totals.agentWallSeconds) }}</dd><dt>Agent only</dt><dd>{{ duration(report.totals.agentOnlyWallSeconds) }}</dd><dt>Cumulative agents</dt><dd>{{ duration(report.totals.agentRunningSeconds) }}</dd><dt>Shared clock</dt><dd>{{ duration(report.totals.overlapMergedWallSeconds) }}</dd><dt>Raw eligible time</dt><dd>{{ duration(report.totals.rawEligibleSeconds ?? report.totals.eligibleSeconds) }}</dd><dt>Activity counting adjustment</dt><dd>{{ duration(report.totals.countingAdjustmentSeconds ?? 0) }}</dd><dt>Eligible before commercial rounding</dt><dd>{{ duration(report.totals.eligibleSeconds) }}</dd><dt>Commercial rounding adjustment</dt><dd>{{ duration(report.totals.roundingSeconds) }}</dd><dt>Exclusion windows (whole period)</dt><dd>{{ duration(report.totals.excludedSeconds) }}</dd><dt>Unknown coverage (whole period)</dt><dd>{{ duration(report.totals.unknownSeconds) }}</dd><dt>Cross-project overlap</dt><dd>{{ duration(report.totals.crossProjectOverlapSeconds) }}</dd><dt>Known AI cost</dt><dd>{{ amount(report.totals.aiKnownAmount) }}</dd></dl><p class="explanation">{{ report.explanation }}</p></details>
           <p class="hint">Activity counting: {{ (report.countingModes ?? ['seconds']).map(countingLabel).join(' · ') }}. Commercial rounding follows the saved policy for each day.</p>
-          <p class="explanation">{{ report.explanation }}</p>
+
           <div v-if="!report.quality.complete || report.quality.warnings.length" class="quality"><strong>{{ report.quality.complete ? 'Review notes' : 'Incomplete evidence — review before invoicing' }}</strong><ul v-if="report.quality.warnings.length"><li v-for="warning in report.quality.warnings" :key="warning">{{ warning }}</li></ul></div>
-          <details class="metrics"><summary>Measured time &amp; adjustments</summary><dl><dt>Human active</dt><dd>{{ duration(report.totals.humanActiveSeconds) }}</dd><dt>Agent wall time</dt><dd>{{ duration(report.totals.agentWallSeconds) }}</dd><dt>Agent only</dt><dd>{{ duration(report.totals.agentOnlyWallSeconds) }}</dd><dt>Cumulative agents</dt><dd>{{ duration(report.totals.agentRunningSeconds) }}</dd><dt>Shared clock</dt><dd>{{ duration(report.totals.overlapMergedWallSeconds) }}</dd><dt>Raw eligible time</dt><dd>{{ duration(report.totals.rawEligibleSeconds ?? report.totals.eligibleSeconds) }}</dd><dt>Activity counting adjustment</dt><dd>{{ duration(report.totals.countingAdjustmentSeconds ?? 0) }}</dd><dt>Eligible before commercial rounding</dt><dd>{{ duration(report.totals.eligibleSeconds) }}</dd><dt>Commercial rounding adjustment</dt><dd>{{ duration(report.totals.roundingSeconds) }}</dd><dt>Excluded</dt><dd>{{ duration(report.totals.excludedSeconds) }}</dd><dt>Unknown coverage</dt><dd>{{ duration(report.totals.unknownSeconds) }}</dd><dt>Cross-project overlap</dt><dd>{{ duration(report.totals.crossProjectOverlapSeconds) }}</dd><dt>Known AI cost</dt><dd>{{ amount(report.totals.aiKnownAmount) }}</dd></dl></details>
+
           <div class="table-scroll"><table><caption>Daily breakdown</caption><thead><tr><th>Date</th><th>Counting</th><th>Billable</th><th>Time amount</th><th>AI fees</th><th>Total</th></tr></thead><tbody><template v-for="day in report.days" :key="day.date"><tr><th scope="row">{{ day.date }}</th><td>{{ countingLabel(day.countingMode) }}</td><td>{{ duration(day.billableSeconds) }}</td><td>{{ amount(day.timeAmount) }}</td><td>{{ amount(day.aiAmount) }}</td><td>{{ amount(day.totalAmount) }}</td></tr><tr v-if="day.warnings.length"><td colspan="6" class="day-warning">{{ day.warnings.join(' · ') }}</td></tr></template></tbody></table></div>
-          <div class="report-actions"><button v-if="cursor" class="btn" :disabled="reporting" @click="loadReport(true)">Load more days</button><span class="muted">{{ report.days.length }} days shown</span><button class="btn" :disabled="reporting" @click="loadReport(false, 'csv')">Export CSV</button><button class="btn" :disabled="reporting" @click="loadReport(false, 'markdown')">Export Markdown</button></div>
+          <div class="report-actions"><button v-if="cursor" class="btn" :disabled="reportBusy" @click="loadReport(true)">Load more days</button><span class="muted">{{ report.days.length }} days shown</span><button class="btn" :disabled="reportBusy" @click="loadReport(false, 'csv')">Export CSV</button><button class="btn" :disabled="reportBusy" @click="loadReport(false, 'markdown')">Export Markdown</button></div>
           <div v-if="exportPath" class="export-result" role="status"><strong>Export saved</strong><code>{{ exportPath }}</code><button class="btn btn-sm" @click="copyExportPath">Copy path</button><p class="hint">In Finder, press ⇧⌘G and paste this path to find the file.</p></div>
         </template>
       </section>
@@ -114,6 +161,7 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
   </section>
 </template>
 <style scoped>
+.history-list { list-style: none; padding: 0; } .history-list li { margin: 8px 0; } .history-list button { display: grid; gap: 6px; width: 100%; text-align: left; } .history-list span { color: var(--muted); }
 .billing-content { max-width: 1100px; margin-bottom: 32px; }
 h1 { margin: 0 0 8px; } .day-heading p,.hint,.muted { color: var(--muted); line-height: 1.6; }
 .project-picker { display: flex; align-items: center; gap: 12px; margin: 24px 0; } .project-picker select { flex: 1; }

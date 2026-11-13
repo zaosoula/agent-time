@@ -1,7 +1,7 @@
 import type {DatabaseSync} from 'node:sqlite';
 import {isAbsolute} from 'node:path';
 import {projectPathFromWorktree} from './website-resolver.ts';
-import type {BillingProject,BillingReport} from './billing-types.ts';
+import type {BillingProject,BillingReport,BillingHistoryRequest,BillingHistoryReply,BillingReportSummary} from './billing-types.ts';
 
 const object=(value:unknown):Record<string,unknown>=>{if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid billing object');return value as Record<string,unknown>;};
 const text=(value:unknown,max=256):string=>{if(typeof value!=='string'||!value.trim()||value.length>max||/[\u0000-\u001f]/.test(value))throw new Error('Invalid billing text');return value.trim();};
@@ -103,6 +103,24 @@ export class BillingStore{
   this.db.prepare('INSERT OR IGNORE INTO billing_reports VALUES(?,?,?)').run(report.reportId,report.projectId,payload);
   // A competing writer may have won the unique ID after our first read.
   if(this.db.prepare('SELECT payload FROM billing_reports WHERE id=?').get(report.reportId)?.payload!==payload)throw new Error('Billing report is immutable');
+ }
+ listReports(request:BillingHistoryRequest):BillingHistoryReply{
+  if(!this.has('billing_projects'))return {reports:[],nextHistoryCursor:null};
+  const project=this.resolveProject(request.project);
+  if(!this.has('billing_reports'))return {reports:[],nextHistoryCursor:null};
+  const pageSize=request.limit??20;
+  // rowid keyset pagination uses SQLite's existing primary tree, without a migration.
+  // Extract metadata only for the bounded matching page; never deserialize daily evidence.
+  const rows=this.db.prepare(`SELECT rowid AS history_row,
+   json_extract(payload,'$.reportId') reportId,json_extract(payload,'$.projectId') projectId,
+   json_extract(payload,'$.projectName') projectName,json_extract(payload,'$.fromDate') fromDate,
+   json_extract(payload,'$.toDate') toDate,json_extract(payload,'$.createdAt') createdAt,
+   json_extract(payload,'$.currency') currency,json_extract(payload,'$.totals') totals,
+   json_extract(payload,'$.countingModes') countingModes
+   FROM billing_reports WHERE rowid < ? AND project_id = ? ORDER BY rowid DESC LIMIT ?`)
+   .all(request.historyCursor?Number(request.historyCursor):Number.MAX_SAFE_INTEGER,project.id,pageSize+1);
+  return {reports:rows.slice(0,pageSize).map(({history_row,totals,countingModes,...row})=>({...row,totals:JSON.parse(String(totals)),...(countingModes?{countingModes:JSON.parse(String(countingModes))}:{})}) as BillingReportSummary),
+   nextHistoryCursor:rows.length>pageSize?String(rows[pageSize-1]!.history_row):null};
  }
  report(id:string):BillingReport|null{if(!this.has('billing_reports'))return null;const row=this.db.prepare('SELECT payload FROM billing_reports WHERE id=?').get(id);return row?JSON.parse(String(row.payload)) as BillingReport:null;}
 }

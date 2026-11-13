@@ -1,7 +1,7 @@
 use super::{Bridge,pause_deadline};
 use serde_json::{json,Value};
 use std::{sync::{Arc,Condvar,Mutex,atomic::{AtomicBool,Ordering}},time::{Duration,Instant,SystemTime,UNIX_EPOCH},path::PathBuf};
-use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem},tray::{TrayIconBuilder,TrayIconEvent}};
+use tauri::{Emitter,Manager,menu::{Menu,MenuItem,PredefinedMenuItem,Submenu},tray::{TrayIconBuilder,TrayIconEvent}};
 use tauri_plugin_notification::NotificationExt;
 use crate::widget::WidgetPublisher;
 
@@ -128,7 +128,8 @@ pub fn install(app:&tauri::App,bridge:Arc<Bridge>)->tauri::Result<()> {
  let settings=MenuItem::with_id(app,"tray-settings","Settings…",true,None::<&str>)?;
  let usage=MenuItem::with_id(app,"tray-usage","Tokens and limits…",true,None::<&str>)?;
  let quit=MenuItem::with_id(app,"tray-quit","Quit Agent Time",true,None::<&str>)?;
- let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&health,&repair,&usage,&settings,&PredefinedMenuItem::separator(app)?,&quit])?;
+ let troubleshooting=Submenu::with_items(app,"Capture & connections",true,&[&health,&repair])?;
+ let menu=Menu::with_items(app,&[&status,&today,&detail,&tokens,&PredefinedMenuItem::separator(app)?,&toggle,&timed_pause,&dashboard,&usage,&settings,&troubleshooting,&PredefinedMenuItem::separator(app)?,&quit])?;
  TrayIconBuilder::with_id("agent-time").icon(clock_icon()).icon_as_template(true).tooltip("Agent Time").menu(&menu).show_menu_on_left_click(true)
   .on_tray_icon_event(|tray,event|{
    if matches!(event,TrayIconEvent::Click{..}|TrayIconEvent::Enter{..}){

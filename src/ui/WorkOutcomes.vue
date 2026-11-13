@@ -3,12 +3,16 @@ import { computed, onActivated, reactive, ref, watch } from 'vue';
 import { workOutcomeTransport } from './transport.ts';
 import type { WorkOutcomes } from '../capture/work-outcomes.ts';
 import DayPicker from './DayPicker.vue';
+import { usePagePresentation } from './page-presentation.ts';
 import { useStore } from './store.ts';
 import { clock, duration, longDate } from './format.ts';
 import { humanizeError } from './errors.ts';
 import { projectDisplay } from './project-identity.ts';
 
+const viewProps = defineProps<{ active?: boolean; showDatePicker?: boolean }>();
+const presented = usePagePresentation();
 const store = reactive(useStore());
+const active = computed(() => presented.value && (viewProps.active ?? (store.page === 'outcomes' || store.page === 'reports' && store.reportsSection === 'evidence')));
 const props = reactive({
   date: computed(() => store.selectedDate),
   project: computed(() => store.project),
@@ -20,7 +24,7 @@ const loading = ref(false),
 let generation = 0;
 let requestedDate = '', committedDate = '';
 function refreshDate() {
-  if (store.page !== 'outcomes' || loading.value && requestedDate === props.date || outcomes.value && committedDate === props.date || error.value && requestedDate === props.date) return;
+  if (!active.value || loading.value && requestedDate === props.date || outcomes.value && committedDate === props.date || error.value && requestedDate === props.date) return;
   void load();
 }
 onActivated(refreshDate);
@@ -52,21 +56,21 @@ async function load() {
     if (current === generation) loading.value = false;
   }
 }
-watch(() => props.date, refreshDate, { immediate: true });
+watch([() => props.date, active], refreshDate, { immediate: true });
 </script>
 
 <template>
   <section class="day-content outcomes-page">
     <div class="day-heading">
       <div>
-        <h1>Work evidence</h1>
+        <h2>Work evidence</h2>
         <p>
           {{ longDate(store.selectedDate) }} · Git commits near this day{{
             store.project === 'all' ? '' : ` in ${projectDisplay(store.project, store.projects)}`
           }}
         </p>
       </div>
-      <DayPicker />
+      <DayPicker v-if="viewProps.showDatePicker !== false" />
     </div>
   <div class="work-outcomes card">
     <div class="body">
@@ -124,6 +128,8 @@ watch(() => props.date, refreshDate, { immediate: true });
 </template>
 
 <style scoped>
+.day-heading h2{margin:0 0 8px;font-size:var(--text-lg);letter-spacing:-.3px}
+
 .work-outcomes {
   margin: 16px 0;
   border: 1px solid var(--border);

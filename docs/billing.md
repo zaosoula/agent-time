@@ -1,6 +1,6 @@
 # Project billing
 
-Configure projects and policies in **Settings → Billing**, then generate and export reports from **Billing reports** in the main sidebar. Reports keep their selected project, dates and calculation while you navigate. SQLite is the source of truth: `billing_projects`, immutable `billing_policies` and immutable `billing_reports`. No billing configuration file is loaded. Archive backup, import, compaction and restore preserve these records. Old databases acquire the additive tables when the updated app opens; existing capture events and review decisions are untouched.
+Configure billing groups and policies in **Projects → Billing**, then generate and export reports from **Billing** in the main sidebar. The **Saved reports** view lists immutable snapshots; opening or exporting one uses its original rules and results without recalculation. Reports keep their selected project, dates and calculation while you navigate. SQLite is the source of truth: `billing_projects`, immutable `billing_policies` and immutable `billing_reports`. No billing configuration file is loaded. Archive backup, import, compaction and restore preserve these records. Old databases acquire the additive tables when the updated app opens; existing capture events and review decisions are untouched.
 
 ## A billable project can contain several repositories
 

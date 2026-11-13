@@ -1,7 +1,7 @@
 import {test} from 'node:test';import assert from 'node:assert/strict';
 import {mkdtempSync,rmSync,readFileSync} from 'node:fs';import {join} from 'node:path';import {tmpdir} from 'node:os';
 import {EventStore} from '../src/capture/store.ts';import {makeEvent} from '../src/capture/events.ts';
-import {BillingStore} from '../src/capture/billing-store.ts';import {billingForProject,billingProjects} from '../src/capture/billing-service.ts';
+import {BillingStore} from '../src/capture/billing-store.ts';import {billingForProject,billingProjects,billingReportHistory,validateBillingHistoryRequest} from '../src/capture/billing-service.ts';
 import {billingDayStart} from '../src/capture/billing-calendar.ts';import type {BillingProject} from '../src/capture/billing-types.ts';
 const project:BillingProject={id:'caex',name:'CAEX',aliases:['client-caex'],sources:{repositories:['/fixture/caex','/fixture/infra'],workspaceIds:[],reportedProjects:['CAEX']},timezone:'Europe/Paris',policies:[{id:'v1',effectiveFrom:'2026-01-01',basis:'overlapMergedWall',countingMode:'seconds',currency:'EUR',hourlyRate:'100.00',agentOnlyHourlyRate:null,agentWeight:'1',rounding:{minutes:1,mode:'nearest',scope:'period'},dailyCapMinutes:null,presenceWindowMinutes:null,aiFees:{mode:'none'}}]};
 const fixture=()=>{const output=mkdtempSync(join(tmpdir(),'at-billing-service-')),store=new EventStore(join(output,'events.sqlite'));new BillingStore(store.database).saveProject(project);return {output,store};};
@@ -138,4 +138,28 @@ test('an unmatched sleep marker does not exclude captured tools but explicit loc
  const r=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'}).report;
  assert.equal(r.totals.agentWallSeconds,120);assert.equal(r.totals.billableSeconds,120);assert.equal(r.totals.excludedSeconds,200);
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('saved history is paginated per resolved project and keeps immutable results after policy changes',()=>{
+ const {output,store}=fixture();try{
+  const billing=new BillingStore(store.database),reports=[];
+  for(const date of ['2026-10-01','2026-10-02','2026-10-03'])reports.push(billingForProject(output,{project:'caex',fromDate:date,toDate:date,detail:'daily'}).report);
+  const other=billing.saveProject({...project,id:'other',name:'Other',aliases:[],sources:{repositories:[],workspaceIds:[],reportedProjects:[]}});
+  billingForProject(output,{project:other.id,fromDate:'2026-10-01',toDate:'2026-10-01'});
+  const before=store.database.prepare('SELECT count(*) n FROM sqlite_master').get()!.n;
+  const first=billingReportHistory(output,{project:'client-caex',limit:2});assert.deepEqual(first.reports.map(r=>r.reportId),reports.slice(1).reverse().map(r=>r.reportId));assert.ok(first.nextHistoryCursor);
+  assert(!('days' in first.reports[0]!));assert(!('projectSnapshot' in first.reports[0]!));
+  const last=billingReportHistory(output,{project:'caex',limit:2,historyCursor:first.nextHistoryCursor!});assert.equal(last.reports.length,1);assert.equal(last.nextHistoryCursor,null);assert.equal(last.reports[0]!.reportId,reports[0]!.reportId);
+  assert.equal(store.database.prepare('SELECT count(*) n FROM sqlite_master').get()!.n,before);
+  const original=reports[0]!,request={project:'caex',fromDate:original.fromDate,toDate:original.toDate,reportId:original.reportId,detail:'daily' as const,format:'csv' as const};
+  const initial=billingForProject(output,request),bytes=readFileSync(initial.export!.path,'utf8');
+  const current=billing.resolveProject('caex');billing.saveProject({...current,name:'Renamed',policies:[...current.policies,{...current.policies[0]!,id:'higher-rate',hourlyRate:'999',countingMode:'minutes'}]},current.revision);
+  const reopened=billingForProject(output,request);assert.deepEqual(reopened.report,original);assert.equal(readFileSync(reopened.export!.path,'utf8'),bytes);
+  assert.equal(billingReportHistory(output,{project:'caex'}).reports.at(-1)!.projectName,'CAEX');
+  assert.throws(()=>billingReportHistory(output,{project:'unknown'}),/Unknown billing project/);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+test('history rejects unrelated fields, invalid cursor and unbounded page sizes',()=>{
+ for(const input of [{project:''},{project:'x',limit:0},{project:'x',limit:51},{project:'x',limit:1.5},{project:'x',cursor:'1'},{project:'x',historyCursor:'0'},{project:'x',historyCursor:'9007199254740992'},{project:'x',historyCursor:'../1'}])assert.throws(()=>validateBillingHistoryRequest(input));
+ assert.deepEqual(validateBillingHistoryRequest({project:'x',historyCursor:'12',limit:50}),{project:'x',historyCursor:'12',limit:50});
 });

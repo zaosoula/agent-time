@@ -7,23 +7,29 @@ defineProps<{ execution: AgentExecution }>();
 <template>
   <dl class="execution-detail">
     <dt>Agent</dt>
-    <dd>{{ execution.session.provider || 'Unknown' }}{{ execution.session.agentId ? ` · ${execution.session.agentId}` : '' }}</dd>
+    <dd>{{ execution.session.provider || 'Unknown' }}</dd>
     <dt>Measured time</dt>
     <dd>{{ duration(execution.seconds) }} · tool time {{ duration(execution.session.observedSeconds) }}</dd>
     <dt>Observed window</dt>
     <dd>{{ execution.start === null || execution.end === null ? 'No activity on this day' : `${clock(execution.start)}–${clock(execution.end)}` }}</dd>
     <dt>State</dt>
     <dd>{{ execution.session.state }} · evidence {{ execution.session.proof }}</dd>
+  </dl>
+  <details class="execution-technical"><summary>Technical details</summary><dl class="execution-detail">
+    <dt>Agent identity</dt><dd>{{ execution.session.agentId || 'Main agent' }}</dd>
+    <dt>Workspace</dt><dd>{{ execution.session.cwd || execution.session.workspaceId || 'Not linked' }}</dd>
     <template v-if="execution.session.runId || execution.session.taskId">
       <dt>Orchestration</dt>
       <dd>{{ execution.session.runId || 'No run' }} · {{ execution.session.taskId || 'No task' }}</dd>
     </template>
     <dt>Provider session</dt>
     <dd>{{ execution.session.sessionId || 'Not linked' }}</dd>
-  </dl>
+  </dl></details>
 </template>
 
 <style scoped>
+.execution-technical{margin:10px;color:var(--muted);font-size:var(--text-sm)}summary{cursor:pointer}
+
 .execution-detail { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 10px 16px; margin: 12px 10px; font-size: var(--text-sm); line-height: 1.5; }
 dt { color: var(--muted); }
 dd { margin: 0; overflow-wrap: anywhere; }

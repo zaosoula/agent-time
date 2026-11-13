@@ -1,13 +1,13 @@
 import {validBillingProgressId} from './billing-progress.ts';
 import {validateBillingProject} from './billing-store.ts';
-import {validateBillingRequest} from './billing-service.ts';
+import {validateBillingRequest,validateBillingHistoryRequest} from './billing-service.ts';
 import { object } from './orca.ts';
 import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {MAX_DECISION_PAIRS,validateManualNote,type ManualNote} from './store.ts';
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string,includeBacklog?:boolean):unknown;markDayReview?(date:string):unknown;}
-interface Controller {billingReportProgress?(id:string):unknown;billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
+interface Controller {billingReportHistory?(request:ReturnType<typeof validateBillingHistoryRequest>):unknown;billingReportProgress?(id:string):unknown;billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
 interface Controller {reportedWork?(date:string):unknown;stopReportedTimer?(taskCounterId:string,discard?:boolean):unknown;}
 interface Controller {claudeStatusLineStatus?():unknown;installClaudeStatusLine?(targetId:string):unknown;removeClaudeStatusLine?(targetId:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;versionedSummary?(date:string,maxAgeMs?:number,since?:string):unknown;weeklyReview?(startDate:string):unknown;workOutcomes?(date:string):Promise<unknown>;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;mcpStatus?():unknown;installMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;removeMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
@@ -21,6 +21,10 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='billing_report_progress'){
       if(!controller.billingReportProgress||Object.keys(params).length!==1||!validBillingProgressId(params.progressId))throw new Error('Invalid billing progress request');
       return {id,result:controller.billingReportProgress(params.progressId)};
+    }
+    if(request.method==='billing_report_history'){
+      if(!controller.billingReportHistory)throw new Error('Billing history unavailable');
+      return {id,result:controller.billingReportHistory(validateBillingHistoryRequest(params))};
     }
     if(request.method==='billing_projects'){
       if(!controller.billingProjects||Object.keys(params).length)throw new Error('Invalid billing project list request');

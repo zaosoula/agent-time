@@ -6,9 +6,10 @@ import { useStore } from './store.ts';
 import { humanizeError } from './errors.ts';
 import { clearToast, toast } from './toast.ts';
 
+const props = defineProps<{ project?: string }>();
 const store = useStore();
 const state = computed(() => store.websiteProjects.value);
-const selected = ref(''),
+const selected = ref(props.project && props.project !== 'all' ? props.project : ''),
   search = ref(''),
   pattern = ref(''),
   preview = ref(''),
@@ -87,16 +88,18 @@ onMounted(async () => {
 });
 
 async function save(value = pattern.value) {
-  if (!selected.value) return;
+  if (!selected.value || busy.value) return;
+  const project = selected.value;
   busy.value = true;
   try {
-    store.websiteProjects.value = await transport.setWebsiteRule(value, selected.value);
-    pattern.value = '';
-    preview.value = '';
-    impact.value = null;
-    error.value = '';
+    store.websiteProjects.value = await transport.setWebsiteRule(value, project);
+    if (projectDrafts.get(project) === value) projectDrafts.delete(project);
+    if (selected.value === project) {
+      if (pattern.value === value) pattern.value = '';
+      clearPreview(); error.value = '';
+    }
     clearToast('website-rules');
-    toast.success(`Future visits to ${value} will count toward ${label(selected.value)}.`);
+    toast.success(`Future visits to ${value} will count toward ${label(project)}.`);
   } catch (cause) {
     toast.error(cause, 'website-rules');
   } finally {
@@ -108,7 +111,15 @@ function clearPreview() {
   preview.value = '';
   impact.value = null;
 }
-watch(selected, clearPreview);
+const projectDrafts = new Map<string, string>();
+watch(selected, (next, previous) => {
+  projectDrafts.set(previous, pattern.value);
+  pattern.value = projectDrafts.get(next) || '';
+  clearPreview();
+});
+watch(() => props.project, (path) => {
+  if (path && path !== 'all' && path !== selected.value) selected.value = path;
+});
 async function showPreview(value = pattern.value) {
   const request = ++previewRequest,
     project = selected.value;
@@ -158,8 +169,8 @@ function openPath() {
 }
 </script>
 <template>
-  <div class="project-settings">
-    <aside class="project-rail" aria-label="Tracked projects">
+  <div :class="['project-settings', { scoped: props.project && props.project !== 'all' }]">
+    <aside v-if="!props.project || props.project === 'all'" class="project-rail" aria-label="Tracked projects">
       <label class="project-search"
         ><Search :size="14" /><input
           v-model="search"
@@ -319,6 +330,7 @@ function openPath() {
   background: var(--panel);
   overflow: hidden;
 }
+.project-settings.scoped { grid-template-columns: minmax(0, 1fr); }
 .project-rail {
   display: flex;
   flex-direction: column;

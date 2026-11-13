@@ -29,17 +29,14 @@ import { dateString } from './format.ts';
 import { projectColor, projectDisplay } from './project-identity.ts';
 import BillingReportsPage from './BillingReports.vue';
 import BetaUpdates from './BetaUpdates.vue';
-import CaptureHealthPage from './CaptureHealth.vue';
 import CaptureSettingsPage from './CaptureSettings.vue';
 import ExportDialog from './ExportDialog.vue';
 import HookSetup from './HookSetup.vue';
 import ReviewPage from './ReviewPage.vue';
-import SessionInspector from './SessionInspector.vue';
 import Toasts from './Toasts.vue';
 import TodayPage from './TodayPage.vue';
-import UsagePage from './UsagePage.vue';
-import WeeklyReview from './WeeklyReview.vue';
-import WorkOutcomes from './WorkOutcomes.vue';
+import ReportsPage from './ReportsPage.vue';
+import ProjectsPage from './ProjectsPage.vue';
 import appIcon from './icon.svg';
 
 const betaUpdatesEnabled = import.meta.env.VITE_BETA_UPDATES === '1';
@@ -53,25 +50,22 @@ const busy = computed(() => captureBusy.value || settingsBusy.value);
 const pages: Array<{ id: Page; title: string; icon: typeof CalendarDays }> = [
   { id: 'today', title: 'Home', icon: CalendarDays },
   { id: 'review', title: 'Review', icon: ClipboardCheck },
-  { id: 'sessions', title: 'Agent sessions', icon: Layers3 },
-  { id: 'weekly', title: 'Weekly review', icon: BarChart3 },
-  { id: 'billing', title: 'Billing reports', icon: ReceiptText },
-  { id: 'outcomes', title: 'Work evidence', icon: GitCommitHorizontal },
-  { id: 'health', title: 'Capture health', icon: Activity },
-  { id: 'usage', title: 'Tokens & limits', icon: Bot },
-  { id: 'settings', title: 'Settings', icon: Settings2 },
+  { id: 'sessions', title: 'Agents', icon: Layers3 },
+  { id: 'projects', title: 'Projects', icon: Folder },
+  { id: 'billing', title: 'Billing', icon: ReceiptText },
+  { id: 'reports', title: 'Reports', icon: BarChart3 },
 ];
-const pageTitle = computed(() => pages.find((item) => item.id === store.page)?.title || 'Home');
-const dayPages: Page[] = ['today', 'sessions', 'review', 'outcomes'];
-/** Pages that respect the sidebar's project filter. */
-const projectPages: Page[] = ['today', 'sessions', 'outcomes'];
-const showsProject = computed(() => projectPages.includes(store.page));
+const pageTitle = computed(() => store.page === 'settings' ? 'Settings' : pages.find((item) => item.id === store.page)?.title || 'Home');
+const dayPages: Page[] = ['today', 'sessions', 'review'];
+const projectPages: Page[] = ['today', 'sessions', 'projects'];
+const showsProject = computed(() => projectPages.includes(store.page) || store.page === 'reports' && store.reportsSection === 'evidence');
+const activityFilter = computed(() => store.page === 'today' || store.page === 'sessions');
 
 // ---- Navigation ---------------------------------------------------------------------------
 function navigate(destination: Page, nextProject?: string) {
   store.navigate(destination, nextProject);
 }
-// Keep DOM scroll positions alongside the nine cached page instances. This
+// Keep DOM scroll positions alongside the seven cached workspace instances. This
 // also covers deep links and tray navigation, which can change the page directly.
 const pageScroll = new Map<Page, ReturnType<typeof capturePageScroll>>();
 watch(() => store.page, (next, previous) => {
@@ -131,7 +125,7 @@ const dismissedBanners = ref<Record<string, boolean>>({});
 const hookBannerKey = computed(() => `hooks:${store.outdatedHooks.map((target) => target.id).join('|')}`);
 const sourceBannerKey = computed(() => `sources:${store.sourceProblems.map((source) => source.id).join('|')}`);
 const storagePressure = computed(()=>store.status?.storageCare?.paused?store.status.storageCare.pressure:undefined);
-function openStorage(){sessionStorage.setItem('agent-time.settings-tab','data');store.settingsSection='data';navigate('settings');}
+function openStorage(){store.openSettings('data');}
 const pollProblem = computed(() => store.pollError || store.status?.lastError || '');
 function retry() {
   void store.refreshStatus();
@@ -150,7 +144,8 @@ async function listenNavigation() {
       navigate('health');
       relaunchHookSetup();
     } else if(event.payload==='storage')openStorage();
-    else if (['settings', 'today', 'usage', 'health', 'review'].includes(event.payload))
+    else if (event.payload === 'usage') store.openUsageLimits();
+    else if (['settings', 'today', 'health', 'review'].includes(event.payload))
       navigate(event.payload as Page);
   });
   const disposeRestart = await listen<string | null>('collector-restarted', (event) => {
@@ -264,7 +259,7 @@ onUnmounted(() => {
             v-for="name in store.projects"
             :key="name"
             :class="['project-row', { selected: store.project === name && showsProject }]"
-            @click="navigate(showsProject ? store.page : 'today', name)"
+            @click="store.openProject(name, 'overview')"
           >
             <span class="project-dot" :style="{ background: projectColor(name) }"></span>
             <span :title="name">{{ projectDisplay(name, store.projects) }}</span>
@@ -273,6 +268,7 @@ onUnmounted(() => {
           <p v-else-if="!store.projects.length" class="sidebar-empty">Projects appear when activity is recorded.</p>
         </div>
         <div class="sidebar-footer">
+          <button :class="['nav-row',{active:store.page==='settings'}]" :aria-current="store.page==='settings'?'page':undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
           <button
             class="collector-line capture-status-link"
             @click="store.captureAttention ? repairCapture() : navigate('health')"
@@ -295,6 +291,8 @@ onUnmounted(() => {
             <strong v-else>{{ pageTitle }}</strong>
           </div>
           <div class="toolbar-actions">
+            <select v-if="activityFilter" class="toolbar-project" :value="store.project" aria-label="Filter activity by project" @change="navigate(store.page,($event.target as HTMLSelectElement).value)"><option value="all">All projects</option><option v-for="path in store.projects" :key="path" :value="path">{{ projectDisplay(path,store.projects) }}</option></select>
+            <button v-if="store.page==='sessions'" class="btn btn-sm" @click="store.openUsageLimits()"><Bot :size="14" /> Account limits</button>
             <TooltipRoot v-if="dayPages.includes(store.page)">
               <TooltipTrigger as-child>
                 <button class="icon-button" aria-label="Export this day as CSV" @click="exportOpen = true">
@@ -371,8 +369,8 @@ onUnmounted(() => {
             <X :size="14" />
           </button>
         </div>
-        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'outcomes'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
-        <KeepAlive :max="9">
+        <LoadingStatus v-if="!store.summaryLoaded && ['today', 'sessions', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
+        <KeepAlive :max="7">
           <TodayPage
             v-if="store.page === 'today' || store.page === 'sessions'"
             :key="store.page"
@@ -383,19 +381,18 @@ onUnmounted(() => {
           />
           <ReviewPage v-else-if="store.page === 'review'" key="review" data-page-context="review" />
           <BillingReportsPage v-else-if="store.page === 'billing'" key="billing" data-page-context="billing" />
-          <WeeklyReview v-else-if="store.page === 'weekly'" key="weekly" data-page-context="weekly" />
-          <WorkOutcomes v-else-if="store.page === 'outcomes'" key="outcomes" data-page-context="outcomes" />
-          <UsagePage v-else-if="store.page === 'usage'" key="usage" data-page-context="usage" :status="store.status" />
+          <ProjectsPage v-else-if="store.page === 'projects'" key="projects" data-page-context="projects" />
+          <ReportsPage v-else-if="store.page === 'reports'" key="reports" data-page-context="reports" />
           <CaptureSettingsPage
-            v-else-if="store.page === 'settings'"
+            v-else
             key="settings"
             data-page-context="settings"
             :status="store.status"
             :busy="busy"
             @change="updateSettings"
             @error="settingsError"
+            @review-site="reviewSite"
           />
-          <CaptureHealthPage v-else key="health" data-page-context="health" :status="store.status" :issues="store.issues" @review-site="reviewSite" />
         </KeepAlive>
 
         <footer class="statusbar">
@@ -413,7 +410,6 @@ onUnmounted(() => {
         </footer>
         <ExportDialog v-model:open="exportOpen" />
       </main>
-      <SessionInspector v-if="store.page === 'today' || store.page === 'sessions'" />
     </div>
     <Toasts />
   </TooltipProvider>

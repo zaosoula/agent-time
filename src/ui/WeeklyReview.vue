@@ -37,7 +37,7 @@ onMounted(() => {
     /* Keep goals optional when local storage is unavailable. */
   }
   refreshTimer = setInterval(() => {
-    if (windowVisible.value && store.page === 'weekly' && !loading.value) void load();
+    if (windowVisible.value && (store.page === 'weekly' || store.page === 'reports' && store.reportsSection === 'time') && !loading.value) void load();
   }, 60_000);
 });
 onUnmounted(() => clearInterval(refreshTimer));
@@ -64,7 +64,7 @@ let requestedContext = '', committedContext = '';
 function currentContext() { return `${monday.value}:${store.reviewRevision}`; }
 function refreshContext() {
   const context = currentContext();
-  if (store.page !== 'weekly' || loading.value && requestedContext === context || review.value && committedContext === context || error.value && requestedContext === context) return;
+  if (!(store.page === 'weekly' || store.page === 'reports' && store.reportsSection === 'time') || loading.value && requestedContext === context || review.value && committedContext === context || error.value && requestedContext === context) return;
   void load();
 }
 onActivated(refreshContext);
@@ -120,7 +120,7 @@ function exportReviewed() {
   <section class="day-content weekly-page">
     <div class="day-heading">
       <div>
-        <h1>Weekly review</h1>
+        <h2>Time report</h2>
         <p>{{ shortDate(monday) }} – {{ shortDate(weekEnd) }}</p>
       </div>
       <div class="date-controls">
@@ -254,6 +254,8 @@ function exportReviewed() {
   </section>
 </template>
 <style scoped>
+.day-heading h2{margin:0 0 8px;font-size:var(--text-lg);letter-spacing:-.3px}
+
 .weekly-review {
   margin: 16px 0;
   border: 1px solid var(--border);

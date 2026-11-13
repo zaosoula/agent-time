@@ -10,10 +10,11 @@ import { windowVisible } from './polling.ts';
 import { age as formatAge, preciseClock } from './format.ts';
 import { humanizeError } from './errors.ts';
 
-const props = defineProps<{ status: CaptureStatus | null; issues: string[] }>();
+const props = defineProps<{ status: CaptureStatus | null; issues: string[]; active?: boolean }>();
 const emit = defineEmits<{ reviewSite: [key: string] }>();
 // Health is polled by the shared store (every 5s while this page is open).
 const store = useStore();
+const healthActive = computed(() => props.active ?? (store.page.value === 'health' || (store.page.value === 'settings' && store.settingsSection.value === 'connections' && store.connectionsSection.value === 'health')));
 const snapshot = computed<CaptureHealth | null>(() => store.captureHealth.value);
 const now = computed(() => store.now.value);
 const error = ref(''),
@@ -297,14 +298,13 @@ async function saveDiagnostics() {
   }
 }
 onMounted(() => {
-  void refreshRecovery();
   recoveryPoller = setInterval(() => {
-    if (windowVisible.value && store.page.value === 'health') void refreshRecovery();
+    if (windowVisible.value && healthActive.value) void refreshRecovery();
   }, 30000);
 });
-watch(windowVisible, (shown) => {
-  if (shown && store.page.value === 'health') void refreshRecovery();
-});
+watch([windowVisible, healthActive], ([shown, active]) => {
+  if (shown && active) void refreshRecovery();
+}, { immediate: true });
 onUnmounted(() => {
   unmounted = true;
   clearInterval(recoveryPoller);
@@ -318,6 +318,8 @@ onUnmounted(() => {
           <div class="eyebrow"><Radio :size="13" /> LIVE MONITOR</div>
           <h1>Capture health</h1>
           <p>See what Agent Time is recording as it happens.</p>
+          <details class="support-details">
+            <summary>Diagnostics &amp; support</summary>
           <button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button
           ><small v-if="diagnosticMessage" role="status">{{ diagnosticMessage }}</small>
           <div v-if="diagnosticPreview" class="diagnostic-preview">
@@ -325,6 +327,7 @@ onUnmounted(() => {
             <button @click="copyDiagnostics">Copy reviewed summary</button
             ><button v-if="native" @click="saveDiagnostics">Save redacted support bundle…</button>
           </div>
+          </details>
         </div>
         <div :class="['live-badge', { paused: status && !status.running }]">
           <span class="pulse"></span
@@ -559,6 +562,8 @@ onUnmounted(() => {
   </section>
 </template>
 <style scoped>
+.support-details { margin-top: 12px; font-size: var(--text-sm); }
+.support-details summary { cursor: pointer; color: var(--muted); }
 .recovery-list {
   display: grid;
   gap: 8px;

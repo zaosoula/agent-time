@@ -12,7 +12,7 @@ import {calculateBilling,renderBillingExport} from './billing-engine.ts';
 import {billingDateRange,billingDayStart,billingLocalDate,validateBillingDate,nextBillingDate} from './billing-calendar.ts';
 import {snapshot,agentFilteredIntervals,attributedIntervals,coverage,timeForProjectSet,snapshotSettings,type Snapshot} from '../mcp/data.ts';
 import {agentSessionKey} from './session-identity.ts';
-import type {BillingProject,BillingReport,BillingDayInput,BillingSpan} from './billing-types.ts';
+import type {BillingProject,BillingReport,BillingDayInput,BillingSpan,BillingHistoryRequest,BillingHistoryReply} from './billing-types.ts';
 import type {CaptureEvent} from './events.ts';
 
 export interface BillingRequest {project:string;fromDate:string;toDate:string;format?:'json'|'csv'|'markdown';detail?:'summary'|'daily';reportId?:string;cursor?:string;progressId?:string;}
@@ -26,6 +26,19 @@ export function validateBillingRequest(value:unknown):BillingRequest{
  if(p.format!==undefined&&!['json','csv','markdown'].includes(String(p.format))||p.detail!==undefined&&!['summary','daily'].includes(String(p.detail))||p.reportId!==undefined&&(typeof p.reportId!=='string'||! /^[a-f0-9-]{36}$/i.test(p.reportId))||p.cursor!==undefined&&(typeof p.cursor!=='string'||! /^\d{1,7}$/.test(p.cursor)||!p.reportId))throw new Error('Invalid billing format, report ID or page cursor');
  if(p.progressId!==undefined&&!validBillingProgressId(p.progressId))throw new Error('Invalid billing progress ID');
  return p as unknown as BillingRequest;
+}
+export function validateBillingHistoryRequest(value:unknown):BillingHistoryRequest{
+ if(!value||typeof value!=='object'||Array.isArray(value))throw new Error('Invalid billing history request');
+ const p=value as Record<string,unknown>;
+ if(Object.keys(p).some(k=>!['project','historyCursor','limit'].includes(k))||typeof p.project!=='string'||!p.project.trim()||p.project.length>4096||/[\u0000-\u001f]/.test(p.project)
+  ||p.historyCursor!==undefined&&(typeof p.historyCursor!=='string'||!/^[1-9]\d{0,15}$/.test(p.historyCursor)||!Number.isSafeInteger(Number(p.historyCursor)))
+  ||p.limit!==undefined&&(!Number.isInteger(p.limit)||Number(p.limit)<1||Number(p.limit)>50))throw new Error('Invalid billing history project, cursor or limit');
+ return p as unknown as BillingHistoryRequest;
+}
+export function billingReportHistory(output:string,value:BillingHistoryRequest):BillingHistoryReply{
+ const request=validateBillingHistoryRequest(value);
+ if(!existsSync(join(output,'events.sqlite')))return {reports:[],nextHistoryCursor:null};
+ const db=open(output);try{return new BillingStore(db).listReports(request);}finally{db.close();}
 }
 export function billingProjects(output:string){
  if(!existsSync(join(output,'events.sqlite')))return {projects:[],knownSources:[]};const db=open(output);
@@ -116,7 +129,7 @@ function reply(report:BillingReport,request:BillingRequest,output:string):Billin
  return response;
 }
 export function billingForProject(output:string,value:BillingRequest,onProgress?:(progress:BillingProgress)=>void):BillingReply{
- const request=validateBillingRequest(value),db=open(output,false);
+ const request=validateBillingRequest(value),db=open(output,Boolean(request.reportId));
  try{
   const store=new BillingStore(db),project=store.resolveProject(request.project);
   if(request.reportId){const report=store.report(request.reportId);if(!report||report.projectId!==project.id||report.fromDate!==request.fromDate||report.toDate!==request.toDate)throw new Error('Saved billing report does not match the requested project or period');return reply(report,request,output);}

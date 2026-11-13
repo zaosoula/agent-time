@@ -24,6 +24,7 @@ const emit = defineEmits<{
 }>();
 const store = reactive(useStore());
 const root = ref<HTMLElement | null>(null);
+const bulkPicker = ref<HTMLElement | null>(null);
 
 const choices = ref<Record<string, string>>({}),
   error = ref(''),
@@ -139,6 +140,20 @@ function selectApp(app:ReviewAppSection,checked:boolean){
 function selectContext(context:ReviewContextGroup,checked:boolean){
   if(pending.value)return;
   for(const group of contextMeta.value.get(context.key)!.eligible)selectedGroups.value[id(group)]=checked;
+}
+/** Prepare only this group's eligible visits; the existing Assign button confirms the change. */
+async function beginContextAssignment(context: ReviewContextGroup) {
+  if (pending.value) return;
+  const current = allContexts.value.find(item => item.key === context.key);
+  const eligible = current ? reviewCheckState(current.groups, {}).eligible : [];
+  if (!eligible.length) return;
+  selectedGroups.value = Object.fromEntries(eligible.map(group => [id(group), true]));
+  bulkProject.value = '';
+  focused.value = context.key;
+  await nextTick();
+  const picker = bulkPicker.value?.querySelector<HTMLElement>('button[aria-haspopup="listbox"]');
+  picker?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+  picker?.focus({ preventScroll: true });
 }
 function selectVisible(){
   if(pending.value)return;
@@ -516,7 +531,6 @@ function isOpen(group: HumanReviewGroup) {
 }
 function toggleOpen(group: HumanReviewGroup) {
   openRows.value[id(group)] = !isOpen(group);
-  if (!openRows.value[id(group)] && splitDraft.value?.key === id(group)) splitDraft.value = null;
 }
 function shortDetail(group: HumanReviewGroup) {
   const detail = group.detail || '';
@@ -581,7 +595,10 @@ async function saveSplit(group: HumanReviewGroup) {
                 <div class="review-main">
                   <strong class="app-review-duration">{{ duration(context.seconds) }}</strong>
                   <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="shortDetail(context.groups[0]!)"> · {{ shortDetail(context.groups[0]!) }}</template><template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
+                  <div class="review-context-project">
                   <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="reviewIsAssigned(context.groups[0]!)" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
+                  <button v-if="contextMeta.get(context.key)!.eligible.length" class="btn btn-sm review-context-assign" :disabled="Boolean(pending)" :aria-label="`${context.groups.some(reviewIsAssigned)?'Change project for':'Assign'} ${context.label} group, ${contextMeta.get(context.key)!.eligible.length} eligible visits`" @click="beginContextAssignment(context)">{{ context.groups.some(reviewIsAssigned)?'Change project':'Assign group' }}</button>
+                  </div>
                   <label class="review-app-check"><input type="checkbox" :checked="contextMeta.get(context.key)!.checked" :indeterminate="contextMeta.get(context.key)!.partial" :disabled="Boolean(pending)||!contextMeta.get(context.key)!.eligible.length" :aria-label="`Select ${context.label} group in ${app.label}`" @change="selectContext(context,($event.target as HTMLInputElement).checked)" /></label>
                 </div>
               </div>
@@ -606,7 +623,6 @@ async function saveSplit(group: HumanReviewGroup) {
   <ProjectPicker :model-value="selected(group)" :paths="projectPaths" :label="`Project for ${reviewVisitTitle(group)}`" @update:model-value="choices[id(group)]=$event;rulePreview=''" />
   <button class="btn btn-sm" :disabled="Boolean(pending)||!reviewCanAssign(group,selected(group))" @click="decide(group,'assigned')">{{ reviewIsAssigned(group)?'Change project':`Assign ${duration(group.seconds)}` }}</button>
   <button class="btn btn-sm" :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</button>
-  <button v-if="group.userAttribution" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</button>
 </div>
         <div v-if="suggestion(group) && !group.userAttribution && !reviewIsAssigned(group)" class="review-suggestion">
           <span>
@@ -618,6 +634,8 @@ async function saveSplit(group: HumanReviewGroup) {
           </button>
         </div>
 
+          <details class="review-secondary">
+            <summary>Split, notes &amp; matching details</summary>
           <dl>
             <dt>Source</dt>
             <dd>{{ group.detail || group.label }}</dd>
@@ -629,6 +647,7 @@ async function saveSplit(group: HumanReviewGroup) {
             <dd>{{ group.pairs.length }} · kept unchanged when you assign or undo</dd>
           </dl>
           <div class="human-review-actions">
+            <button v-if="!group.reviewSegment && group.userAttribution" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</button>
             <template v-if="!group.reviewSegment">
               <button
                 v-if="group.end - group.start >= 2"
@@ -647,6 +666,7 @@ async function saveSplit(group: HumanReviewGroup) {
             </template>
             <button class="btn btn-sm" @click="emit('note', group.start, group.end, group.label)">Add note</button>
           </div>
+          </details>
           <div v-if="splitDraft?.key === id(group)" class="human-review-split">
             <strong>Divide {{ reviewVisitTitle(group) }}</strong>
             <label>
@@ -683,7 +703,9 @@ async function saveSplit(group: HumanReviewGroup) {
             </button>
             <button class="btn btn-sm" @click="splitDraft = null">Cancel</button>
           </div>
-          <div v-if="futurePatterns(group).length" class="human-review-future">
+          <details v-if="futurePatterns(group).length" class="review-secondary">
+            <summary>Rules for future visits</summary>
+          <div class="human-review-future">
             <label>
               Future visits
               <select
@@ -734,6 +756,7 @@ async function saveSplit(group: HumanReviewGroup) {
               </button>
             </div>
           </div>
+          </details>
         </div>
 
             </article>
@@ -746,7 +769,8 @@ async function saveSplit(group: HumanReviewGroup) {
       </div>
       <div v-if="bulkGroups.length" class="app-review-assignment" aria-label="Assign selected activity">
         <div class="app-review-selection" aria-live="polite"><strong>{{ selectedContextCount }} {{ selectedContextCount===1?'group':'groups' }} · {{ duration(selectedSeconds) }}</strong><small>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} selected</small></div>
-        <ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" />
+        <p class="review-confirmation-scope">Selected visits only<template v-if="selectedContextCount===1"> · {{ allContexts.find(context=>contextMeta.get(context.key)?.checked||contextMeta.get(context.key)?.partial)?.label }}</template>. Choose a project, then confirm below.</p>
+        <div ref="bulkPicker" class="bulk-project-picker"><ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" /></div>
         <span v-if="bulkProject" class="bulk-impact">{{ name(bulkProject) }}: {{ duration(bulkProjectBefore) }} → {{ duration(bulkProjectAfter) }}</span>
         <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ bulkGroups.some(reviewIsAssigned)?'Change project':'Assign' }} {{ duration(selectedSeconds) }}</button>
         <button class="btn btn-sm" :disabled="Boolean(pending)" @click="bulkDecide('unassigned')">Leave unassigned</button>
@@ -774,6 +798,13 @@ async function saveSplit(group: HumanReviewGroup) {
 </template>
 
 <style scoped>
+.review-context-project { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; min-width: 0; }
+.review-context-assign { flex-shrink: 0; }
+.review-secondary { margin-top: 14px; }
+.review-secondary > summary { cursor: pointer; color: var(--muted); font-size: var(--text-sm); }
+.review-secondary > summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
+.review-confirmation-scope { width: 100%; margin: 0; font-size: var(--text-xs); color: var(--muted); }
+
 .human-review {
   margin: 16px 0;
   border: 1px solid var(--border);
@@ -1410,9 +1441,9 @@ async function saveSplit(group: HumanReviewGroup) {
 .review-main{grid-template-columns:62px minmax(0,1fr) 180px 24px;gap:12px}.review-main>.app-review-duration{font-size:var(--text-xs);color:var(--muted)}.review-main>.review-what{padding-left:40px}.review-what strong{font-weight:500}.review-state{justify-self:end;border:0;padding:0;max-width:180px;border-radius:0;text-align:right;background:transparent}.review-segment{grid-column:auto}
 .review-detail{margin:10px 24px 6px 112px}.review-row .human-review-note{margin-left:112px}.review-suggestion{margin:0;align-items:start}.review-single-actions{display:flex;align-items:center;gap:6px;flex-wrap:wrap}.review-single-actions>.project-picker{min-width:160px}.app-review-more{margin:6px 0 8px 112px}
 .app-review-assignment{position:sticky;bottom:8px;z-index:12;display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--panel-raised);border:1px solid var(--border-strong);border-radius:8px;padding:12px;margin:14px 0;box-shadow:0 3px 12px color-mix(in srgb,var(--text) 8%,transparent)}
-.app-review-selection{display:grid;gap:3px;min-width:130px;font-size:var(--text-sm)}.app-review-selection small{font-size:var(--text-xs);color:var(--muted)}.app-review-assignment>.project-picker{min-width:170px;flex:1 1 180px}.app-review-assignment .bulk-impact{color:var(--muted);font-size:var(--text-xs)}.app-review-project-shortcuts{display:flex;flex-wrap:wrap;gap:4px;flex-basis:100%}.app-review-project-shortcuts button[aria-pressed=true]{background:var(--selected);color:var(--selected-text)}
+.app-review-selection{display:grid;gap:3px;min-width:130px;font-size:var(--text-sm)}.app-review-selection small{font-size:var(--text-xs);color:var(--muted)}.app-review-assignment>.bulk-project-picker{min-width:170px;flex:1 1 180px}.app-review-assignment .bulk-impact{color:var(--muted);font-size:var(--text-xs)}.app-review-project-shortcuts{display:flex;flex-wrap:wrap;gap:4px;flex-basis:100%}.app-review-project-shortcuts button[aria-pressed=true]{background:var(--selected);color:var(--selected-text)}
 @media(max-width:820px){.app-review-columns{grid-template-columns:58px minmax(0,1fr) 115px 24px;gap:8px}.review-app-header{grid-template-columns:minmax(0,1fr) 115px 24px;gap:8px}.review-app-toggle{grid-template-columns:48px 12px 16px minmax(0,1fr);gap:8px}.review-app-toggle small{display:block;margin-left:0}.review-main{grid-template-columns:48px minmax(0,1fr) 115px 24px;gap:8px}.review-main>.review-what{padding-left:28px}.review-state{grid-column:auto;justify-self:end;max-width:115px}.review-detail,.review-row .human-review-note{margin-left:76px}.app-review-more{margin-left:76px}}
-@media(max-width:540px){.human-review-body{padding:12px}.app-review-columns{grid-template-columns:46px minmax(0,1fr) 82px 20px;gap:5px;padding:8px 2px}.review-app-header{grid-template-columns:minmax(0,1fr) 82px 20px;gap:5px;padding:3px 2px}.review-app-toggle{grid-template-columns:44px 12px minmax(0,1fr);gap:5px}.review-app-toggle>svg:nth-of-type(2){display:none}.review-app-toggle>span{font-size:12px}.review-row{padding:5px 2px}.review-main{grid-template-columns:44px minmax(0,1fr) 82px 20px;gap:5px}.review-main>.review-what{padding-left:16px}.review-state{font-size:11px;max-width:82px}.review-detail,.review-row .human-review-note{margin-left:0;margin-right:0}.app-review-more{margin-left:0}.app-review-assignment{bottom:4px;padding:10px}.app-review-assignment>.project-picker{min-width:0;flex-basis:100%}}
+@media(max-width:540px){.human-review-body{padding:12px}.app-review-columns{grid-template-columns:46px minmax(0,1fr) 82px 20px;gap:5px;padding:8px 2px}.review-app-header{grid-template-columns:minmax(0,1fr) 82px 20px;gap:5px;padding:3px 2px}.review-app-toggle{grid-template-columns:44px 12px minmax(0,1fr);gap:5px}.review-app-toggle>svg:nth-of-type(2){display:none}.review-app-toggle>span{font-size:12px}.review-row{padding:5px 2px}.review-main{grid-template-columns:44px minmax(0,1fr) 82px 20px;gap:5px}.review-main>.review-what{padding-left:16px}.review-state{font-size:11px;max-width:82px}.review-detail,.review-row .human-review-note{margin-left:0;margin-right:0}.app-review-more{margin-left:0}.app-review-assignment{bottom:4px;padding:10px}.app-review-assignment>.bulk-project-picker{min-width:0;flex-basis:100%}}
 @media(pointer:coarse){.review-app-header{min-height:48px}.review-app-check{min-height:44px}.review-row{padding-top:7px;padding-bottom:7px}}
 
 .app-review-explanation{font-size:var(--text-sm);color:var(--muted);margin:-5px 0 15px}

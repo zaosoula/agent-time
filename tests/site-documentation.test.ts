@@ -43,10 +43,10 @@ test('public guide routes preserve downloads, restrictive CSP and complete inter
   const installer=await fetch(base+`/install/${version}/${encodeURIComponent(name)}`);assert.equal(installer.status,200);assert.equal(await installer.text(),'installer fixture');
   const sitemap=await (await fetch(base+'/sitemap.xml')).text();for(const path of documentationPaths())assert.ok(sitemap.includes(`<loc>${origin}${path}</loc>`));assert.doesNotMatch(sitemap,/admin|\/install\//);
   assert.match(await (await fetch(base+'/robots.txt')).text(),/Disallow: \/admin\//);
-  assert.equal((await fetch(base+'/icon.png')).status,200);assert.equal((await fetch(base+'/manrope.ttf')).status,200);
+  for(const asset of ['/icon.png','/manrope.ttf']){const response=await fetch(base+asset);assert.equal(response.status,200);await response.arrayBuffer();}
   await rm(join(dataDir,'installer-current'));
   const waiting=await (await fetch(base+'/docs/mcp')).text();assert.doesNotMatch(waiting,/class="download"/);assert.match(waiting,/MCP/);
- }finally{await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(dataDir,{recursive:true,force:true});}
+ }finally{server.closeAllConnections();await new Promise<void>((resolve,reject)=>server.close(error=>error?reject(error):resolve()));await rm(dataDir,{recursive:true,force:true});}
 });
 
 test('guide labels and version are escaped while unsafe download schemes are rejected',()=>{

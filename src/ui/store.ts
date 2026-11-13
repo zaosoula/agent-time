@@ -47,7 +47,9 @@ export type Page =
   | 'outcomes'
   | 'health'
   | 'usage'
-  | 'settings';
+  | 'settings'
+  | 'projects'
+  | 'reports';
 
 /** A session row with its credited seconds for the selected day. */
 export type DaySession = Session & { seconds: number; observedSeconds: number };
@@ -124,6 +126,12 @@ function createStore() {
   // ---- Navigation and selection -------------------------------------------------------------
   const page = ref<Page>('today');
   const settingsSection = ref('general');
+  const settingsNavigationRequest = ref(0);
+  const connectionsSection = ref<'agents'|'sources'|'linear'|'health'>('sources');
+  const reportsSection = ref<'time'|'usage'|'evidence'>('time');
+  const projectsSection = ref<'overview'|'attribution'|'billing'|'evidence'>('overview');
+  const billingSettingsProject = ref('');
+  const usageFocus = ref<'limits'|''>('');
   const billingProjectRevision = ref(0);
   const project = ref('all');
   const search = ref('');
@@ -138,11 +146,33 @@ function createStore() {
   const reviewSiteFilter = ref('');
 
   function navigate(destination: Page, nextProject?: string) {
+    // Native menus and older links retain their destination IDs.
+    if (destination === 'weekly' || destination === 'usage' || destination === 'outcomes') {
+      reportsSection.value = destination === 'weekly' ? 'time' : destination === 'usage' ? 'usage' : 'evidence';
+      destination = 'reports';
+    } else if (destination === 'health') {
+      settingsSection.value = 'connections';connectionsSection.value = 'health';destination = 'settings';
+    }
     page.value = destination;
     if (nextProject !== undefined && nextProject !== project.value) {
       project.value = nextProject;
       selectedSessionKey.value = '';
     }
+  }
+
+  function openSettings(section = 'general', connection?: 'agents'|'sources'|'linear'|'health') {
+    settingsNavigationRequest.value++;
+    settingsSection.value = section;
+    if (connection) connectionsSection.value = connection;
+    navigate('settings');
+  }
+  function openProject(path?: string, section?: 'overview'|'attribution'|'billing'|'evidence', billingProjectId?: string) {
+    if (section) projectsSection.value = section;
+    if (billingProjectId !== undefined) billingSettingsProject.value = billingProjectId;
+    navigate('projects', path);
+  }
+  function openUsageLimits() {
+    usageFocus.value = 'limits';reportsSection.value = 'usage';navigate('reports');
   }
 
   function setDate(value: string) {
@@ -184,8 +214,8 @@ function createStore() {
     summary.value = markRaw(next);
   }
 
-  const summaryPages: Page[] = ['today', 'sessions', 'review', 'outcomes'];
-  const showsSummary = computed(() => summaryPages.includes(page.value));
+  const summaryPages: Page[] = ['today', 'sessions', 'review', 'projects'];
+  const showsSummary = computed(() => summaryPages.includes(page.value) || page.value === 'reports' && reportsSection.value === 'evidence');
 
   async function loadSummary() {
     const date = selectedDate.value,
@@ -286,22 +316,22 @@ function createStore() {
     ),
     status: createPoller(loadStatus, () => (visible() ? 5_000 : null)),
     // The sidebar status line needs health everywhere; the Health page needs it fresh.
-    health: createPoller(loadHealth, () => (visible() ? (page.value === 'health' ? 5_000 : 30_000) : null)),
+    health: createPoller(loadHealth, () => (visible() ? (page.value === 'settings' && settingsSection.value === 'connections' && connectionsSection.value === 'health' ? 5_000 : 30_000) : null)),
     hooks: createPoller(loadHooks, () => (visible() ? 30_000 : null)),
-    usage: createPoller(loadUsage, () => (visible() && page.value === 'usage' ? 60_000 : null)),
+    usage: createPoller(loadUsage, () => (visible() && page.value === 'reports' && reportsSection.value === 'usage' ? 60_000 : null)),
     websites: createPoller(loadWebsiteProjects, () =>
-      visible() && page.value === 'settings' && settingsSection.value === 'projects' ? 30_000 : null,
+      visible() && page.value === 'projects' && projectsSection.value === 'attribution' ? 30_000 : null,
     ),
     dayReview: createPoller(loadDayReview, () => (visible() && summaryLoaded.value && ['today', 'review'].includes(page.value) ? 60_000 : null)),
   };
   const syncPollers = () => {
     for (const poller of Object.values(pollers)) poller.sync();
   };
-  watch([windowVisible, windowFocused, page, settingsSection, summaryLoaded], syncPollers);
+  watch([windowVisible, windowFocused, page, settingsSection, connectionsSection, reportsSection, projectsSection, summaryLoaded], syncPollers);
   // Pollers that just became enabled run immediately on sync. Health is always polled (slowly), so
   // opening its page asks for a fresh snapshot instead of waiting up to 30 seconds.
   watch(page, (next) => {
-    if (windowVisible.value && next === 'health') void pollers.health.refresh();
+    if (windowVisible.value && next === 'settings' && settingsSection.value === 'connections' && connectionsSection.value === 'health') void pollers.health.refresh();
     if (windowVisible.value && summaryLoaded.value && next === 'review') void pollers.dayReview.refresh();
   });
   // Coming back into view: refresh straight away rather than waiting for the next tick.
@@ -764,6 +794,15 @@ function createStore() {
     // navigation
     page,
     settingsSection,
+    settingsNavigationRequest,
+    connectionsSection,
+    reportsSection,
+    projectsSection,
+    billingSettingsProject,
+    usageFocus,
+    openSettings,
+    openProject,
+    openUsageLimits,
     billingProjectRevision,
     project,
     search,

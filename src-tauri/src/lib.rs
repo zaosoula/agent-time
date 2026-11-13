@@ -302,6 +302,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
  match method {
   "status"|"summary"|"capture_health"|"capture_checks"|"diagnostics"|"privacy_exclusions"|"export_archive"|"archive_list"|"storage_usage"|"storage_reclaim"|"storage_compact_prepare"|"storage_replacement_cancel"|"storage_replacement_status"|"storage_replacement_result"|"stop"|"tray_status"|"usage"|"hooks_status"|"hooks_verify"|"hooks_dismiss"|"mcp_status"|"claude_status_line_status"|"tracking_cleanup_preview"|"website_projects"|"billing_projects"|"linear_status"|"review_history" if p.is_empty()=>Ok(()),
   "billing_project_save" if p.keys().all(|k|k=="project"||k=="expectedRevision") && p.get("project").map(|v|v.is_object()&&v.to_string().len()<=262144).unwrap_or(false) && p.get("expectedRevision").map(|v|v.as_u64().is_some()).unwrap_or(true)=>Ok(()),
+  "billing_report_history" if p.keys().all(|k|["project","historyCursor","limit"].contains(&k.as_str())) && p.get("project").and_then(Value::as_str).map(|s|!s.trim().is_empty()&&s.len()<=4096&&!s.chars().any(char::is_control)).unwrap_or(false) && p.get("limit").map(|v|v.as_u64().map(|n|(1..=50).contains(&n)).unwrap_or(false)).unwrap_or(true) && p.get("historyCursor").map(|v|v.as_str().map(|s|!s.is_empty()&&s.len()<=16&&!s.starts_with('0')&&s.bytes().all(|b|b.is_ascii_digit())&&s.parse::<u64>().map(|n|n<=9007199254740991).unwrap_or(false)).unwrap_or(false)).unwrap_or(true)=>Ok(()),
   "billing_report_progress" if p.len()==1 && p.get("progressId").and_then(Value::as_str).map(billing_progress_id).unwrap_or(false)=>Ok(()),
   "billing_report" if p.get("progressId").map(|v|v.as_str().map(billing_progress_id).unwrap_or(false)).unwrap_or(true) && p.keys().all(|k|["project","fromDate","toDate","format","detail","reportId","cursor","progressId"].contains(&k.as_str())) && p.get("project").and_then(Value::as_str).map(|s|!s.trim().is_empty()&&s.len()<=4096).unwrap_or(false) && ["fromDate","toDate"].iter().all(|k|p.get(*k).and_then(Value::as_str).map(|s|s.len()==10&&s.bytes().enumerate().all(|(i,b)|if i==4||i==7{b==b'-'}else{b.is_ascii_digit()})).unwrap_or(false)) && p.get("format").map(|v|v.as_str().map(|s|["json","csv","markdown"].contains(&s)).unwrap_or(false)).unwrap_or(true) && p.get("detail").map(|v|v.as_str().map(|s|["summary","daily"].contains(&s)).unwrap_or(false)).unwrap_or(true) && p.get("reportId").map(|v|v.as_str().map(|s|s.len()==36&&s.bytes().all(|b|b.is_ascii_hexdigit()||b==b'-')).unwrap_or(false)).unwrap_or(true) && p.get("cursor").map(|v|p.contains_key("reportId")&&v.as_str().map(|s|!s.is_empty()&&s.len()<=7&&s.bytes().all(|b|b.is_ascii_digit())).unwrap_or(false)).unwrap_or(true)=>Ok(()),
   "linear_sync"|"linear_disconnect" if p.is_empty() || p.len()==1 && p.get("workspaceId").and_then(Value::as_str).map(linear_workspace).unwrap_or(false)=>Ok(()),
@@ -483,12 +484,13 @@ pub fn run(){
   let check=tauri::menu::MenuItem::with_id(app,"app-check-updates","Check for Updates…",true,None::<&str>)?;
   let toggle=tauri::menu::MenuItem::with_id(app,"app-toggle","Pause Capture",true,None::<&str>)?;
   let restart=tauri::menu::MenuItem::with_id(app,"app-restart-collector","Restart Collector",true,None::<&str>)?;
+  let troubleshooting=tauri::menu::Submenu::with_items(app,"Troubleshooting",true,&[&restart])?;
   tray::set_app_toggle(app,toggle.clone());
   let (first,second,third)=(tauri::menu::PredefinedMenuItem::separator(app)?,tauri::menu::PredefinedMenuItem::separator(app)?,tauri::menu::PredefinedMenuItem::separator(app)?);
   let beta=option_env!("AGENT_TIME_BETA")==Some("1");
   let mut items:Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>>=vec![&about];
   if beta{items.push(&check);}
-  items.extend([&first as &dyn tauri::menu::IsMenuItem<tauri::Wry>,&toggle,&restart,&second,&show,&third,&quit]);
+  items.extend([&first as &dyn tauri::menu::IsMenuItem<tauri::Wry>,&toggle,&troubleshooting,&second,&show,&third,&quit]);
   let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&items)?,&edit])?;
   app.set_menu(menu)?;
   if !std::env::args().any(|arg|arg=="--background") { if let Some(window)=app.get_webview_window("main"){window.show()?;} }
@@ -803,7 +805,12 @@ mod audit_protocol_tests {
  }
 }
 
-#[cfg(test)]mod billing_protocol_tests{use super::*;#[test]fn billing_requests_are_restricted(){
+#[cfg(test)]mod billing_protocol_tests{use super::*;#[test]fn history_metadata_pages_are_bounded(){
+ assert!(validate_method("billing_report_history",&json!({"project":"caex","historyCursor":"12","limit":50})).is_ok());
+ assert!(validate_method("billing_report_history",&json!({"project":"caex"})).is_ok());
+ for params in [json!({}),json!({"project":""}),json!({"project":"x","limit":0}),json!({"project":"x","limit":51}),json!({"project":"x","limit":1.5}),json!({"project":"x","cursor":"12"}),json!({"project":"x","path":"/tmp"}),json!({"project":"x","historyCursor":"0"}),json!({"project":"x","historyCursor":"../12"}),json!({"project":"x","historyCursor":"9007199254740992"})]{assert!(validate_method("billing_report_history",&params).is_err());}
+}
+#[test]fn billing_requests_are_restricted(){
  assert!(validate_method("billing_report_progress",&json!({"progressId":"12345678-1234-1234-1234-123456789abc"})).is_ok());
  assert!(validate_method("billing_report_progress",&json!({"progressId":"../../file"})).is_err());
  assert!(validate_method("billing_report_progress",&json!({"progressId":"12345678-1234-1234-1234-123456789abc","path":"/tmp"})).is_err());

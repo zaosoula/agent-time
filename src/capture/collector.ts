@@ -1,6 +1,6 @@
 import {BillingReports} from './billing-worker.ts';
 import {BillingStore,validateBillingProject} from './billing-store.ts';
-import {billingProjects,billingForProject,validateBillingRequest} from './billing-service.ts';
+import {billingProjects,billingForProject,billingReportHistory,validateBillingRequest} from './billing-service.ts';
 import {isStoragePressureNotice,type StoragePressureNotice} from './storage-pressure-status.ts';
 import type {PressureRecoveryResult} from './storage-pressure.ts';
 import {cleanupArchiveStaging} from './archive-storage.ts';
@@ -722,6 +722,7 @@ export class Collector {
   }
   private billingReports?:BillingReports;
   billingReportProgress(id:string){return this.billingReports?.progress(id)||null;}
+  billingReportHistory(request:Parameters<typeof billingReportHistory>[1]){return billingReportHistory(this.output,request);}
   billingProjects(){return billingProjects(this.output);}
   saveBillingProject(project:unknown,expectedRevision?:number){return new BillingStore(this.store.database).saveProject(validateBillingProject(project),expectedRevision);}
   billingReport(request:unknown){return (this.billingReports??=new BillingReports(this.output)).run(validateBillingRequest(request));}

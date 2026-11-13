@@ -1,10 +1,27 @@
 <script setup lang="ts">
-import { computed, ref, onMounted } from 'vue';
+import { computed, ref, onMounted, onActivated, nextTick, watch } from 'vue';
 import type { CaptureStatus } from './transport.ts';
+import { usePagePresentation } from './page-presentation.ts';
 import { useStore } from './store.ts';
 import { compactNumber, count, dateTime, usd } from './format.ts';
 const props = defineProps<{ status: CaptureStatus | null }>();
 const store = useStore();
+const limitsSection=ref<HTMLElement|null>(null);
+const presented = usePagePresentation();
+const active = computed(() => presented.value && store.page.value === 'reports' && store.reportsSection.value === 'usage');
+async function focusLimits() {
+  if (!active.value || store.usageFocus.value !== 'limits') return;
+  // Workspace and report scroll restoration each run after the first render.
+  // Apply an explicit destination only after those restorations have finished.
+  await nextTick();
+  await nextTick();
+  if (!active.value || store.usageFocus.value !== 'limits' || !limitsSection.value) return;
+  limitsSection.value.scrollIntoView({ block: 'start' });
+  limitsSection.value.focus({ preventScroll: true });
+  store.usageFocus.value = '';
+}
+onActivated(() => { void focusLimits(); });
+watch([() => store.usageFocus.value, () => store.usage.value, active], () => { void focusLimits(); });
 const usage = store.usage,
   error = store.usageError,
   provider = ref('all');
@@ -90,7 +107,7 @@ onMounted(() => {
   <section class="usage-page">
     <div class="usage-heading">
       <div>
-        <h1>Tokens &amp; limits</h1>
+        <h2>Usage</h2>
         <p>Usage from sessions captured by Agent Time.</p>
       </div>
       <select v-model="provider" aria-label="Filter usage provider">
@@ -99,7 +116,7 @@ onMounted(() => {
       </select>
     </div>
     <p v-if="!scanningEnabled" class="usage-notice">
-      Token scanning is disabled. Enable token usage in Settings → Agents to update this history.
+      Token scanning is disabled. Enable token usage in Settings → Capture &amp; connections → Agents to update this history.
     </p>
     <p v-if="error || usage?.error" class="usage-notice">{{ error || usage?.error }}</p>
     <div v-if="!usage" class="usage-loading" aria-busy="true">
@@ -170,7 +187,7 @@ onMounted(() => {
       </div>
       <div class="usage-panel">
         <div class="usage-panel-title">
-          <h2>Account limits</h2>
+          <h2 ref="limitsSection" tabindex="-1">Account limits</h2>
           <small>Shared across all sessions · reported by Orca</small>
         </div>
         <article
@@ -279,7 +296,7 @@ onMounted(() => {
   align-items: center;
   margin-bottom: 24px;
 }
-.usage-heading h1 {
+.usage-heading h2 {
   font-size: 25px;
   letter-spacing: -0.6px;
   margin: 0 0 8px;

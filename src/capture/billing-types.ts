@@ -27,3 +27,8 @@ export interface BillingReport {
  calculationVersion:number;inputRevision?:string;projectSnapshot:BillingProject;days:BillingDay[];totals:BillingAmounts;quality:{complete:boolean;warnings:string[]};explanation:string;
  countingModes?:BillingCountingMode[];
 }
+
+/** Compact immutable history; daily rows and policy snapshots are read only when opened. */
+export type BillingReportSummary=Pick<BillingReport,'reportId'|'projectId'|'projectName'|'fromDate'|'toDate'|'createdAt'|'currency'|'totals'|'countingModes'>;
+export interface BillingHistoryRequest {project:string;historyCursor?:string;limit?:number;}
+export interface BillingHistoryReply {reports:BillingReportSummary[];nextHistoryCursor:string|null;}

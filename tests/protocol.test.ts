@@ -133,3 +133,10 @@ test('home can request current review status without computing the historical ba
  for(const method of ['day_review_status','day_review_mark'])assert.ok('error' in await dispatchRequest({id:'d',method,params:{...params,includeBacklog:'no'}},c));
  assert.ok('error' in await dispatchRequest({id:'d',method:'day_review_mark',params},c));
 });
+
+test('billing history protocol bounds metadata pages and keeps its cursor separate from daily rows',async()=>{
+ const calls:unknown[]=[];const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),billingReportHistory:(params:unknown)=>{calls.push(params);return {reports:[],nextHistoryCursor:null};}};
+ const params={project:'caex',historyCursor:'12',limit:50};assert.deepEqual(await dispatchRequest({id:'h',method:'billing_report_history',params},c),{id:'h',result:{reports:[],nextHistoryCursor:null}});assert.deepEqual(calls,[params]);
+ for(const input of [{},{project:''},{project:'x',cursor:'12'},{project:'x',reportId:'saved'},{project:'x',path:'/elsewhere'},{project:'x',limit:51},{project:'x',historyCursor:'../12'},{project:'x',historyCursor:'9007199254740992'}])assert.ok('error' in await dispatchRequest({id:'h',method:'billing_report_history',params:input},c));
+ assert.equal(calls.length,1);
+});

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
-import { TabsContent, TabsList, TabsRoot, TabsTrigger } from 'reka-ui';
 import { ArrowRight, CalendarDays, CheckCircle2, Layers3, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
 import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
@@ -8,7 +7,6 @@ import DayOverview from './DayOverview.vue';
 import DayPicker from './DayPicker.vue';
 import ProjectExplorer from './ProjectExplorer.vue';
 import InfoPopover from './InfoPopover.vue';
-import SessionsTable from './SessionsTable.vue';
 import SetupVerification from './SetupVerification.vue';
 import { relaunchHookSetup } from './transport.ts';
 import { useStore } from './store.ts';
@@ -54,7 +52,6 @@ async function stopTimer(id: string, discard = false) {
   }
 }
 
-const view = ref(props.mode === 'sessions' ? 'sessions' : 'timeline');
 
 const pending = computed(() => store.reviewPending.length);
 const macSource = computed(() => store.confidence.sources.find((source) => source.id === 'macos'));
@@ -134,7 +131,7 @@ const websites = computed(() => {
         <h1>
           {{
             props.mode === 'sessions'
-              ? 'Agent sessions'
+              ? 'Agents'
               : store.project === 'all'
                 ? 'Home'
                 : projectLabel(store.project)
@@ -144,7 +141,7 @@ const websites = computed(() => {
           {{
             props.mode === 'sessions'
               ? longDate(store.selectedDate)
-              : `${longDate(store.selectedDate)} · ${store.project === 'all' ? 'all projects' : store.project}`
+              : `${longDate(store.selectedDate)} · ${store.project === 'all' ? 'all projects' : projectLabel(store.project)}`
           }}
           <span v-if="store.isToday && store.runningCount" class="badge good working-now">
             <Radio :size="11" />{{ store.runningCount }} {{ store.runningCount === 1 ? 'agent' : 'agents' }} working now
@@ -260,20 +257,11 @@ const websites = computed(() => {
       </span>
     </div>
 
-    <TabsRoot v-model="view" class="activity-panel">
-      <div class="panel-toolbar">
-        <TabsList class="segmented" aria-label="Day view">
-          <TabsTrigger value="timeline"><CalendarDays :size="14" />Projects</TabsTrigger>
-          <TabsTrigger value="sessions"><Layers3 :size="14" />Sessions</TabsTrigger>
-        </TabsList>
-        <div v-if="view === 'sessions'" class="search-field">
-          <Search :size="14" />
-          <input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions…" />
-        </div>
-      </div>
-      <TabsContent value="timeline"><ProjectExplorer v-model:focus="chartFocus" /></TabsContent>
-      <TabsContent value="sessions"><SessionsTable /></TabsContent>
-    </TabsRoot>
+    <section class="activity-panel">
+      <p v-if="props.mode==='today' && store.search.trim()" class="retained-filter">Filtered by your Agents search: <strong>{{ store.search }}</strong> <button class="btn btn-quiet btn-sm" @click="store.search=''">Clear session search</button></p>
+      <div v-if="props.mode==='sessions'" class="panel-toolbar"><label class="search-field"><Search :size="14" /><input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions, providers or projects…" /></label></div>
+      <ProjectExplorer v-model:focus="chartFocus" :compact="props.mode==='today'" />
+    </section>
 
     <details v-if="props.mode === 'today' && (humanTabs.length || websites.length)" class="human-tabs">
       <summary class="human-tabs-summary">

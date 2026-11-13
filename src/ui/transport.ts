@@ -300,3 +300,7 @@ export async function startupItem(
 export function relaunchHookSetup() {
   window.dispatchEvent(new Event('agent-time:hook-setup'));
 }
+
+export const billingHistoryTransport = {
+ list: (params: import('../capture/billing-types.ts').BillingHistoryRequest) => request<import('../capture/billing-types.ts').BillingHistoryReply>('billing_report_history', {...params}),
+};
