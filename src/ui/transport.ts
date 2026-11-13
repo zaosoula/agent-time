@@ -1,3 +1,4 @@
+import type { HumanDecisionSegment } from '../capture/human-review.ts';
 import type {StoragePressureNotice} from '../capture/storage-pressure-status.ts';
 import type { Summary } from '../capture/events.ts';
 import type { CaptureSettings } from '../capture/settings.ts';
@@ -190,10 +191,12 @@ export const transport = {
     mode: 'assigned' | 'unassigned' | 'clear',
     projectPath?: string,
     date?: string,
+    segments?: HumanDecisionSegment[],
   ) =>
     request<Summary>('human_decision_set', {
       pairs,
       mode,
+      ...(segments === undefined ? {} : { segments }),
       ...(projectPath === undefined ? {} : { projectPath }),
       ...(date ? { date } : {}),
     }),

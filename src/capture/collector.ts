@@ -27,7 +27,7 @@ import {ClaudeStatusLineInstallation} from './claude-statusline-installation.ts'
 import {compactHealthEvents,websiteHealth,type CaptureHealth,type AccessibilityCapture} from './health.ts';
 import {WebsiteResolver,websiteKey,resolveProjectPath,projectPathFromWorktree,previewWebsiteRuleImpact,type KnownWorkspace,type WebsiteResolution} from './website-resolver.ts';
 import {LinearConnection,keychainHelper} from './linear.ts';
-import {applyHumanDecisions,groupHumanReview,humanIntervalKey,humanReviewState,type HumanDecision,type HumanSplit} from './human-review.ts';
+import {applyHumanDecisions,groupHumanReview,humanIntervalKey,humanReviewState,humanDecisionSelection,type HumanDecision,type HumanSplit,type HumanDecisionSegment} from './human-review.ts';
 import {unobservedGaps} from './gaps.ts';
 import {agents,browsers,pollers,agentById,sourceMetadata,browserByBundle} from './sources/registry.ts';
 import {outdatedHookTargets} from './hook-warning.ts';
@@ -437,22 +437,24 @@ export class Collector {
    * Returns the summary for `date` (YYYY-MM-DD, local) when given; otherwise for
    * the day the selected activity belongs to. Never the whole history.
    */
-  setHumanDecision(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string):Summary {
+  setHumanDecision(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string,segments:HumanDecisionSegment[]=[]):Summary {
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');
-    if(!Array.isArray(pairs)||!pairs.length||pairs.length>MAX_DECISION_PAIRS||!['assigned','unassigned','clear'].includes(mode))throw new Error('Invalid activity selection');
+    const selection=humanDecisionSelection(pairs,segments,mode,MAX_DECISION_PAIRS);
     if(date!==undefined)localDayBounds(date);
-    if(pairs.some(pair=>!Array.isArray(pair)||pair.length!==2||pair.some(id=>typeof id!=='string'||!id||id.length>128)))throw new Error('Activity changed; refresh and try again');
-    const keys=new Set(this.humanIntervals(this.datesForPairs(pairs)).map(humanIntervalKey).filter(Boolean));
-    if(pairs.some(pair=>!keys.has(`${pair[0]}:${pair[1]}`)))throw new Error('Activity changed; refresh and try again');
+    const touched=[...selection.pairs,...selection.segments.map(item=>item.pair)];
+    const intervals=this.humanIntervals(this.datesForPairs(touched));
+    const keys=new Set(intervals.map(humanIntervalKey).filter(Boolean));
+    const partKeys=new Set(intervals.filter(interval=>interval.reviewSegment).map(interval=>`${humanIntervalKey(interval)}:${interval.reviewSegment}`));
+    if(selection.pairs.some(pair=>!keys.has(`${pair[0]}:${pair[1]}`))||selection.segments.some(item=>!partKeys.has(`${item.pair[0]}:${item.pair[1]}:${item.segment}`)))throw new Error('Activity changed; refresh and try again');
     let path:string|null=null;
     if(mode==='assigned'){
       if(typeof projectPath!=='string'||!isAbsolute(projectPath))throw new Error('Choose an absolute project directory');
       path=projectPathFromWorktree(projectPath);
       if(!existsSync(path)||!statSync(path).isDirectory())throw new Error('Choose an existing project directory');
     }
-    this.store.setHumanDecisions([...new Map(pairs.map(pair=>[pair.join(':'),pair])).values()],mode,path);
+    this.store.setHumanDecisions(selection.pairs,mode,path,selection.segments);
     this.summaryCache=undefined;
-    return this.daySummary(this.reviewDate(pairs,date));
+    return this.daySummary(this.reviewDate(touched,date));
   }
   reviewHistory(){return this.store.reviewActions();}
   /**
@@ -496,7 +498,7 @@ export class Collector {
   dayReviewStatus(date:string,includeBacklog=true){
     localDayBounds(date);
     const current=this.dayReviewSnapshot(date),backlog=[];
-    for(let days=1;includeBacklog&&days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
+    for(let days=1;includeBacklog&&days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,pendingGroups:item.pendingGroups,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
     const {fingerprint:_,...view}=current;return {...view,backlog};
   }
   markDayReview(date:string){

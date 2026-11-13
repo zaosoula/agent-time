@@ -295,6 +295,19 @@ fn project_path(value:&Value)->bool{
 fn billing_progress_id(id:&str)->bool{
  id.len()==36&&id.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i){b==b'-'}else{b.is_ascii_hexdigit()})
 }
+fn review_pair(value:&Value)->bool{
+ value.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.chars().map(char::len_utf16).sum::<usize>()<=128).unwrap_or(false))).unwrap_or(false)
+}
+fn review_selection(params:&serde_json::Map<String,Value>)->bool{
+ let Some(pairs)=params.get("pairs").and_then(Value::as_array) else{return false;};
+ let empty=Vec::new();
+ let segments=match params.get("segments"){None=>&empty,Some(value)=>match value.as_array(){Some(items)=>items,None=>return false}};
+ (!pairs.is_empty()||!segments.is_empty()) && (segments.is_empty()||params.get("mode").and_then(Value::as_str)!=Some("clear"))
+ // The bound applies before deduplication, including overlapping whole/segment entries.
+ && pairs.len()+segments.len()<=10_000
+ && pairs.iter().all(review_pair)
+ && segments.iter().all(|value|value.as_object().map(|item|item.len()==2&&item.get("pair").map(review_pair).unwrap_or(false)&&item.get("segment").and_then(Value::as_str).map(|side|["before","after"].contains(&side)).unwrap_or(false)).unwrap_or(false))
+}
 fn validate_method(method:&str,params:&Value)->Result<(),String>{
  let p=params.as_object().ok_or("Expected object parameters")?;
  let source_id=|value:&str|value.len()<=41&&!value.is_empty()&&value.bytes().all(|b|b.is_ascii_lowercase()||b.is_ascii_digit()||b==b'-');
@@ -323,7 +336,7 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "linear_connect" if p.len()==1 && p.get("clientId").and_then(Value::as_str).map(|v|v.len()>=8&&v.len()<=128&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')).unwrap_or(false)=>Ok(()),
   "website_rule_set"|"website_rule_preview" if p.len()==2 && p.get("pattern").map(website_pattern).unwrap_or(false) && p.get("projectPath").map(project_path).unwrap_or(false)=>Ok(()),
   "website_rule_remove" if p.len()==1 && p.get("pattern").map(website_pattern).unwrap_or(false)=>Ok(()),
-  "human_decision_set" if optional_date(p) && p.get("mode").and_then(Value::as_str).map(|mode|{let base=p.len()-usize::from(p.contains_key("date"));match mode {"assigned"=>base==3&&p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>base==2,_=>false}}).unwrap_or(false) && p.get("pairs").and_then(Value::as_array).map(|pairs|!pairs.is_empty()&&pairs.len()<=10_000&&pairs.iter().all(|pair|pair.as_array().map(|ids|ids.len()==2&&ids.iter().all(|id|id.as_str().map(|text|!text.is_empty()&&text.len()<=128).unwrap_or(false))).unwrap_or(false))).unwrap_or(false)=>Ok(()),
+  "human_decision_set" if optional_date(p) && p.keys().all(|key|["pairs","segments","mode","projectPath","date"].contains(&key.as_str())) && p.get("mode").and_then(Value::as_str).map(|mode|match mode {"assigned"=>p.get("projectPath").and_then(Value::as_str).is_some(),"unassigned"|"clear"=>!p.contains_key("projectPath"),_=>false}).unwrap_or(false) && review_selection(p)=>Ok(()),
   "tracking_cleanup" if p.len()==1 && p.get("confirmed")==Some(&Value::Bool(true))=>Ok(()),
   "hooks_install" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(source_id).unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
   "mcp_install"|"mcp_remove" if (p.len()==1||p.len()==2) && p.get("provider").and_then(Value::as_str).map(|id|id=="claude"||id=="codex").unwrap_or(false) && (p.len()==1||p.get("targetIds").and_then(Value::as_array).map(|ids|!ids.is_empty()&&ids.len()<=100&&ids.iter().all(|id|id.as_str().map(|id|id.len()==16&&id.bytes().all(|byte|byte.is_ascii_hexdigit()&&!byte.is_ascii_uppercase())).unwrap_or(false))).unwrap_or(false))=>Ok(()),
@@ -560,6 +573,15 @@ pub fn run(){
  assert!(validate_method("storage_restore_prepare",&json!({"id":"../events.sqlite","confirmed":true})).is_err());
 }}
 #[cfg(test)]mod human_review_tests{use super::*;#[test]fn human_decision_protocol(){
+ let segment=json!({"pair":["a","b"],"segment":"before"});
+ assert!(validate_method("human_decision_set",&json!({"pairs":[],"segments":[segment.clone()],"mode":"assigned","projectPath":"/project"})).is_ok());
+ assert!(validate_method("human_decision_set",&json!({"pairs":[["c","d"]],"segments":[segment.clone()],"mode":"unassigned"})).is_ok());
+ for segments in [json!(null),json!([{"pair":["a"],"segment":"before"}]),json!([{"pair":["a","b"],"segment":"middle"}]),json!([{"pair":["a","b"],"segment":"before","extra":true}])]{
+  assert!(validate_method("human_decision_set",&json!({"pairs":[["c","d"]],"segments":segments,"mode":"unassigned"})).is_err());
+ }
+ assert!(validate_method("human_decision_set",&json!({"pairs":[],"segments":[segment.clone()],"mode":"clear"})).is_err());
+ assert!(validate_method("human_decision_set",&json!({"pairs":[],"segments":vec![segment.clone();10_000],"mode":"unassigned"})).is_ok());
+ assert!(validate_method("human_decision_set",&json!({"pairs":[["c","d"]],"segments":vec![segment;10_000],"mode":"unassigned"})).is_err());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"assigned","projectPath":"/project"})).is_ok());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a","b"]],"mode":"unassigned"})).is_ok());
  assert!(validate_method("human_decision_set",&json!({"pairs":[["a"]],"mode":"assigned","projectPath":"/project"})).is_err());

@@ -6,7 +6,7 @@ import { DatabaseSync,backup } from 'node:sqlite';
 import { mkdirSync, chmodSync, openSync, closeSync,existsSync,lstatSync,statSync,renameSync,rmSync,readdirSync,unlinkSync,statfsSync } from 'node:fs';
 import { dirname,join } from 'node:path';
 import { validateEvent, type CaptureEvent } from './events.ts';
-import type {HumanDecision,HumanSplit} from './human-review.ts';
+import {humanDecisionSelection,type HumanDecision,type HumanSplit,type HumanDecisionSegment} from './human-review.ts';
 import {needsHeartbeat,observationKey,observationSignature,workerHeartbeatSeconds} from './observation-retention.ts';
 import {randomUUID} from 'node:crypto';
 import {readWindowEvents} from './summary-window.ts';
@@ -199,14 +199,29 @@ export class EventStore {
   private recordReviewAction(mode:ReviewAction['mode'],projectPath:string|null,before:ReturnType<EventStore['reviewSnapshot']>,after:ReturnType<EventStore['reviewSnapshot']>){
     if(JSON.stringify(before)!==JSON.stringify(after))this.db.prepare('INSERT INTO review_actions VALUES(?,?,?,?,?,?,NULL)').run(randomUUID(),Date.now()/1000,mode,projectPath,JSON.stringify(before),JSON.stringify(after));
   }
-  setHumanDecisions(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath:string|null):void {
+  setHumanDecisions(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath:string|null,segments:HumanDecisionSegment[]=[]):void {
+    const selection=humanDecisionSelection(pairs,segments,mode,MAX_DECISION_PAIRS);
+    const touched=[...new Map([...selection.pairs,...selection.segments.map(item=>item.pair)].map(pair=>[JSON.stringify(pair),pair])).values()];
     const put=this.db.prepare('INSERT INTO human_decisions (start_event_id,end_event_id,mode,project_path,decided_at) VALUES (?,?,?,?,?) ON CONFLICT(start_event_id,end_event_id) DO UPDATE SET mode=excluded.mode,project_path=excluded.project_path,decided_at=excluded.decided_at');
     const remove=this.db.prepare('DELETE FROM human_decisions WHERE start_event_id=? AND end_event_id=?');
+    const split=this.db.prepare('SELECT split_at FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+    const both=this.db.prepare('UPDATE human_splits SET before_path=?,after_path=? WHERE start_event_id=? AND end_event_id=?');
+    const beforeSide=this.db.prepare('UPDATE human_splits SET before_path=? WHERE start_event_id=? AND end_event_id=?');
+    const afterSide=this.db.prepare('UPDATE human_splits SET after_path=? WHERE start_event_id=? AND end_event_id=?');
     this.db.exec('BEGIN');
     try{
-      const before=this.reviewSnapshot(pairs),removeSplit=this.db.prepare('DELETE FROM human_splits WHERE start_event_id=? AND end_event_id=?');
-      for(const [start,end] of pairs){removeSplit.run(start,end);if(mode==='clear')remove.run(start,end);else put.run(start,end,mode,projectPath,Date.now()/1000);}
-      this.recordReviewAction(mode,projectPath,before,this.reviewSnapshot(pairs));
+      const before=this.reviewSnapshot(touched),removeSplit=this.db.prepare('DELETE FROM human_splits WHERE start_event_id=? AND end_event_id=?');
+      for(const [start,end] of selection.pairs){
+        // Assigning a whole split retains its boundary; reset keeps its original remove-split meaning.
+        if(mode==='assigned'&&split.get(start,end)){both.run(projectPath,projectPath,start,end);remove.run(start,end);}
+        else{removeSplit.run(start,end);if(mode==='clear')remove.run(start,end);else put.run(start,end,mode,projectPath,Date.now()/1000);}
+      }
+      for(const item of selection.segments){
+        const [start,end]=item.pair;
+        if(!split.get(start,end))throw new Error('Activity split changed; refresh and try again');
+        (item.segment==='before'?beforeSide:afterSide).run(mode==='assigned'?projectPath:null,start,end);
+      }
+      this.recordReviewAction(mode,projectPath,before,this.reviewSnapshot(touched));
       this.db.exec('COMMIT');this.generation++;this.nonEventGeneration++;
     }catch(error){this.db.exec('ROLLBACK');throw error;}
   }

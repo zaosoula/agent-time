@@ -1,5 +1,20 @@
 import type {Interval,Summary} from './events.ts';
 
+export interface HumanDecisionSegment {pair:[string,string];segment:'before'|'after';}
+
+/** Validate before deduplicating so overlapping tree selections have a bounded request size. */
+export function humanDecisionSelection(pairs:unknown,segments:unknown,mode:unknown,max=10000):{pairs:Array<[string,string]>;segments:HumanDecisionSegment[]}{
+ const validPair=(pair:unknown):pair is [string,string]=>Array.isArray(pair)&&pair.length===2&&pair.every(id=>typeof id==='string'&&id.length>0&&id.length<=128);
+ if(!Array.isArray(pairs)||segments!==undefined&&!Array.isArray(segments)||!['assigned','unassigned','clear'].includes(String(mode)))throw new Error('Invalid activity selection');
+ const parts=segments===undefined?[]:segments as unknown[];
+ if(!pairs.length&&!parts.length||pairs.length+parts.length>max||pairs.some(pair=>!validPair(pair)))throw new Error('Invalid activity selection');
+ if(parts.some(item=>!item||typeof item!=='object'||Array.isArray(item)||Object.keys(item).length!==2||!validPair((item as HumanDecisionSegment).pair)||!['before','after'].includes((item as HumanDecisionSegment).segment)))throw new Error('Invalid activity segment');
+ if(mode==='clear'&&parts.length)throw new Error('Reset the whole activity to remove its split');
+ const whole=new Map(pairs.map(pair=>[JSON.stringify(pair),pair as [string,string]]));
+ const selected=new Map((parts as HumanDecisionSegment[]).filter(item=>!whole.has(JSON.stringify(item.pair))).map(item=>[JSON.stringify([item.pair,item.segment]),item]));
+ return {pairs:[...whole.values()],segments:[...selected.values()]};
+}
+
 export interface HumanDecision {
  startEventId:string;
  endEventId:string;

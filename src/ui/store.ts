@@ -144,6 +144,7 @@ function createStore() {
 
   /** Website prefix the review queue is filtered to, set from Capture health. */
   const reviewSiteFilter = ref('');
+  const reviewProjectFilter = ref('unassigned');
 
   function navigate(destination: Page, nextProject?: string) {
     // Native menus and older links retain their destination IDs.
@@ -815,6 +816,7 @@ function createStore() {
     setDate,
     navigate,
     reviewSiteFilter,
+    reviewProjectFilter,
     now,
     minute,
     isToday,

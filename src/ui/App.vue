@@ -23,7 +23,9 @@ import type { CaptureSettings } from '../capture/settings.ts';
 import { native, relaunchHookSetup, transport } from './transport.ts';
 import { useStore, type Page } from './store.ts';
 import { toast, clearToast } from './toast.ts';
-import { dateString } from './format.ts';
+import { dateString, duration } from './format.ts';
+import { reviewDrag, reviewDragType, dropReviewActivity } from './review-workspace.ts';
+import { reviewIsAssigned } from './review-apps.ts';
 import { projectColor, projectDisplay } from './project-identity.ts';
 import BetaUpdates from './BetaUpdates.vue';
 import CaptureSettingsPage from './CaptureSettings.vue';
@@ -56,6 +58,35 @@ const projectPages: Page[] = ['today', 'projects'];
 const showsProject = computed(() => projectPages.includes(store.page) || store.page === 'reports' && store.reportsSection === 'evidence');
 const activityFilter = computed(() => store.page === 'today');
 
+const reviewProjectSeconds = computed(() => {
+  const totals = new Map<string,number>();
+  for (const group of store.appReviewGroups) {
+    const path=reviewIsAssigned(group)?group.projectPath!:'unassigned';
+    totals.set(path,(totals.get(path)||0)+group.seconds);
+  }
+  return totals;
+});
+const sidebarProjects=computed(()=>store.page==='review'?[...new Set([...store.projects,...(store.websiteProjects?.projects||[]),...reviewProjectSeconds.value.keys()].filter(p=>p.startsWith('/')))].sort((a,b)=>projectDisplay(a,store.projects).localeCompare(projectDisplay(b,store.projects))):store.projects);
+const reviewTotal = computed(()=>store.appReviewGroups.reduce((sum,g)=>sum+g.seconds,0));
+const dropTarget=ref('');
+function clearReviewDrag(){reviewDrag.value=null;dropTarget.value='';}
+onMounted(()=>window.addEventListener('dragend',clearReviewDrag));
+onUnmounted(()=>window.removeEventListener('dragend',clearReviewDrag));
+function openSidebarProject(path:string) {
+  if(store.page==='review')store.reviewProjectFilter=path;
+  else if(path==='all')navigate(showsProject.value?store.page:'today','all');
+  else store.openProject(path,'overview');
+}
+function dragOverProject(event:DragEvent,path:string) {
+  if(store.page!=='review'||!reviewDrag.value||reviewDrag.value.date!==store.selectedDate||!event.dataTransfer?.types.includes(reviewDragType))return;
+  event.preventDefault();event.dataTransfer.dropEffect='move';dropTarget.value=path;
+}
+function dropOnProject(event:DragEvent,path:string) {
+  dropTarget.value='';
+  if(store.page!=='review'||!event.dataTransfer)return;
+  event.preventDefault();dropReviewActivity(store.selectedDate,path==='unassigned'?null:path,event.dataTransfer);
+}
+watch(()=>store.page,()=>{reviewDrag.value=null;dropTarget.value='';});
 // ---- Navigation ---------------------------------------------------------------------------
 function navigate(destination: Page, nextProject?: string) {
   store.navigate(destination, nextProject);
@@ -240,23 +271,24 @@ onUnmounted(() => {
         </nav>
         <button :class="['nav-row', 'mobile-settings', { active: store.page === 'settings' }]" :aria-current="store.page === 'settings' ? 'page' : undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
         <div class="section-label">
-          Projects <span v-if="store.summaryLoaded">{{ store.projects.length }}</span>
+          Projects <span v-if="store.summaryLoaded">{{ sidebarProjects.length }}</span>
         </div>
         <button
-          :class="['project-row', { selected: store.project === 'all' && showsProject }]"
-          @click="navigate(showsProject ? store.page : 'today', 'all')"
+          :class="['project-row', { selected: store.page==='review'?store.reviewProjectFilter==='all':store.project === 'all' && showsProject }]"
+          @click="openSidebarProject('all')"
         >
-          <Folder :size="16" /><span>All projects</span>
+          <Folder :size="16" /><span>{{store.page==='review'?'All activity':'All projects'}}</span><small v-if="store.page==='review'" class="project-time">{{duration(reviewTotal)}}</small>
         </button>
+        <button v-if="store.page==='review'" :class="['project-row',{selected:store.reviewProjectFilter==='unassigned','review-drop-target':dropTarget==='unassigned'}]" @click="openSidebarProject('unassigned')" @dragover="dragOverProject($event,'unassigned')" @dragleave="dropTarget=''" @drop="dropOnProject($event,'unassigned')"><CircleHelp :size="16"/><span>Unassigned</span><small class="project-time">{{duration(reviewProjectSeconds.get('unassigned')||0)}}</small></button>
         <div class="project-list">
           <button
-            v-for="name in store.projects"
+            v-for="name in sidebarProjects"
             :key="name"
-            :class="['project-row', { selected: store.project === name && showsProject }]"
-            @click="store.openProject(name, 'overview')"
+            :class="['project-row', { selected: store.page==='review'?store.reviewProjectFilter===name:store.project === name && showsProject, 'review-drop-target':dropTarget===name }]"
+            @click="openSidebarProject(name)" @dragover="dragOverProject($event,name)" @dragleave="dropTarget=''" @drop="dropOnProject($event,name)"
           >
             <span class="project-dot" :style="{ background: projectColor(name) }"></span>
-            <span :title="name">{{ projectDisplay(name, store.projects) }}</span>
+            <span :title="name">{{ projectDisplay(name, sidebarProjects) }}</span><small v-if="store.page==='review'" class="project-time">{{duration(reviewProjectSeconds.get(name)||0)}}</small>
           </button>
           <p v-if="!store.summaryLoaded && !store.projects.length" class="sidebar-empty">Loading projects…</p>
           <p v-else-if="!store.projects.length" class="sidebar-empty">Projects appear when activity is recorded.</p>
@@ -410,4 +442,6 @@ onUnmounted(() => {
 @media (min-width: 1500px) { .page-loading { --loading-inset: max(32px, calc((100% - 1160px) / 2)); } }
 @media (max-width: 1120px) { .page-loading { --loading-inset: 24px; } }
 @media (max-width: 700px) { .page-loading { --loading-inset: 18px; } }
+.project-time{margin-left:auto;font-variant-numeric:tabular-nums;font-size:var(--text-xs);white-space:nowrap;color:var(--muted)}
+.project-row.review-drop-target{background:var(--accent-soft);outline:2px solid var(--accent);outline-offset:-2px}
 </style>
