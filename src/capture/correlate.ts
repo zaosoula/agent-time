@@ -95,7 +95,8 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  const active=new Map<string,{event:CaptureEvent;state:'running'|'waiting';session:Session;key:string}>();
  const provisional:Array<{event:CaptureEvent;session:Session;key:string}>=[];
  /** Background shells by `key:taskId`, open from launch until their completion notice. `seen` is the latest Stop that listed it running. */
- const background=new Map<string,{event:CaptureEvent;session:Session;key:string;taskId:string;seen?:CaptureEvent}>();
+ type BackgroundRun={event:CaptureEvent;session:Session;key:string;taskId:string;seen?:CaptureEvent;segmentStart?:number;confirmed?:Array<{start:number;end:CaptureEvent}>;gaps?:CaptureEvent[]};
+ const background=new Map<string,BackgroundRun>();
  const turnStarts=new Map<string,CaptureEvent>(),activityAnchors=new Map<string,number[]>();
  const bindings=new Map<string,CaptureEvent>(),toolBindings=new Map<string,CaptureEvent>(),promotedBindings=new Map<string,CaptureEvent>();
  const workerSnapshots=new Map<string,CaptureEvent[]>();let activityPrevious:CaptureEvent|undefined;
@@ -157,10 +158,18 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    active.delete(id);
   }
  }
- /** A background shell works without hook events, so its time is not capped by agent idleness. */
- function addBackground(b:{event:CaptureEvent;session:Session},end:CaptureEvent,proof:Interval['proof']){
+ /** Explicit background completion can confirm a long run; ordinary resumes cannot prove silent continuity. */
+ function addBackground(b:{event:CaptureEvent;session:Session},end:CaptureEvent,proof:Interval['proof'],start=b.event.observedAt){
+  if(end.observedAt<=start)return;
   const count=intervals.length;add(b.event,end,'running',b.session,proof);
-  if(intervals.length>count)intervals[intervals.length-1]!.background=true;
+  if(intervals.length>count){const interval=intervals[intervals.length-1]!;interval.background=true;interval.start=start;}
+ }
+ function addConfirmedBackground(b:BackgroundRun,end?:CaptureEvent){
+  for(const segment of b.confirmed||[])addBackground(b,segment.end,'observed',segment.start);
+  // A segment opened by a new prompt remains tentative until the task is seen running.
+  if(end&&(!b.gaps?.length||b.seen))addBackground(b,end,'inferred',b.segmentStart??b.event.observedAt);
+  else if(b.seen)addBackground(b,b.seen,'observed',b.segmentStart??b.event.observedAt);
+  for(const gap of b.gaps||[])unresolved.push({reason:'Background shell continuity is unknown across session inactivity',eventId:gap.eventId});
  }
  function trackBackground(e:CaptureEvent,key:string,s:Session){
   // A resumed invocation reuses the conversation ID, not proof that its old
@@ -168,7 +177,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   // Context compaction happens within the same invocation and is not a fence.
   if(e.kind==='session_start'&&['startup','resume'].includes(String(e.data?.source))){
    for(const [id,b] of [...background])if(nativeIdentity(b.event)===nativeIdentity(e)){
-    if(b.seen)addBackground(b,b.seen,'observed');
+    addConfirmedBackground(b);
     unresolved.push({reason:'Background shell continuity is unknown after session restart',eventId:b.event.eventId});
     background.delete(id);
    }
@@ -179,15 +188,33 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
    const b=background.get(key+':'+taskId);if(b){addBackground(b,e,'observed');background.delete(key+':'+taskId);}
    return;
   }
+  // A new ordinary prompt is a new work episode after prolonged silence.
+  // A completion notification is different: it explicitly closes the task.
+  const previous=activityAnchors.get(key)?.at(-2);
+  if(e.kind==='prompt_submitted'&&!taskId){
+   for(const [id,b] of [...background])if(nativeIdentity(b.event)===nativeIdentity(e)){
+    const last=b.key===key?previous:activityAnchors.get(b.key)?.at(-1);
+    if(e.observedAt-(last??b.seen?.observedAt??b.event.observedAt)<=agentIdle)continue;
+    if(b.seen)(b.confirmed??=[]).push({start:b.segmentStart??b.event.observedAt,end:b.seen});
+    (b.gaps??=[]).push(e);b.segmentStart=e.observedAt;b.seen=undefined;
+    if(b.key!==key){background.delete(id);b.key=key;background.set(key+':'+b.taskId,b);}
+   }
+  }
   // Stop lists the shells still running: a shell missing from it finished at the latest then.
   if(e.kind==='response_stop'&&Array.isArray(e.data?.backgroundTasks)){
    const running=new Set(e.data.backgroundTasks);
    for(const [id,b] of [...background])if(b.key===key){
-    if(running.has(b.taskId))b.seen=e;else{addBackground(b,e,'inferred');background.delete(id);}
+    if(running.has(b.taskId))b.seen=e;else{addConfirmedBackground(b,e);background.delete(id);}
    }
   }
   // Ending the session stops its shells.
-  if(e.kind==='session_end')for(const [id,b] of [...background])if(b.key===key){addBackground(b,e,'inferred');background.delete(id);}
+  if(e.kind==='session_end')for(const [id,b] of [...background])if(b.key===key){
+   if(e.observedAt-(previous??b.seen?.observedAt??b.event.observedAt)>agentIdle){
+    addConfirmedBackground(b);
+    unresolved.push({reason:'Background shell end follows unconfirmed session inactivity',eventId:e.eventId});
+   }else addConfirmedBackground(b,e);
+   background.delete(id);
+  }
  }
  function applyBinding(e:CaptureEvent,b:CaptureEvent):CaptureEvent {return {...e,workspaceId:b.workspaceId,runId:b.runId,taskId:b.taskId,dispatchId:b.dispatchId};}
  function resolve(e:CaptureEvent):CaptureEvent {
@@ -349,7 +376,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   if(a.state==='running')provisional.push({event:a.event,session:a.session,key:a.key});
  }
  // A shell still running is credited up to the last Stop that listed it, never extended to now.
- for(const b of background.values())if(b.seen)addBackground(b,b.seen,'observed');
+ for(const b of background.values())addConfirmedBackground(b);
  for(const c of childLifecycle.values())unresolved.push({reason:'Native child has no observed end; not extended to now',eventId:c.eventId});
  for(const start of turnStarts.values())unresolved.push({reason:'Open turn has no observed response stop; not extended to now',eventId:start.eventId});
  for(const anchors of activityAnchors.values())anchors.sort((a,b)=>a-b);

@@ -256,3 +256,36 @@ test('resume clears stale Dispatch binding without joining yesterday background 
  const answer=summary.intervals.find(i=>i.state==='grouped'&&i.start===32401);
  assert(answer);assert.equal(answer.dispatchId,undefined,'the new invocation must not inherit yesterday Dispatch');
 });
+
+test('a normal prompt after long silence does not backfill a still-listed background task',()=>{
+ const h={sessionId:'s',hostId:'local',provider:'claude'};
+ const rows=[e('launch',0,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('seen',10,'response_stop',{...h,data:{backgroundTasks:['b1']}}),e('prompt',32400,'prompt_submitted',h),e('answer',32410,'response_stop',{...h,data:{backgroundTasks:['b1']}})];
+ const result=summarize(rows);
+ assert.deepEqual(result.intervals.filter(i=>i.background).map(i=>[i.start,i.end]),[[0,10],[32400,32410]]);
+ assert.equal(result.agentSeconds,120);
+ const ended=summarize([...rows,e('exit',40000,'session_end',h)]);
+ assert.equal(ended.agentSeconds,120,'a late session end cannot restore an unconfirmed gap');
+});
+
+test('background time remains continuous when the agent is active between prompts',()=>{
+ const h={sessionId:'s',hostId:'local',provider:'claude'};
+ const rows=[e('launch',0,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('seen',10,'response_stop',{...h,data:{backgroundTasks:['b1']}})];
+ for(let at=200;at<1800;at+=200)rows.push(e('tool'+at,at,'tool_start',{...h,data:{toolId:String(at)}}),e('end'+at,at+1,'tool_end',{...h,data:{toolId:String(at)}}));
+ rows.push(e('prompt',1800,'prompt_submitted',h),e('answer',1810,'response_stop',{...h,data:{backgroundTasks:[]}}));
+ assert.equal(summarize(rows).intervals.find(i=>i.background)?.end,1810);
+});
+
+test('an absent background after a silence cannot turn a permission wait into work',()=>{
+ const h={sessionId:'s',hostId:'local',provider:'claude'};
+ const rows=[e('launch',0,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('seen',10,'response_stop',{...h,data:{backgroundTasks:['b1']}}),e('prompt',32400,'prompt_submitted',h),e('wait',32401,'waiting',h),e('tool',33000,'tool_start',{...h,data:{toolId:'next'}}),e('end',33001,'tool_end',{...h,data:{toolId:'next'}}),e('stop',33002,'response_stop',{...h,data:{backgroundTasks:[]}})];
+ assert.equal(summarize(rows).agentSeconds,180);
+ assert.deepEqual(summarize(rows).intervals.filter(i=>i.background).map(i=>[i.start,i.end]),[[0,10]]);
+});
+
+test('explicit completion preserves the original long background run even after an ordinary prompt gap',()=>{
+ const h={sessionId:'s',hostId:'local',provider:'claude'};
+ const summary=summarize([e('launch',0,'tool_end',{...h,data:{toolId:'a',backgroundTaskId:'b1'}}),e('seen',10,'response_stop',{...h,data:{backgroundTasks:['b1']}}),e('prompt',32400,'prompt_submitted',h),e('answer',32410,'response_stop',{...h,data:{backgroundTasks:['b1']}}),e('done',33000,'prompt_submitted',{...h,data:{backgroundTaskId:'b1',backgroundStatus:'completed'}})]);
+ assert.deepEqual(summary.intervals.filter(i=>i.background).map(i=>[i.start,i.end]),[[0,33000]]);
+ assert.equal(summary.agentSeconds,33000);
+ assert(!summary.unresolved.some(i=>i.reason==='Background shell continuity is unknown across session inactivity'));
+});
