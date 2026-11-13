@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.53` candidate — 2026-11-13
+
+Owner requested publication of the two background-continuity fixes (`6e000a2`, `23e10c1`). Explicit native startup/resume ends unconfirmed continuity from the previous invocation and clears stale Dispatch bindings while retaining original late-tool closure ownership. An ordinary prompt after prolonged session inactivity also separates confirmed background segments when no resume hook arrives. A late SessionEnd cannot fill silent gaps. Explicit task completion retains the original long-run duration, and tentative post-gap segments cannot credit permission waits. In-place compaction and continuously observed work retain their semantics. Existing event history, manual decisions and immutable saved billing reports are preserved; derived review caches and new calculations use the revised behavior.
+
+Read-only replay of the supplied customer archive exactly reproduced the screenshot: 625 agent minutes, 69 human minutes, ratio 9.06. Both fixes return 57 agent minutes and the same 69 human minutes: exactly 568 minutes (9h28) removed. All 8,222 non-background intervals and 27 explicitly completed background runs retain their full timings. Later session shutdowns in the archive explain additional inferred overcount. [Detailed semantics and proof](background-continuity.md). The original archive hash was unchanged and the temporary expanded database was removed.
+
+Local validation: 642 JavaScript tests, production typecheck/build and independent code review passed. The signed/notarized release workflow must pass checks, dependency audit, packaged smoke tests and immutable hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+
 ## `0.2.0-beta.52` published and verified — 2026-11-13
 
 Owner requested publication of main through `6c6713a`. Includes organized Home/Review/Agents/Projects/Billing/Reports workspaces, nested settings and saved report history; shared controls/cards/headings with regular32/compact28 sizing; one bottom capture status, current working-agent count and background billing/storage/backup feedback. Retained page drafts, pending work, native form submission, heading semantics and immutable saved reports are preserved.
