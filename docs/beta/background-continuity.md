@@ -21,3 +21,9 @@ Across the full replay window, 8,222 non-background intervals (tools, turns, wai
 These are evidence-based computation checks, not proof of every process's activity during an unobserved gap. The archive, event history, manual decisions and existing saved billing report snapshots are untouched. Derived review caches are invalidated; future billing calculations use the new calculation revision. Both guards ship in beta.53, with the signed app reducer verified against the original archive.
 
 Validation: 642 JavaScript tests passed, production typecheck/build passed, and independent code review verified repeated gaps, long explicit completions and permission-wait preservation. Archive replay uses a read-only decompressed copy; raw customer data is not committed.
+
+## Background owner isolation after beta.53
+
+An ordinary prompt must match the background task's native owner, including its child agent ID, before opening a new observation segment or rebinding a Dispatch. Sharing a conversation is insufficient: parent and sibling messages cannot confirm a child's background work. Conversation-wide identity remains appropriate for an explicit invocation restart, while per-task continuation preserves the child identity.
+
+A project replay exposed this missing owner check in beta.53. The correction includes parent/sibling isolation regressions, retains the original overnight archive result and confirmed intervals, advances derived cache/calculation revisions, and leaves saved reports unchanged. It is not part of the already published beta.53 package.

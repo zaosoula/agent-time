@@ -289,3 +289,13 @@ test('explicit completion preserves the original long background run even after 
  assert.equal(summary.agentSeconds,33000);
  assert(!summary.unresolved.some(i=>i.reason==='Background shell continuity is unknown across session inactivity'));
 });
+
+test('a parent or sibling prompt cannot adopt a child background task after a silence',()=>{
+ const root={sessionId:'s',hostId:'local',provider:'claude'},child={...root,agentId:'child-a'};
+ const old=[e('launch',0,'tool_end',{...child,data:{toolId:'a',backgroundTaskId:'b1'}}),e('seen',10,'response_stop',{...child,data:{backgroundTasks:['b1']}})];
+ for(const actor of [root,{...root,agentId:'child-b'}]){
+  const result=summarize([...old,e('prompt',32400,'prompt_submitted',actor),e('answer',32410,'response_stop',{...actor,data:{backgroundTasks:['b1']}})]);
+  assert.deepEqual(result.intervals.filter(i=>i.background).map(i=>[i.start,i.end,i.agentId]),[[0,10,'child-a']]);
+  assert.equal(result.sessions.find(s=>s.agentId==='child-a')?.seconds,60);
+ }
+});

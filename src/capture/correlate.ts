@@ -107,6 +107,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
  for(const group of workerSnapshots.values())group.sort((a,b)=>a.observedAt-b.observedAt);
  const identity=(e:CaptureEvent)=>JSON.stringify([e.hostId??null,e.provider??null,e.sessionId??null,e.terminalHandle??null]);
  const nativeIdentity=(e:CaptureEvent)=>agentSessionKey({...e,dispatchId:undefined,child:false});
+ const backgroundOwner=(e:CaptureEvent)=>agentSessionKey({...e,dispatchId:undefined,child:Boolean(e.agentId)});
  const toolIdentity=(e:CaptureEvent)=>JSON.stringify([nativeIdentity(e),e.agentId??null,e.data?.toolId??'anonymous']);
  function getSession(key:string,e:CaptureEvent,child=false):Session {
   let s=sessions.get(key);
@@ -192,7 +193,7 @@ export function summarize(input:CaptureEvent[],options:{idleThreshold?:number;ag
   // A completion notification is different: it explicitly closes the task.
   const previous=activityAnchors.get(key)?.at(-2);
   if(e.kind==='prompt_submitted'&&!taskId){
-   for(const [id,b] of [...background])if(nativeIdentity(b.event)===nativeIdentity(e)){
+   for(const [id,b] of [...background])if(backgroundOwner(b.event)===backgroundOwner(e)){
     const last=b.key===key?previous:activityAnchors.get(b.key)?.at(-1);
     if(e.observedAt-(last??b.seen?.observedAt??b.event.observedAt)<=agentIdle)continue;
     if(b.seen)(b.confirmed??=[]).push({start:b.segmentStart??b.event.observedAt,end:b.seen});

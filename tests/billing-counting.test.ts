@@ -10,7 +10,7 @@ const run=(p:BillingProject,days:BillingDayInput[])=>calculateBilling(p,days,{fr
 test('minutes count each eligible contiguous block while seconds and absent legacy stay raw',()=>{
  const d=day();d.spans=[human(0,2),human(10,12)];
  for(const mode of [undefined,'seconds'] as const){const r=run(project(mode),[d]);assert.equal(r.totals.eligibleSeconds,4);assert.equal(r.totals.rawEligibleSeconds,4);assert.equal(r.totals.countingAdjustmentSeconds,0);}
- const r=run(project('minutes'),[d]);assert.equal(r.totals.humanActiveSeconds,4);assert.equal(r.totals.eligibleSeconds,120);assert.equal(r.totals.countingAdjustmentSeconds,116);assert.equal(r.totals.roundingSeconds,0);assert.equal(r.calculationVersion,5);
+ const r=run(project('minutes'),[d]);assert.equal(r.totals.humanActiveSeconds,4);assert.equal(r.totals.eligibleSeconds,120);assert.equal(r.totals.countingAdjustmentSeconds,116);assert.equal(r.totals.roundingSeconds,0);assert.equal(r.calculationVersion,6);
 });
 test('minutes union concurrent project sources and keep cumulative native executions separate',()=>{
  const d=day();d.spans=[agent(0,2,'root'),agent(0,2,'child'),agent(1,3,'root')];
