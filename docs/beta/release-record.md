@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.54` candidate — 2026-11-13
+
+Owner requested publication of the background-owner correction (`53ca273`). The ordinary-prompt continuity guard now requires the same native execution owner, including child identity: parent and sibling prompts cannot move a child's background task into their own lookup key or confirm extra child time through parent Stop events. Root-to-Dispatch rebinding and conversation-wide explicit restart handling remain intact. Derived review caches and future calculation revisions advance; captured history, manual decisions, pricing configuration and existing immutable reports are unchanged. The separately requested ezyostudio/ui design prototype is isolated and is not included in this release.
+
+Local validation: 643 JavaScript tests, production typecheck/build and independent owner-scope review passed. Read-only project replays exposed and verified the correction, including a new parent/sibling regression. The original client archive still returns 57 agent minutes instead of 625, with the same 8,222 non-background intervals and 27 explicitly completed background runs. No customer database or private billing data is committed or uploaded. The signed/notarized workflow must pass checks, audit, packaged smoke tests and hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+
 ## `0.2.0-beta.53` published and verified — 2026-11-13
 
 Owner requested publication of the two background-continuity fixes (`6e000a2`, `23e10c1`). Explicit native startup/resume ends unconfirmed continuity from the previous invocation and clears stale Dispatch bindings while retaining original late-tool closure ownership. An ordinary prompt after prolonged session inactivity also separates confirmed background segments when no resume hook arrives. A late SessionEnd cannot fill silent gaps. Explicit task completion retains the original long-run duration, and tentative post-gap segments cannot credit permission waits. In-place compaction and continuously observed work retain their semantics. Existing event history, manual decisions and immutable saved billing reports are preserved; derived review caches and new calculations use the revised behavior.
