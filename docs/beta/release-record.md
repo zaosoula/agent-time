@@ -1,12 +1,16 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.52` candidate — 2026-11-13
+## `0.2.0-beta.52` published and verified — 2026-11-13
 
 Owner requested publication of main through `6c6713a`. Includes organized Home/Review/Agents/Projects/Billing/Reports workspaces, nested settings and saved report history; shared controls/cards/headings with regular32/compact28 sizing; one bottom capture status, current working-agent count and background billing/storage/backup feedback. Retained page drafts, pending work, native form submission, heading semantics and immutable saved reports are preserved.
 
 Also includes the previously approved billing changes since beta.51: captured agent execution during manual capture pauses remains eligible; sleep markers are not excluded. Locks and unexplained observation gaps retain their existing treatment. No raw history rewrite or automatic re-invoicing of saved reports.
 
 Local verification:634 JS tests, final40 focused UI/lifecycle tests, production typecheck/build passed. Independent review completed; synthetic browser checks verified matching billing controls, shared settings cards, light/dark themes, background progress and return to the completed result. CI must pass the signed/notarized app and DMG checks, test/audit gates and immutable hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+
+GitHub Actions [run 43360643949](https://github.com/zaosoula/agent-time/actions/runs/43360643949) built and published source `4e7daa9bd46fe70e2454ed4a4ad80ce05507c6fe`. CI passed635 JavaScript tests,34 native tests, production typecheck/build and dependency audit with zero production vulnerabilities. Signed-build collector/MCP/statusline smoke checks passed. Independent verification of the downloaded arm64 bundle confirmed beta.52,86 bundled capture/MCP/usage source modules matching source, strict deep signatures, app/DMG stapled tickets and both Gatekeeper assessments. The bundled Node passed62 additional billing, counting, real stdio MCP, reported-work and UI/background tests.
+
+The live manifest, updater signature and landing installer selection match beta.52. Complete independent public downloads match staged SHA-256: updater archive `46237446b6fe3f024286b0b3777e5c13de8e03a517b81e85feac2d2be0fed209` (55,797,499 bytes); [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.52/Agent%20Time_0.2.0-beta.52_aarch64.dmg) `ea3233ef8033b9b87422dd576a3b11e6edb7f615bf00635cdc763a78235b526f` (55,578,978 bytes). Downloaded/expanded bundles were removed after verification; evidence logs and metadata remain local. Customer installation/OTA on another Mac is not claimed.
 
 ## `0.2.0-beta.51` published and verified — 2026-11-12
 
