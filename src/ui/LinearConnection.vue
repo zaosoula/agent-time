@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowUpRight, RefreshCw, Link2 } from '@lucide/vue';
 import { transport, type LinearConnectionStatus } from './transport.ts';
@@ -93,16 +95,10 @@ onUnmounted(() => {
 });
 </script>
 <template>
-  <div class="linear-card">
-    <div class="linear-heading">
-      <div>
-        <h3><Link2 :size="16" /> Linear</h3>
-        <p>
-          Connect your workspaces to match project Resources with tracked repositories. Agent Time requests
-          read-only access.
-        </p>
-      </div>
-      <span :class="['linear-state', status?.phase]">{{
+  <AppCard as="section" padding="regular" class="linear-card">
+    <SectionHeading title="Linear" :level="3" size="compact" description="Connect your workspaces to match project Resources with tracked repositories. Agent Time requests read-only access." class="linear-heading">
+      <template #leading><Link2 :size="16" /></template>
+      <template #actions>      <span :class="['linear-state', status?.phase]">{{
         !status
           ? 'Checking connection…'
           : status.phase === 'connecting'
@@ -112,14 +108,14 @@ onUnmounted(() => {
               : status.phase === 'error'
                 ? 'Needs attention'
                 : 'Not connected'
-      }}</span>
-    </div>
+      }}</span></template>
+    </SectionHeading>
     <div class="linear-actions">
       <p>Linear uses the active workspace in your browser. Switch there first to add a different one.</p>
-      <button :disabled="busy || !status || status.phase === 'connecting'" @click="connect">
+      <button class="btn" :disabled="busy || !status || status.phase === 'connecting'" @click="connect">
         {{ status?.phase === 'connecting' ? 'Waiting for browser…' : 'Add Linear workspace' }}</button
-      ><button v-if="status?.phase === 'connecting'" :disabled="busy" @click="disconnect()">Cancel</button
-      ><button v-if="status?.workspaces.length" :disabled="busy" @click="sync()">
+      ><button class="btn" v-if="status?.phase === 'connecting'" :disabled="busy" @click="disconnect()">Cancel</button
+      ><button class="btn" v-if="status?.workspaces.length" :disabled="busy" @click="sync()">
         <RefreshCw :size="13" /> Sync all
       </button>
     </div>
@@ -134,8 +130,8 @@ onUnmounted(() => {
           {{ workspace.projects.length }} projects ·
           {{ workspace.syncedAt ? `synced ${dateTime(workspace.syncedAt)}` : 'not synced yet' }}
         </p>
-        <button :disabled="busy" @click="sync(workspace.workspaceId)"><RefreshCw :size="13" /> Sync</button
-        ><button :disabled="busy" @click="disconnect(workspace.workspaceId)">Disconnect</button>
+        <button class="btn" :disabled="busy" @click="sync(workspace.workspaceId)"><RefreshCw :size="13" /> Sync</button
+        ><button class="btn" :disabled="busy" @click="disconnect(workspace.workspaceId)">Disconnect</button>
       </div>
       <p v-if="workspace.error" class="linear-error">{{ workspace.error }}</p>
       <details v-if="workspace.projects.length" class="linear-project-list">
@@ -161,7 +157,7 @@ onUnmounted(() => {
               <span v-for="site in project.sites" :key="site"
                 ><code>{{ site }}</code
                 ><small v-if="ruleFor(site)">Rule: {{ name(ruleFor(site)!.projectPath) }}</small
-                ><button
+                ><button class="btn"
                   v-else-if="localPaths(project).length === 1"
                   :disabled="busy"
                   @click="assign(site, project)"
@@ -178,14 +174,10 @@ onUnmounted(() => {
       </details>
     </section>
     <p v-if="error || status?.error" class="linear-error" role="alert">{{ error || status?.error }}</p>
-  </div>
+  </AppCard>
 </template>
 <style scoped>
 .linear-card {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  padding: 18px 20px;
   margin: 0 0 20px;
 }
 .linear-heading,
@@ -259,22 +251,16 @@ onUnmounted(() => {
   min-width: 0;
   flex: 1;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   background: var(--bg);
-  padding: 8px 10px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  min-height: var(--control-height);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
-.linear-form button,
-.linear-actions button {
-  border-radius: 6px;
-  background: var(--blue);
-  color: white;
-  padding: 8px 10px;
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
+.linear-actions button { white-space: nowrap; }
 .linear-form button:disabled,
 .linear-actions button:disabled {
   opacity: 0.5;
@@ -285,10 +271,6 @@ onUnmounted(() => {
 }
 .linear-actions p {
   flex: 1;
-}
-.linear-actions button:last-child {
-  background: var(--hover);
-  color: var(--text);
 }
 .linear-actions button svg {
   vertical-align: middle;

@@ -773,7 +773,8 @@ function createStore() {
   const captureLabel = computed(() => {
     const attention = captureAttention.value;
     if (!status.value) return 'Checking capture…';
-    if (!status.value.running) return 'Capture paused';
+    if (status.value.storageCare?.paused) return 'Capture paused: storage full';
+    if (!status.value.running) return 'Mac tracking paused';
     if (attention?.state === 'repair-needed') return `${attention.name}: repair hooks`;
     if (attention?.state === 'permission-limited') return `${attention.name}: limited detail`;
     if (attention) return `${attention.name}: ${attention.state}`;

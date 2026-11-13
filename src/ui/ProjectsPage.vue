@@ -7,6 +7,8 @@ import { useStore } from './store.ts';
 import { projectDisplay, projectLabel, sessionProject } from './project-identity.ts';
 import { duration, longDate } from './format.ts';
 import { humanReviewState } from '../capture/human-review.ts';
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import DayPicker from './DayPicker.vue';
 import WebsiteRules from './WebsiteRules.vue';
 import BillingSettings from './BillingSettings.vue';
@@ -72,8 +74,8 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
 
 <template>
   <section class="day-content projects-page">
-    <header class="day-heading"><div><h1>Projects</h1><p>Connect repository activity, website attribution and billing rules.</p></div><DayPicker /></header>
-    <div class="repository-picker card">
+    <SectionHeading class="day-heading" title="Projects" description="Connect repository activity, website attribution and billing rules." :level="1" size="page"><template #actions><DayPicker /></template></SectionHeading>
+    <AppCard class="repository-picker card" padding="compact">
       <label for="projects-repository">Repository</label>
       <select id="projects-repository" :value="repository" @change="chooseRepository(($event.target as HTMLSelectElement).value)">
         <option value="">All repositories · manage billing groups</option>
@@ -83,11 +85,10 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
       <p v-if="catalogError" role="status" class="catalog-error">Saved repository list could not be refreshed: {{ catalogError }}. You can still use the available choices or open a folder.</p>
       <details><summary>Open another repository</summary><form @submit.prevent="openFolder"><label for="projects-folder">Repository folder</label><input id="projects-folder" v-model="folder" placeholder="/Users/you/projects/app" /><button class="btn" type="submit">Open folder</button></form><p v-if="folderError" role="alert">{{ folderError }}</p></details>
       <p v-if="repository" class="repository-path">{{ repository }}</p>
-    </div>
+    </AppCard>
     <nav class="workspace-tabs" aria-label="Project sections"><button v-for="section in sections" :key="section.id" :aria-current="store.projectsSection.value === section.id ? 'page' : undefined" :class="{ active: store.projectsSection.value === section.id }" @click="openSection(section.id)">{{ section.label }}</button></nav>
-    <div v-if="visited.has('overview')" v-show="store.projectsSection.value === 'overview'" class="project-overview card">
-      <h2>{{ repository ? projectLabel(repository) : 'Your project workspace' }}</h2>
-      <p>{{ longDate(store.selectedDate.value) }}</p>
+    <AppCard padding="spacious" v-if="visited.has('overview')" v-show="store.projectsSection.value === 'overview'" class="project-overview card">
+      <SectionHeading :title="repository ? projectLabel(repository) : 'Your project workspace'" :description="longDate(store.selectedDate.value)" />
       <p v-if="!store.summaryLoaded.value" role="status">{{ store.pollError.value ? 'Activity could not be loaded. Try refreshing from Home.' : 'Loading activity for this day…' }}</p>
       <template v-else>
         <dl class="project-metrics"><div><dt>Human active time</dt><dd>{{ duration(overviewHumanSeconds) }}</dd></div><div><dt>Cumulative agent time</dt><dd>{{ duration(overviewAgentSeconds) }}</dd></div><div><dt>Agent sessions</dt><dd>{{ overviewSessions.length }}</dd></div><div><dt>Visits to review</dt><dd>{{ overviewPendingReview.length }}</dd></div></dl>
@@ -98,7 +99,7 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
       <p>{{ repository ? 'Explore activity and evidence for this repository, or configure its website rules.' : 'Choose a repository for attribution and evidence, or open Billing to manage all billing groups.' }}</p>
       <p>Repositories identify captured work. Billing groups explicitly combine registered sources and can include several repositories. Choosing a repository does not select or change a billing group.</p>
       <div class="project-actions"><button class="btn" @click="openActivity">View activity</button><button class="btn" @click="openSection('attribution')">Website attribution</button><button class="btn" @click="openSection('billing')">Manage billing groups</button><button class="btn" @click="openSection('evidence')">View evidence</button></div>
-    </div>
+    </AppCard>
     <div v-if="visited.has('attribution')" v-show="store.projectsSection.value === 'attribution'">
       <p class="section-hint">Website rules affect future visits. Review existing activity from Review.</p>
       <WebsiteRules :project="repository || undefined" />
@@ -113,10 +114,10 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
 
 <style scoped>
 .projects-page { max-width: 1120px; }
-.repository-picker { padding: 16px; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.repository-picker { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .repository-picker > label { font-weight: 600; font-size: 12px; }
 .repository-picker select { flex: 1; min-width: 200px; }
-select, input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; font: inherit; font-size: 12px; }
+select, input { background: var(--bg); color: var(--text); border: 1px solid var(--border); border-radius: var(--control-radius, 6px); min-height: var(--control-height, 32px); box-sizing: border-box; padding: var(--control-padding-block, 7px) var(--control-padding-inline, 10px); font: inherit; font-size: var(--control-font-size, 12px); line-height: var(--control-line-height, 16px); }
 .catalog-error { width: 100%; color: var(--muted); font-size: 12px; line-height: 1.6; margin: 0; }
 .repository-path { width: 100%; overflow-wrap: anywhere; margin: 0; color: var(--muted); font-size: 11px; }
 summary { cursor: pointer; color: var(--muted); font-size: 12px; }
@@ -125,8 +126,6 @@ form label { font-size: 12px; }
 .workspace-tabs { display: flex; gap: 5px; margin: 20px 0; border-bottom: 1px solid var(--border); }
 .workspace-tabs button { padding: 10px 15px; color: var(--muted); border-bottom: 2px solid transparent; font-size: 12px; }
 .workspace-tabs button.active { color: var(--text); border-bottom-color: var(--blue); }
-.project-overview { padding: 24px; }
-h2 { font-size: 18px; margin: 0 0 12px; }
 .project-overview p, .section-hint { color: var(--muted); font-size: 12px; line-height: 1.7; max-width: 800px; }
 .project-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 20px 0; }
 .project-metrics dt { color: var(--muted); font-size: 11px; }

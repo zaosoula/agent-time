@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppButton from './AppButton.vue';
+import AppCard from './AppCard.vue';
+import {startBackgroundActivity,clearCompletedBackgroundActivities} from './background-activity.ts';
 import { computed, onMounted, ref } from 'vue';
 import {
   storageTransport,
@@ -67,12 +70,15 @@ async function reclaim() {
 async function compact() {
   busy.value = true;
   error.value = '';
+  const activity=startBackgroundActivity('Optimizing history…','storage');
   try {
     prepared.value = await storageRecoveryTransport.prepare();
     pending.value = await storageRecoveryTransport.pending();
     usage.value = await storageTransport.usage();
     toast.success('Optimized copy verified. Quit and reopen Agent Time to apply it.');
+    activity.finish('Optimized history ready for restart');
   } catch (cause) {
+    activity.finish();
     error.value = humanizeError(cause);
   } finally {
     busy.value = false;
@@ -83,6 +89,7 @@ async function cancel() {
   error.value = '';
   try {
     await storageRecoveryTransport.cancel();
+    clearCompletedBackgroundActivities('storage');
     pending.value = null;
     prepared.value = null;
     usage.value = await storageTransport.usage();
@@ -98,11 +105,11 @@ onMounted(() => {
 });
 </script>
 <template>
-  <section class="storage-usage card" aria-labelledby="storage-title">
+  <AppCard as="section" padding="regular" class="storage-usage" aria-labelledby="storage-title">
     <div class="storage-head">
       <h3 id="storage-title">Storage</h3>
       <span v-if="usage" class="storage-used">{{ size(usage.totalBytes) }} of {{ size(budgetBytes) }} used</span>
-      <button class="btn btn-sm" :disabled="busy" @click="refresh">{{ busy ? 'Measuring…' : 'Refresh' }}</button>
+      <AppButton class="btn btn-sm" :disabled="busy" @click="refresh">{{ busy ? 'Measuring…' : 'Refresh' }}</AppButton>
     </div>
     <p v-if="error" role="alert" class="storage-error">{{ error }}</p>
     <template v-if="usage">
@@ -147,23 +154,23 @@ onMounted(() => {
       <div v-if="!usage.history?.efficient || pending" class="storage-action">
         <template v-if="!pending">
           <span><strong>Save space</strong><small>Compress your history once. Everything is checked before switching, and the original is kept as a backup.</small></span>
-          <button class="btn btn-primary" :disabled="busy || running" @click="compact">{{ busy ? 'Preparing…' : 'Save space' }}</button>
+          <AppButton class="btn btn-primary" :disabled="busy || running" @click="compact">{{ busy ? 'Preparing…' : 'Save space' }}</AppButton>
           <small v-if="running">Pause capture first.</small>
         </template>
         <template v-else>
           <span><strong>Ready to save {{ prepared ? size(prepared.savingsBytes) : 'space' }}</strong><small>Quit and reopen Agent Time to finish.</small></span>
-          <button class="btn" :disabled="busy" @click="cancel">Cancel</button>
+          <AppButton class="btn" :disabled="busy" @click="cancel">Cancel</AppButton>
         </template>
       </div>
       <div v-else-if="usage.wal.bytes > 64 * 1024 * 1024" class="storage-action">
         <span><strong>Free temporary space</strong><small>{{ size(usage.wal.bytes) }} can be released without losing anything.</small></span>
-        <button class="btn" :disabled="busy" @click="reclaim">Free up</button>
+        <AppButton class="btn" :disabled="busy" @click="reclaim">Free up</AppButton>
       </div>
     </template>
-  </section>
+  </AppCard>
 </template>
 <style scoped>
-.storage-usage { margin-top: 16px; padding: 19px 20px; font-size: var(--text-sm); }
+.storage-usage { margin-top: 16px; font-size: var(--text-sm); }
 .storage-head { display: flex; align-items: center; gap: 12px; }
 .storage-head h3 { margin: 0; font-size: var(--text-md); }
 .storage-used { margin-left: auto; color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -178,7 +185,7 @@ onMounted(() => {
 .storage-list strong, .storage-limit strong, .storage-action strong { display: block; font-weight: 550; }
 .storage-list small, .storage-limit small, .storage-action small { display: block; margin-top: 2px; color: var(--muted); font-size: var(--text-xs); }
 .storage-list b { font-weight: 500; font-variant-numeric: tabular-nums; }
-.storage-limit input { width: 64px; margin-right: 4px; padding: 5px; color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; }
+.storage-limit input { width: 64px; margin-right: 4px; padding: var(--control-padding-block) var(--control-padding-inline); color: var(--text); background: var(--surface); border: 1px solid var(--border); border-radius: 5px; }
 .storage-note { margin: 4px 0 8px; color: var(--muted); font-size: var(--text-xs); }
 .storage-error { margin: 12px 0 0; color: var(--status-danger); }
 </style>

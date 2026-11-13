@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { SwitchRoot, SwitchThumb, TabsRoot, TabsList, TabsTrigger, TabsContent } from 'reka-ui';
 import {
@@ -182,9 +184,8 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
     <div class="settings-document">
       <TabsContent v-if="visitedTabs.has('general')" value="general" class="settings-panel">
         <section class="settings-section">
-          <h2>General</h2>
-          <p class="section-intro">Startup, app information and updates.</p>
-          <div class="control-list">
+          <SectionHeading title="General" description="Startup, app information and updates." class="settings-heading" />
+          <AppCard as="div" padding="none" class="control-list">
             <div class="control-row">
               <div class="control-copy">
                 <label id="startup-label" for="startup-item"
@@ -226,7 +227,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 Open Login Items <ArrowUpRight :size="13" />
               </button>
             </div>
-          </div>
+          </AppCard>
           <footer class="settings-footnote"><p>Closing the window keeps capture running. Quit Agent Time to stop it.</p></footer>
           <SettingsAbout />
         </section>
@@ -234,9 +235,8 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 
       <TabsContent v-if="visitedTabs.has('counting')" value="counting" class="settings-panel">
         <section class="settings-section">
-          <h2>Time counting</h2>
-          <p class="section-intro">When activity pauses and which agent time is counted.</p>
-          <div class="control-list">
+          <SectionHeading title="Time counting" description="When activity pauses and which agent time is counted." class="settings-heading" />
+          <AppCard as="div" padding="none" class="control-list">
             <div class="control-row">
               <div class="control-copy">
                 <label for="agent-idle"><strong>Stop counting agent time after</strong></label>
@@ -299,7 +299,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 ><SwitchThumb class="surface-thumb"
               /></SwitchRoot>
             </div>
-          </div>
+          </AppCard>
           <footer class="settings-footnote">
             <p>Changes apply immediately. Existing history is kept.</p>
           </footer>
@@ -307,8 +307,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
       </TabsContent>
 
       <TabsContent v-if="visitedTabs.has('connections')" value="connections" class="settings-panel">
-        <h2>Capture &amp; connections</h2>
-        <p class="section-intro">Connect agents, activity sources and project services, or check capture health.</p>
+        <SectionHeading title="Capture &amp; connections" description="Connect agents, activity sources and project services, or check capture health." class="settings-heading" />
         <div class="setup-assistant">
           <button class="btn btn-sm" @click="relaunchHookSetup">Run setup assistant</button>
         </div>
@@ -319,7 +318,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
       <TabsContent v-if="visitedConnections.has('agents')" value="agents" class="settings-panel">
         <HookSetup mode="settings">
           <template #global-controls>
-            <div class="control-list">
+            <AppCard as="div" padding="none" class="control-list">
               <div class="control-row">
                 <div class="control-copy">
                   <label id="all-hooks-label" for="all-hooks"
@@ -356,10 +355,10 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                   ><SwitchThumb class="surface-thumb"
                 /></SwitchRoot>
               </div>
-            </div>
+            </AppCard>
           </template>
           <template v-for="p in providers" :key="p" #[`${p}-controls`]>
-            <div class="control-list">
+            <AppCard as="div" padding="none" class="control-list">
               <div class="control-row">
                 <div class="control-copy">
                   <label :id="p + '-capture-label'" :for="p + '-capture'"
@@ -411,17 +410,16 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                   ><SwitchThumb class="surface-thumb"
                 /></SwitchRoot>
               </div>
-            </div>
+            </AppCard>
           </template>
         </HookSetup>
       </TabsContent>
 
       <TabsContent v-if="visitedConnections.has('sources')" value="sources" class="settings-panel">
         <section class="settings-section">
-          <h2>Sources</h2>
-          <p class="section-intro">Where Agent Time looks for activity besides agent hooks.</p>
+          <SectionHeading title="Sources" description="Where Agent Time looks for activity besides agent hooks." class="settings-heading" />
           <h3 class="subsection-title">Coding environments</h3>
-          <div class="control-list">
+          <AppCard as="div" padding="none" class="control-list">
             <div v-for="source in pollers" :key="source.id" class="control-row">
               <div class="control-copy">
                 <label :id="source.id + '-label'" :for="source.id + '-polling'"
@@ -457,10 +455,10 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
               /></SwitchRoot>
             </div>
             <p v-if="!pollers.length" class="control-empty">No coding environments detected yet.</p>
-          </div>
+          </AppCard>
 
           <h3 class="subsection-title">Mac activity</h3>
-          <div class="control-list">
+          <AppCard as="div" padding="none" class="control-list">
             <div class="control-row">
               <div class="control-copy">
                 <label id="macos-label" for="macos-activity"><strong>Track Mac activity</strong></label>
@@ -486,8 +484,8 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 ><SwitchThumb class="surface-thumb"
               /></SwitchRoot>
             </div>
-          </div>
-          <div class="permission-card">
+          </AppCard>
+          <AppCard as="div" padding="regular" class="permission-card">
             <ShieldCheck :size="19" />
             <div>
               <h3>Accessibility permission</h3>
@@ -509,14 +507,14 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
               </button>
               <p v-else>Manage permission in System Settings → Privacy &amp; Security → Accessibility.</p>
             </div>
-          </div>
+          </AppCard>
 
           <h3 class="subsection-title">Browsers</h3>
           <p class="section-intro">
             Choose which browser tabs Agent Time may read. Website activity stores the active page’s full URL,
             including its path and query, and its title on this Mac.
           </p>
-          <div class="browser-list">
+          <AppCard as="div" padding="none" class="browser-list">
             <div v-for="browser in browsers" :key="browser.key" class="browser-row">
               <span :class="['browser-mark', browser.tone]" aria-hidden="true">{{ browser.initial }}</span>
               <div class="control-copy">
@@ -546,7 +544,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
                 ><SwitchThumb class="surface-thumb"
               /></SwitchRoot>
             </div>
-          </div>
+          </AppCard>
           <p class="section-note">
             Turning a browser off stops collecting its page details. Existing history remains available.
           </p>
@@ -567,18 +565,16 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 
       <TabsContent v-if="visitedTabs.has('privacy')" value="privacy" class="settings-panel">
         <section class="settings-section">
-          <h2>Privacy</h2>
-          <p class="section-intro">
+          <SectionHeading title="Privacy" description="
             Everything stays on this Mac. Exclude apps and sites you never want sampled.
-          </p>
+          " class="settings-heading" />
           <PrivacyExclusions />
         </section>
       </TabsContent>
 
       <TabsContent v-if="visitedTabs.has('data')" value="data" class="settings-panel">
         <section class="settings-section">
-          <h2>Data &amp; backup</h2>
-          <p class="section-intro">Storage used on this Mac, archives and restores.</p>
+          <SectionHeading title="Data &amp; backup" description="Storage used on this Mac, archives and restores." class="settings-heading" />
           <StorageUsage :running="Boolean(status?.running)" :limit="status?.surfaces.storageLimitMB" @change="emit('change',$event)" />
           <ArchiveExport :running="Boolean(status?.running)" />
           <h3 class="subsection-title danger-title">Danger zone</h3>
@@ -590,9 +586,10 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   </TabsRoot>
 </template>
 <style scoped>
+.settings-heading { margin-bottom: var(--space-4); }
 .setup-assistant { margin-bottom: 18px; }
 .connection-tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 24px; }
-.connection-tab { padding: 8px 12px; border: 1px solid var(--border); border-radius: 6px; color: var(--muted); font-size: var(--text-sm); }
+.connection-tab { min-height: var(--control-height); padding: var(--control-padding-block) var(--control-padding-inline); border: 1px solid var(--border); border-radius: var(--control-radius); color: var(--muted); font-size: var(--control-font-size); line-height: var(--control-line-height); box-sizing: border-box; }
 .connection-tab[data-state='active'] { background: var(--selected); color: var(--selected-text); }
 .connection-tab:focus-visible { outline: 2px solid var(--blue); outline-offset: 3px; }
 
@@ -626,10 +623,12 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   gap: 9px;
   width: 100%;
   color: var(--muted);
-  padding: 8px 10px;
-  border-radius: 6px;
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border-radius: var(--control-radius);
   text-align: left;
-  font-size: var(--text-sm);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .settings-nav[data-state='active'] {
   background: var(--selected);
@@ -689,12 +688,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   line-height: 1.6;
   margin: 0 0 18px;
 }
-.control-list {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  overflow: hidden;
-}
+.control-list { overflow: hidden; }
 .control-row {
   display: flex;
   align-items: center;
@@ -747,12 +741,7 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 .surface-thumb[data-state='checked'] {
   transform: translateX(15px);
 }
-.browser-list {
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  overflow: hidden;
-}
+.browser-list { overflow: hidden; }
 .browser-row {
   display: flex;
   align-items: center;
@@ -790,10 +779,6 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   display: flex;
   gap: 14px;
   margin-top: 16px;
-  padding: 20px;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
 }
 .permission-card > svg {
   color: var(--muted);
@@ -844,12 +829,14 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   flex: none;
   min-width: 115px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   background: var(--panel);
   color: var(--text);
-  padding: 7px 9px;
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
   font: inherit;
-  font-size: 12px;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .idle-select:focus-visible {
   outline: 2px solid var(--blue);

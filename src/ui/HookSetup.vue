@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import {usePagePresentation} from './page-presentation.ts';
 const pageActive=usePagePresentation();
 import { ref, watch, onMounted, onUnmounted, computed } from 'vue';
@@ -341,11 +343,11 @@ onUnmounted(() => {
             <p v-if="state?.migrationError">Project migration: {{ state.migrationError }}</p>
           </div>
           <div class="hook-dialog-actions">
-            <button :disabled="busy" @click="dismiss">
+            <button class="btn" :disabled="busy" @click="dismiss">
               {{ allInstalled || message ? 'Done' : repairing ? 'Later' : 'Set up later' }}</button
             ><button
               v-if="!allInstalled"
-              class="hook-primary"
+              class="btn btn-primary"
               :disabled="busy || !selected.length || !state"
               @click="install(selected)"
             >
@@ -381,8 +383,8 @@ onUnmounted(() => {
           </p>
           <p v-if="permissionError" class="hook-error" role="alert">{{ permissionError }}</p>
           <div class="hook-dialog-actions">
-            <button @click="dismissPermission">Maybe later</button
-            ><button class="hook-primary" @click="openPermission">
+            <button class="btn" @click="dismissPermission">Maybe later</button
+            ><button class="btn btn-primary" @click="openPermission">
               Open System Settings <ArrowUpRight :size="13" />
             </button>
           </div> </DialogContent></DialogPortal></DialogRoot
@@ -392,13 +394,8 @@ onUnmounted(() => {
       <h2 id="agents-heading" class="section-title">Agents</h2>
       <p class="section-intro">Global overview and actions for every connected agent.</p>
       <slot name="global-controls" />
-      <div class="hook-settings">
-        <div class="hook-section-heading">
-          <div>
-            <h3>Hook overview</h3>
-            <p>User-wide installation across all projects.</p>
-          </div>
-        </div>
+      <AppCard as="div" padding="regular" class="hook-settings">
+        <SectionHeading title="Hook overview" :level="3" size="compact" description="User-wide installation across all projects." class="hook-section-heading" />
         <div class="hook-overview">
           <div v-for="p in providers" :key="p">
             <strong>{{ agentName(p) }}</strong
@@ -409,10 +406,10 @@ onUnmounted(() => {
           </div>
         </div>
         <div class="hook-global-actions">
-          <button class="hook-check" :disabled="busy" @click="relaunchHookSetup">Relaunch hook setup</button
-          ><button class="hook-check" :disabled="busy || !state" @click="verify">
+          <button class="btn hook-check" :disabled="busy" @click="relaunchHookSetup">Relaunch hook setup</button
+          ><button class="btn hook-check" :disabled="busy || !state" @click="verify">
             <RefreshCw :size="13" /> Check all hooks</button
-          ><button class="hook-action" :disabled="busy || !state" @click="install(providers)">
+          ><button class="btn hook-action" :disabled="busy || !state" @click="install(providers)">
             {{ busy ? 'Working…' : 'Install / update all hooks' }}
           </button>
         </div>
@@ -424,7 +421,7 @@ onUnmounted(() => {
         <p v-else-if="state?.legacyPaths.length" class="hook-description">
           Installing here also moves your earlier Agent Time project hooks to user scope.
         </p>
-      </div>
+      </AppCard>
     </section>
     <section
       v-for="p in providers"
@@ -437,13 +434,13 @@ onUnmounted(() => {
       <h2 :id="p + '-heading'" class="section-title">{{ agentName(p) }}</h2>
       <p class="section-intro">Hooks, tokens and usage settings for {{ agentName(p) }}.</p>
       <slot :name="p + '-controls'" />
-      <div class="hook-settings">
+      <AppCard as="div" padding="regular" class="hook-settings">
         <div class="hook-provider-heading">
           <h3>Hook installation</h3>
           <div class="hook-provider-actions">
-            <button class="hook-check" :disabled="busy || !state" @click="verify">
+            <button class="btn hook-check" :disabled="busy || !state" @click="verify">
               <RefreshCw :size="13" /> Check</button
-            ><button class="hook-action" :disabled="busy || !state" @click="install([p])">
+            ><button class="btn hook-action" :disabled="busy || !state" @click="install([p])">
               {{ busy ? 'Working…' : installed(p) ? 'Update hooks' : 'Install / repair hooks' }}
             </button>
           </div>
@@ -458,7 +455,7 @@ onUnmounted(() => {
           <p v-if="t.error" class="hook-error">{{ t.error }}</p>
           <button
             v-if="t.state !== 'installed'"
-            class="hook-check"
+            class="btn hook-check"
             :disabled="busy"
             @click="repairTarget(p, t.id)"
           >
@@ -479,11 +476,11 @@ onUnmounted(() => {
           Installed confirms configuration and runtime files. A received event confirms capture is reaching
           Agent Time.
         </p>
-      </div>
-      <div v-if="p === 'claude' || p === 'codex'" class="hook-settings">
+      </AppCard>
+      <AppCard as="div" padding="regular" v-if="p === 'claude' || p === 'codex'" class="hook-settings">
         <div class="hook-provider-heading">
           <h3>Local MCP tools</h3>
-          <button class="hook-check" :disabled="busy" @click="refreshMcp">
+          <button class="btn hook-check" :disabled="busy" @click="refreshMcp">
             <RefreshCw :size="13" /> Check
           </button>
         </div>
@@ -503,14 +500,14 @@ onUnmounted(() => {
           <span :class="['hook-state', t.state]">{{ label(t.state) }}</span
           ><button
             v-if="t.state === 'not-installed' || t.state === 'needs-update'"
-            class="hook-action"
+            class="btn hook-action"
             :disabled="busy"
             @click="changeMcp(p, t.id, 'install')"
           >
             {{ t.state === 'needs-update' ? 'Repair' : 'Connect' }}</button
           ><button
             v-if="t.state === 'installed'"
-            class="hook-check"
+            class="btn hook-check"
             :disabled="busy"
             @click="changeMcp(p, t.id, 'remove')"
           >
@@ -524,11 +521,11 @@ onUnmounted(() => {
           A new agent session loads the tools. Tool descriptions are available automatically; ask the agent to
           report the current task when you want live context.
         </p>
-      </div>
-      <div v-if="p === 'claude'" class="hook-settings">
+      </AppCard>
+      <AppCard as="div" padding="regular" v-if="p === 'claude'" class="hook-settings">
         <div class="hook-provider-heading">
           <h3>Claude status line</h3>
-          <button class="hook-check" :disabled="busy" @click="refreshStatusLine">
+          <button class="btn hook-check" :disabled="busy" @click="refreshStatusLine">
             <RefreshCw :size="13" /> Check
           </button>
         </div>
@@ -544,14 +541,14 @@ onUnmounted(() => {
           <span :class="['hook-state', t.state]">{{ label(t.state) }}</span
           ><button
             v-if="t.state === 'not-installed' || t.state === 'needs-update'"
-            class="hook-action"
+            class="btn hook-action"
             :disabled="busy || !statusLineState?.runtimeReady"
             @click="changeStatusLine(t.id, 'install')"
           >
             {{ t.state === 'needs-update' ? 'Repair' : 'Show task in Claude' }}</button
           ><button
             v-if="t.state === 'installed'"
-            class="hook-check"
+            class="btn hook-check"
             :disabled="busy"
             @click="changeStatusLine(t.id, 'remove')"
           >
@@ -561,7 +558,7 @@ onUnmounted(() => {
         <p v-if="!statusLineState" class="hook-description">Checking Claude status lines…</p>
         <p v-if="statusLineError" class="hook-error" role="alert">{{ statusLineError }}</p>
         <p v-if="statusLineMessage" class="hook-message" role="status">{{ statusLineMessage }}</p>
-      </div>
+      </AppCard>
     </section>
   </template>
 </template>
@@ -650,29 +647,13 @@ input {
   gap: 10px;
   margin-top: 22px;
 }
-.hook-dialog-actions button,
-.hook-check,
-.hook-action {
-  font-size: 12px;
-  padding: 8px 12px;
-  border-radius: 6px;
-  background: var(--hover);
-}
 .hook-dialog-actions button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
 }
-.hook-primary {
-  background: var(--blue) !important;
-  color: white;
-}
 .hook-settings {
   margin-top: 16px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
-  padding: 20px;
 }
 .hook-section-heading {
   display: flex;
@@ -808,7 +789,7 @@ summary:focus-visible {
   outline: none;
 }
 .section-title {
-  font-size: 20px;
+  font-size: var(--text-xl);
   letter-spacing: -0.35px;
   margin: 0 0 8px;
 }

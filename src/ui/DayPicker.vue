@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppButton from './AppButton.vue';
 import { reactive } from 'vue';
 import { ChevronLeft, ChevronRight } from '@lucide/vue';
 import { useStore } from './store.ts';
@@ -15,34 +16,34 @@ function onInput(event: Event) {
 
 <template>
   <div class="date-controls">
-    <button
+    <AppButton compact variant="quiet"
       class="icon-button"
       aria-label="Previous day"
       @click="store.setDate(shiftDate(store.selectedDate, -1))"
     >
       <ChevronLeft :size="16" />
-    </button>
+    </AppButton>
     <input
       type="date"
+      class="control-compact"
       aria-label="Choose day"
       required
       :value="store.selectedDate"
       @change="onInput"
       @blur="onInput"
     />
-    <button
+    <AppButton compact variant="quiet"
       class="icon-button"
       aria-label="Next day"
       @click="store.setDate(shiftDate(store.selectedDate, 1))"
     >
       <ChevronRight :size="16" />
-    </button>
-    <button
-      class="btn btn-sm"
+    </AppButton>
+    <AppButton compact
       :disabled="store.isToday"
       @click="store.setDate(dateString(new Date()))"
     >
       Today
-    </button>
+    </AppButton>
   </div>
 </template>

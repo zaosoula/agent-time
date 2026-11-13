@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {nextTick,reactive,ref,watch} from 'vue';
 import {useStore} from './store.ts';
+import SectionHeading from './SectionHeading.vue';
 import WeeklyReview from './WeeklyReview.vue';
 import UsagePage from './UsagePage.vue';
 import WorkOutcomes from './WorkOutcomes.vue';
@@ -16,9 +17,9 @@ watch(()=>store.reportsSection,(next,previous)=>{
 </script>
 <template>
  <section ref="root" class="reports-workspace">
-  <header class="workspace-heading"><h1>Reports</h1><p>Review your time, usage and supporting evidence.</p>
+  <SectionHeading class="workspace-heading" title="Reports" description="Review your time, usage and supporting evidence." :level="1" size="page">
    <nav class="workspace-tabs" aria-label="Report views"><button v-for="section in sections" :key="section.id" :class="['workspace-tab',{active:store.reportsSection===section.id}]" :aria-current="store.reportsSection===section.id?'page':undefined" @click="store.reportsSection=section.id">{{ section.label }}</button></nav>
-  </header>
+  </SectionHeading>
   <KeepAlive :max="3">
    <WeeklyReview v-if="store.reportsSection==='time'" key="time" />
    <UsagePage v-else-if="store.reportsSection==='usage'" key="usage" :status="store.status" />
@@ -27,5 +28,5 @@ watch(()=>store.reportsSection,(next,previous)=>{
  </section>
 </template>
 <style scoped>
-.reports-workspace{min-width:0;flex:1;overflow:auto}.workspace-heading{padding:28px 30px 0}.workspace-heading h1{margin:0 0 7px;font-size:var(--text-xl);letter-spacing:-.4px}.workspace-heading p{margin:0;color:var(--muted);line-height:1.6}.workspace-tabs{display:flex;gap:5px;margin-top:22px;border-bottom:1px solid var(--border)}.workspace-tab{padding:10px 16px;color:var(--muted);border-bottom:2px solid transparent}.workspace-tab:hover{color:var(--text);background:var(--hover)}.workspace-tab.active{color:var(--text);border-bottom-color:var(--blue);font-weight:600}.workspace-tab:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+.reports-workspace{min-width:0;flex:1;overflow:auto}.workspace-heading{padding:28px 30px 0}.workspace-tabs{display:flex;gap:5px;margin-top:22px;border-bottom:1px solid var(--border)}.workspace-tab{padding:10px 16px;color:var(--muted);border-bottom:2px solid transparent}.workspace-tab:hover{color:var(--text);background:var(--hover)}.workspace-tab.active{color:var(--text);border-bottom-color:var(--blue);font-weight:600}.workspace-tab:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 </style>

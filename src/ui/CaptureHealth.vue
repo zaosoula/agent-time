@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppButton from './AppButton.vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Activity, Bot, Check, CircleHelp, GitBranch, Globe2, Monitor, Radio } from '@lucide/vue';
 import { transport, native, relaunchHookSetup, type CaptureStatus } from './transport.ts';
@@ -320,12 +321,10 @@ onUnmounted(() => {
           <p>See what Agent Time is recording as it happens.</p>
           <details class="support-details">
             <summary>Diagnostics &amp; support</summary>
-          <button class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</button
-          ><small v-if="diagnosticMessage" role="status">{{ diagnosticMessage }}</small>
+          <AppButton compact class="diagnostic-button" @click="previewDiagnostics">Preview diagnostic summary</AppButton><small v-if="diagnosticMessage" role="status">{{ diagnosticMessage }}</small>
           <div v-if="diagnosticPreview" class="diagnostic-preview">
             <pre>{{ diagnosticPreview }}</pre>
-            <button @click="copyDiagnostics">Copy reviewed summary</button
-            ><button v-if="native" @click="saveDiagnostics">Save redacted support bundle…</button>
+            <AppButton compact @click="copyDiagnostics">Copy reviewed summary</AppButton><AppButton compact variant="primary" v-if="native" @click="saveDiagnostics">Save redacted support bundle…</AppButton>
           </div>
           </details>
         </div>
@@ -340,7 +339,7 @@ onUnmounted(() => {
           <strong>{{ notice.title }}</strong>
           <p>{{ notice.detail }}</p>
           <span>{{ notice.action }}</span
-          ><button v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</button>
+          ><AppButton compact v-if="notice.id.startsWith('hook-')" @click="relaunchHookSetup">Open hook setup</AppButton>
         </article>
       </div>
       <p v-if="repairStarted" class="repair-verification" role="status">
@@ -359,13 +358,13 @@ onUnmounted(() => {
           <strong>{{ card.state }}</strong>
           <p>{{ card.primary }}</p>
           <small>{{ card.secondary }}</small
-          ><button
+          ><AppButton compact
             v-if="'repair' in card && card.repair"
             class="source-repair"
             @click="beginRepair(card.key)"
           >
             Repair and verify delivery
-          </button>
+          </AppButton>
         </article>
       </div>
       <p v-if="snapshot?.spool" class="spool-health" role="status">
@@ -378,9 +377,8 @@ onUnmounted(() => {
         ><span v-if="snapshot.spool.truncated"> · scan limited</span>. Events are retried while capture runs.
       </p>
       <div class="check-controls">
-        <button :disabled="checksBusy" @click="runChecks">
-          {{ checksBusy ? 'Checking sources…' : 'Run capture checks' }}</button
-        ><span>Checks use current configuration and actual delivered events.</span>
+        <AppButton compact :disabled="checksBusy" @click="runChecks">
+          {{ checksBusy ? 'Checking sources…' : 'Run capture checks' }}</AppButton><span>Checks use current configuration and actual delivered events.</span>
       </div>
       <p v-if="checksError" class="health-error" role="alert">{{ checksError }}</p>
       <div v-if="checks" class="capture-checks">
@@ -404,7 +402,7 @@ onUnmounted(() => {
               ><small>{{ step.detail }}</small>
             </li>
           </ol>
-          <button v-if="check.action === 'repair-hooks'" @click="relaunchHookSetup">Repair hooks</button>
+          <AppButton compact v-if="check.action === 'repair-hooks'" @click="relaunchHookSetup">Repair hooks</AppButton>
         </details>
       </div>
     </div>
@@ -503,13 +501,14 @@ onUnmounted(() => {
               >{{ projectName(suggestion.projectPath) }} · {{ matchSource(suggestion.source) }}</span
             >
           </div>
-          <button
+          <AppButton compact
             v-if="site.state === 'suggested' || site.state === 'unmatched'"
+            variant="quiet"
             class="website-review-link"
             @click="emit('reviewSite', site.key)"
           >
             Review recorded activity
-          </button>
+          </AppButton>
         </article>
       </div>
       <p v-else class="website-health-empty">
@@ -588,21 +587,12 @@ onUnmounted(() => {
 .recovery-list button {
   margin-left: 10px;
   color: var(--blue);
-  text-decoration: underline;
 }
 .source-repair {
   margin-top: 10px;
-  padding: 6px 8px;
-  border-radius: 6px;
-  background: var(--hover);
-  font-size: 11px;
 }
 .diagnostic-button {
   margin-top: 10px;
-  padding: 7px 10px;
-  border-radius: 6px;
-  background: var(--hover);
-  font-size: 12px;
 }
 .repair-verification {
   margin: 0 0 14px;
@@ -620,13 +610,7 @@ onUnmounted(() => {
   font-size: 11px;
   color: var(--muted);
 }
-.check-controls button,
-.capture-checks button {
-  padding: 7px 10px;
-  border-radius: 6px;
-  background: var(--hover);
-  color: var(--text);
-}
+
 .check-controls button:disabled {
   opacity: 0.5;
 }
@@ -696,13 +680,7 @@ onUnmounted(() => {
   padding: 10px;
   font-size: var(--text-xs);
 }
-.diagnostic-preview button {
-  padding: 7px 10px;
-  border-radius: 6px;
-  background: var(--blue);
-  color: white;
-  font-size: 11px;
-}
+
 .spool-health {
   font-size: 11px;
   color: var(--muted);
@@ -1228,12 +1206,6 @@ onUnmounted(() => {
   }
 }
 .website-review-link {
-  font-size: var(--text-xs);
-  color: var(--blue);
-  border: 0;
-  background: transparent;
-  padding: 6px 0 0;
   margin-top: 3px;
-  cursor: pointer;
 }
 </style>

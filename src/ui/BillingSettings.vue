@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import type { BillingProject, BillingPolicy } from '../capture/billing-types.ts';
 import { request } from './transport.ts';
@@ -129,15 +131,15 @@ onMounted(refresh);
 
 <template>
   <section class="billing-settings">
-    <header class="heading"><div><h2>Billing groups</h2><p>Group related work and configure versioned billing rules. Generate and export calculations from Billing reports.</p></div>
-      <button class="btn" :disabled="loading || saving" @click="selectProject()">New billing group</button></header>
+    <SectionHeading title="Billing groups" description="Group related work and configure versioned billing rules. Generate and export calculations from Billing reports." class="heading"><template #actions>
+      <button class="btn" :disabled="loading || saving" @click="selectProject()">New billing group</button></template></SectionHeading>
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
     <div v-else class="project-picker"><label for="billing-project">Billing group</label><select id="billing-project" :value="original?.id || ''" :disabled="saving" @change="selectProject(projects.find((item) => item.id === ($event.target as HTMLSelectElement).value))">
       <option value="">{{ projects.length ? 'Choose a billing group…' : 'No groups yet — create your first billing group' }}</option><option v-for="project in projects" :key="project.id" :value="project.id">{{ project.name }}</option>
     </select><button class="btn btn-sm" :disabled="saving" @click="refresh">Refresh</button></div>
     <template v-if="draft && policy">
-      <form class="editor" @submit.prevent="save">
+      <AppCard as="form" class="editor" @submit.prevent="save">
         <fieldset :disabled="saving"><legend>Project &amp; sources</legend>
           <div class="grid"><label>Group name<input v-model="draft.name" required placeholder="Client project" /></label>
             <label>Timezone<input v-model="draft.timezone" required placeholder="Europe/Paris" /></label><label>Aliases <small>One name per line</small><textarea v-model="aliases" rows="2" /></label></div>
@@ -166,8 +168,8 @@ onMounted(refresh);
           </div><details class="optional-policy"><summary>Optional billing rules</summary><div class="grid"><label v-if="policy.basis !== 'humanActive'">Agent-only hourly rate <small>Optional; otherwise use hourly rate</small><input :value="policy.agentOnlyHourlyRate ?? ''" inputmode="decimal" pattern="[0-9]+(\.[0-9]+)?" placeholder="Use hourly rate" @input="setNullableMoney('agentOnlyHourlyRate', $event)" /></label><label>Daily cap (minutes) <small>Optional</small><input :value="policy.dailyCapMinutes ?? ''" type="number" min="1" step="1" placeholder="No cap" @input="setOptionalMinutes('dailyCapMinutes', $event)" /></label><label>Recent human-message window (minutes) <small>Optional; requires captured message evidence</small><input :value="policy.presenceWindowMinutes ?? ''" type="number" min="1" step="1" placeholder="No presence gate" @input="setOptionalMinutes('presenceWindowMinutes', $event)" /></label></div></details><p v-if="policy.aiFees.mode === 'actual'" class="hint">Missing, incomplete or unverified costs are flagged. Unknown amounts stay unknown.</p>
           <details v-if="original?.policies.length"><summary>Saved policy versions ({{ original.policies.length }}) · project revision {{ original.revision ?? 0 }}</summary><ul><li v-for="version in [...original.policies].reverse().sort((a, b) => b.effectiveFrom.localeCompare(a.effectiveFrom))" :key="version.id">{{ version.effectiveFrom }} · {{ countingLabel(version.countingMode) }} · {{ bases.find((basis) => basis.value === version.basis)?.label }} · {{ version.hourlyRate ?? 'Unknown' }} {{ version.currency }}/h <small>{{ version.id }}</small></li></ul></details>
         </fieldset>
-        <footer class="save-row"><span class="muted">{{ original && policyChanged ? 'Saving will append a policy version.' : 'Configuration is saved locally on this Mac.' }}</span><button class="btn primary" type="submit" :disabled="saving">{{ saving ? 'Saving…' : 'Save billing group' }}</button></footer>
-      </form>
+        <footer class="save-row"><span class="muted">{{ original && policyChanged ? 'Saving will append a policy version.' : 'Configuration is saved locally on this Mac.' }}</span><button class="btn btn-primary" type="submit" :disabled="saving">{{ saving ? 'Saving…' : 'Save billing group' }}</button></footer>
+      </AppCard>
       <div class="report-link"><p class="hint">Generate and export reports from the dedicated Billing reports page using your saved settings.</p><button class="btn" @click="store.navigate('billing')">Open billing reports</button></div>
     </template>
   </section>
@@ -175,15 +177,15 @@ onMounted(refresh);
 
 <style scoped>
 .billing-settings { max-width: 920px; font-size: 12px; }
-.heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; margin-bottom: 22px; }
+.heading { margin-bottom: var(--space-5); }
 h2 { font-size: var(--text-xl); letter-spacing: -.35px; margin: 0 0 8px; } h3 { margin: 0 0 8px; font-size: 15px; }
 .heading p, .hint, .muted { color: var(--muted); line-height: 1.6; } .heading p { max-width: 580px; margin: 0; } .hint { margin: 10px 0 14px; }
 .project-picker { display: flex; align-items: center; gap: 12px; margin-bottom: 22px; } .project-picker select { flex: 1; min-width: 0; }
-.editor { border: 1px solid var(--border); border-radius: 10px; background: var(--panel); overflow: hidden; }
+.editor { overflow: hidden; }
 fieldset { margin: 0; padding: 20px; border: 0; min-width: 0; } fieldset + fieldset { border-top: 1px solid var(--border); } legend { float: left; width: 100%; font-size: 14px; font-weight: 650; margin-bottom: 14px; } legend + * { clear: both; }
 .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; } label { display: flex; flex-direction: column; gap: 7px; font-weight: 550; } small { color: var(--muted); font-weight: 400; font-size: 11px; } label small { margin-top: -3px; }
-input, select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: var(--text); font: inherit; padding: 8px 10px; min-width: 0; } textarea { resize: vertical; font-weight: 400; } input[readonly] { color: var(--muted); } input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; } :disabled { opacity: .6; }
-.explanation { padding: 12px 14px; background: var(--bg); border-left: 2px solid var(--border); line-height: 1.7; color: var(--muted); margin: 14px 0; } .save-row { border-top: 1px solid var(--border); padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; } .primary { background: var(--blue); color: white; } details { margin-top: 16px; } summary { cursor: pointer; color: var(--muted); } ul { padding-left: 20px; line-height: 1.8; } li small { display: block; overflow-wrap: anywhere; } .sources { max-height: 180px; overflow: auto; overflow-wrap: anywhere; }
+input, select, textarea { width: 100%; box-sizing: border-box; border: 1px solid var(--border); border-radius: var(--control-radius); background: var(--bg); color: var(--text); font: inherit; font-size: var(--control-font-size); line-height: var(--control-line-height); padding: var(--control-padding-block) var(--control-padding-inline); min-width: 0; } input, select { min-height: var(--control-height); } textarea { resize: vertical; font-weight: 400; } input[readonly] { color: var(--muted); } input:focus-visible, select:focus-visible, textarea:focus-visible, summary:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; } :disabled { opacity: .6; }
+.explanation { padding: 12px 14px; background: var(--bg); border-left: 2px solid var(--border); line-height: 1.7; color: var(--muted); margin: 14px 0; } .save-row { border-top: 1px solid var(--border); padding: 14px 20px; display: flex; justify-content: space-between; align-items: center; gap: 12px; } details { margin-top: 16px; } summary { cursor: pointer; color: var(--muted); } ul { padding-left: 20px; line-height: 1.8; } li small { display: block; overflow-wrap: anywhere; } .sources { max-height: 180px; overflow: auto; overflow-wrap: anywhere; }
 .error { padding: 12px; background: var(--status-danger-soft); color: var(--status-danger); border-radius: 6px; line-height: 1.6; }
 .report-link { margin-top: 24px; }
 @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }

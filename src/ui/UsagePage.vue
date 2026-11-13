@@ -2,6 +2,8 @@
 import { computed, ref, onMounted, onActivated, nextTick, watch } from 'vue';
 import type { CaptureStatus } from './transport.ts';
 import { usePagePresentation } from './page-presentation.ts';
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { useStore } from './store.ts';
 import { compactNumber, count, dateTime, usd } from './format.ts';
 const props = defineProps<{ status: CaptureStatus | null }>();
@@ -105,16 +107,14 @@ onMounted(() => {
 </script>
 <template>
   <section class="usage-page">
-    <div class="usage-heading">
-      <div>
-        <h2>Usage</h2>
-        <p>Usage from sessions captured by Agent Time.</p>
-      </div>
+    <SectionHeading as="div" class="usage-heading" title="Usage" description="Usage from sessions captured by Agent Time." size="page">
+      <template #actions>
       <select v-model="provider" aria-label="Filter usage provider">
         <option value="all">All providers</option>
         <option v-for="agent in agents" :key="agent.id" :value="agent.id">{{ agent.name }}</option>
       </select>
-    </div>
+      </template>
+    </SectionHeading>
     <p v-if="!scanningEnabled" class="usage-notice">
       Token scanning is disabled. Enable token usage in Settings → Capture &amp; connections → Agents to update this history.
     </p>
@@ -122,32 +122,31 @@ onMounted(() => {
     <div v-if="!usage" class="usage-loading" aria-busy="true">
       <span class="visually-hidden" role="status">Loading usage…</span>
       <div class="usage-metrics">
-        <article v-for="index in 3" :key="index">
+        <AppCard as="article" padding="regular" class="usage-metric" v-for="index in 3" :key="index">
           <span class="skeleton skeleton-label"></span>
           <span class="skeleton skeleton-value"></span>
-        </article>
+        </AppCard>
       </div>
       <span class="skeleton skeleton-chart"></span>
     </div>
     <template v-else>
       <div class="usage-metrics">
-        <article v-for="period in periods" :key="period.title">
+        <AppCard as="article" padding="regular" class="usage-metric" v-for="period in periods" :key="period.title">
           <small>{{ period.title }}’s tokens</small><strong>{{ number(period.tokens) }}</strong
           ><span
             >{{ money(period.usd) }}
             <small>API equivalent{{ period.unpriced ? ' · priced portion' : '' }}</small></span
           >
-        </article>
+        </AppCard>
       </div>
-      <div class="usage-panel">
-        <div class="usage-panel-title">
-          <h2>Daily usage this month</h2>
-          <small>{{
+      <AppCard class="usage-panel">
+        <SectionHeading as="div" class="usage-panel-title" title="Daily usage this month" size="compact">
+          <template #actions><small>{{
             usage?.scanning
               ? `Reading history · ${usage.filesScanned} files checked`
               : `Updated ${usage?.lastScan ? time(usage.lastScan * 1000) : 'not yet'}`
-          }}</small>
-        </div>
+          }}</small></template>
+        </SectionHeading>
         <div class="usage-chart">
           <div
             v-for="d in days"
@@ -184,12 +183,12 @@ onMounted(() => {
           </dl>
           <small>Reasoning: {{ number(breakdown.reasoning) }} · already included in output</small>
         </div>
-      </div>
-      <div class="usage-panel">
-        <div class="usage-panel-title">
-          <h2 ref="limitsSection" tabindex="-1">Account limits</h2>
-          <small>Shared across all sessions · reported by Orca</small>
-        </div>
+      </AppCard>
+      <AppCard class="usage-panel">
+        <SectionHeading as="div" class="usage-panel-title" size="compact">
+          <template #heading><h2 ref="limitsSection" tabindex="-1">Account limits</h2></template>
+          <template #actions><small>Shared across all sessions · reported by Orca</small></template>
+        </SectionHeading>
         <article
           v-for="(limit, index) in limits"
           :key="limit.provider + limit.accountId"
@@ -221,9 +220,9 @@ onMounted(() => {
           </div>
         </article>
         <p v-if="!limits.length" class="usage-empty">No account limits have been received yet.</p>
-      </div>
-      <div class="usage-panel">
-        <div class="usage-panel-title"><h2>Models this month</h2></div>
+      </AppCard>
+      <AppCard class="usage-panel">
+        <SectionHeading as="div" class="usage-panel-title" title="Models this month" size="compact" />
         <table>
           <thead>
             <tr>
@@ -243,7 +242,7 @@ onMounted(() => {
             </tr>
           </tbody>
         </table>
-      </div>
+      </AppCard>
       <p v-if="usage?.pricing.error" class="usage-notice">
         Pricing update failed: {{ usage.pricing.error }}. Keeping the last valid rates.
       </p>
@@ -290,25 +289,15 @@ onMounted(() => {
   overflow: auto;
   flex: 1;
 }
-.usage-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 24px;
-}
-.usage-heading h2 {
-  font-size: 25px;
-  letter-spacing: -0.6px;
-  margin: 0 0 8px;
-}
-.usage-heading p {
-  color: var(--muted);
-  margin: 0;
-}
+.usage-heading { margin-bottom: 24px; }
 select {
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px;
+  border-radius: var(--control-radius, 6px);
+  min-height: var(--control-height, 32px);
+  box-sizing: border-box;
+  padding: var(--control-padding-block, 7px) var(--control-padding-inline, 10px);
+  font-size: var(--control-font-size, 12px);
+  line-height: var(--control-line-height, 16px);
   color: var(--text);
   background: var(--panel);
 }
@@ -318,18 +307,7 @@ select {
   gap: 16px;
   margin-bottom: 22px;
 }
-.usage-metrics article,
-.usage-panel {
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-}
-.usage-metrics article {
-  padding: 20px;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
+.usage-metric { display: flex; flex-direction: column; gap: 8px; }
 .usage-metrics strong {
   font-size: 32px;
   letter-spacing: -1px;
@@ -344,9 +322,6 @@ select {
   overflow: hidden;
 }
 .usage-panel-title {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
   padding: 18px 20px;
 }
 .usage-panel-title h2 {

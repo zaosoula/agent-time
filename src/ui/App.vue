@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {capturePageScroll, restorePageScroll} from './page-scroll.ts';
 import LoadingStatus from './LoadingStatus.vue';
+import {backgroundActivities,dismissBackgroundActivity} from './background-activity.ts';
 import {storagePressureDetail} from '../capture/storage-pressure-status.ts';
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue';
 import { TooltipContent, TooltipPortal, TooltipProvider, TooltipRoot, TooltipTrigger } from 'reka-ui';
@@ -269,14 +270,7 @@ onUnmounted(() => {
         </div>
         <div class="sidebar-footer">
           <button :class="['nav-row',{active:store.page==='settings'}]" :aria-current="store.page==='settings'?'page':undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
-          <button
-            class="collector-line capture-status-link"
-            @click="store.captureAttention ? repairCapture() : navigate('health')"
-          >
-            <span :class="['status-dot', { live: store.status?.running && !store.captureAttention }]"></span>
-            <span>{{ store.captureLabel }}</span>
-          </button>
-          <div class="footer-line"><span>Stored on this Mac</span></div>
+
         </div>
       </aside>
 
@@ -400,13 +394,17 @@ onUnmounted(() => {
             class="capture-status-link"
             @click="store.captureAttention ? repairCapture() : navigate('health')"
           >
-            <span :class="['status-dot', { live: store.status?.running && !store.captureAttention }]"></span>
+            <span :class="['status-dot', { live: store.status?.running && !store.status.storageCare?.paused && !store.captureAttention }]"></span>
             {{ store.captureLabel }}
           </button>
-          <span>
-            {{ native ? 'Desktop app' : 'Local browser preview' }}
-            <template v-if="store.summaryLoaded"> · {{ store.summary.sessions.length }} sessions found</template>
-          </span>
+          <span v-if="store.status?.running && !store.status.storageCare?.paused && (store.status.workingAgents || 0) > 0">{{ store.status.workingAgents }} {{ store.status.workingAgents === 1 ? 'agent working' : 'agents working' }}</span>
+          <div class="background-activities" role="status" aria-live="polite">
+            <template v-for="activity in backgroundActivities" :key="activity.id">
+              <button class="capture-status-link" @click="activity.reveal?.(); activity.target === 'billing' ? navigate('billing') : store.openSettings('data'); if (activity.done) dismissBackgroundActivity(activity.id)">{{ activity.label }}<span v-if="activity.detail"> · {{ activity.detail }}</span></button>
+              <button v-if="activity.done" class="capture-status-link" aria-label="Dismiss completed activity" @click="dismissBackgroundActivity(activity.id)"><X :size="12" /></button>
+            </template>
+            <button v-if="['queued','compressing'].includes(store.status?.storageCare?.pressure?.phase || '')" class="capture-status-link" @click="store.openSettings('data')">Compressing history…</button>
+          </div>
         </footer>
         <ExportDialog v-model:open="exportOpen" />
       </main>
@@ -414,3 +412,7 @@ onUnmounted(() => {
     <Toasts />
   </TooltipProvider>
 </template>
+
+<style scoped>
+.statusbar{gap:12px}.statusbar > .capture-status-link{flex-shrink:0}.background-activities{display:flex;align-items:center;gap:8px;margin-left:auto;min-width:0;overflow-x:auto}.background-activities button{white-space:nowrap}
+</style>

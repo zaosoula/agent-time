@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import AppButton from './AppButton.vue';
 import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, reactive } from 'vue';
 import { Check, ChevronRight, RotateCcw, AppWindow } from '@lucide/vue';
 import { humanReviewState, type HumanReviewGroup } from '../capture/human-review.ts';
@@ -573,12 +574,12 @@ async function saveSplit(group: HumanReviewGroup) {
         <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode='queue'">Needs a project · {{ queueContextCount }}</button>
         <button :class="{active:viewMode==='reviewed'}" :aria-pressed="viewMode==='reviewed'" @click="viewMode='reviewed'">Assigned · {{ reviewedContextCount }}</button>
         <button :class="{active:viewMode==='all'}" :aria-pressed="viewMode==='all'" @click="viewMode='all'">All activity</button>
-        <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<button class="btn btn-quiet btn-sm" @click="store.reviewSiteFilter=''">Clear filter</button></span>
+        <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<AppButton compact variant="quiet" @click="store.reviewSiteFilter=''">Clear filter</AppButton></span>
         <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
       </div>
-      <div class="app-review-tools"><button class="btn btn-quiet btn-sm" :disabled="!apps.length" @click="toggleAllApps">{{ apps.every(isAppOpen)?'Collapse all':'Expand all' }}</button><button class="btn btn-quiet btn-sm" :disabled="Boolean(pending)||!visibleContexts.length" @click="selectVisible">Select visible groups</button></div>
-      <p v-if="error" class="human-review-error" role="alert">{{ error }} <button class="btn btn-quiet btn-sm" @click="error=''">Dismiss</button></p>
-      <p v-if="notice" class="human-review-notice" role="status">{{ notice }}<button v-if="undoAvailable" class="btn btn-sm" :disabled="Boolean(pending)" @click="undo(dayHistory.find(action=>action.canUndo)!)">Undo ⌘Z</button><button class="btn btn-quiet btn-sm" @click="notice=''">Dismiss</button></p>
+      <div class="app-review-tools"><AppButton compact variant="quiet" :disabled="!apps.length" @click="toggleAllApps">{{ apps.every(isAppOpen)?'Collapse all':'Expand all' }}</AppButton><AppButton compact variant="quiet" :disabled="Boolean(pending)||!visibleContexts.length" @click="selectVisible">Select visible groups</AppButton></div>
+      <p v-if="error" class="human-review-error" role="alert">{{ error }} <AppButton compact variant="quiet" @click="error=''">Dismiss</AppButton></p>
+      <p v-if="notice" class="human-review-notice" role="status">{{ notice }}<AppButton compact v-if="undoAvailable"  :disabled="Boolean(pending)" @click="undo(dayHistory.find(action=>action.canUndo)!)">Undo ⌘Z</AppButton><AppButton compact variant="quiet" @click="notice=''">Dismiss</AppButton></p>
       <div v-if="!store.summaryLoaded" class="human-review-empty" aria-hidden="true"><span v-for="index in 3" :key="index" class="skeleton" style="height:38px;margin:6px 0" /></div>
       <div v-else-if="!apps.length" class="human-review-empty">{{ filterText?'No activity matches this filter.':store.reviewSiteFilter?'No recorded activity for this site on this day.':viewMode==='all'?'No activity recorded on this day.':viewMode==='reviewed'?'No activity is assigned to a project yet.':'No activity needs a project. Assigned time is available under Assigned or All activity.' }}</div>
       <div v-else class="app-review-list">
@@ -597,7 +598,7 @@ async function saveSplit(group: HumanReviewGroup) {
                   <button type="button" class="review-what" :aria-expanded="isContextOpen(context)" @click="toggleContext(context)"><ChevronRight :size="12" class="review-chevron" :class="{expanded:isContextOpen(context)}" /><span><strong>{{ context.label }}</strong><small>{{ context.groups.length }} {{ context.groups.length===1?'visit':'visits' }}<template v-if="shortDetail(context.groups[0]!)"> · {{ shortDetail(context.groups[0]!) }}</template><template v-if="context.groups[0]!.reviewSegment"> · Split activity</template> · {{ isContextOpen(context)?'Hide visits':'View visits' }}</small></span></button>
                   <div class="review-context-project">
                   <span class="review-state" :title="context.groups[0]!.attributionReason||context.groups[0]!.projectPath"><Check v-if="reviewIsAssigned(context.groups[0]!)" :size="11" />{{ stateLabel(context.groups[0]!) }}</span>
-                  <button v-if="contextMeta.get(context.key)!.eligible.length" class="btn btn-sm review-context-assign" :disabled="Boolean(pending)" :aria-label="`${context.groups.some(reviewIsAssigned)?'Change project for':'Assign'} ${context.label} group, ${contextMeta.get(context.key)!.eligible.length} eligible visits`" @click="beginContextAssignment(context)">{{ context.groups.some(reviewIsAssigned)?'Change project':'Assign group' }}</button>
+                  <AppButton compact v-if="contextMeta.get(context.key)!.eligible.length" class="review-context-assign" :disabled="Boolean(pending)" :aria-label="`${context.groups.some(reviewIsAssigned)?'Change project for':'Assign'} ${context.label} group, ${contextMeta.get(context.key)!.eligible.length} eligible visits`" @click="beginContextAssignment(context)">{{ context.groups.some(reviewIsAssigned)?'Change project':'Assign group' }}</AppButton>
                   </div>
                   <label class="review-app-check"><input type="checkbox" :checked="contextMeta.get(context.key)!.checked" :indeterminate="contextMeta.get(context.key)!.partial" :disabled="Boolean(pending)||!contextMeta.get(context.key)!.eligible.length" :aria-label="`Select ${context.label} group in ${app.label}`" @change="selectContext(context,($event.target as HTMLInputElement).checked)" /></label>
                 </div>
@@ -621,17 +622,17 @@ async function saveSplit(group: HumanReviewGroup) {
 <p v-if="reviewIsAssigned(group)" class="review-attribution-note">Already counted in {{ name(group.projectPath!) }}. No confirmation is needed.</p>
 <div v-if="!group.reviewSegment" class="review-single-actions">
   <ProjectPicker :model-value="selected(group)" :paths="projectPaths" :label="`Project for ${reviewVisitTitle(group)}`" @update:model-value="choices[id(group)]=$event;rulePreview=''" />
-  <button class="btn btn-sm" :disabled="Boolean(pending)||!reviewCanAssign(group,selected(group))" @click="decide(group,'assigned')">{{ reviewIsAssigned(group)?'Change project':`Assign ${duration(group.seconds)}` }}</button>
-  <button class="btn btn-sm" :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</button>
+  <AppButton compact :disabled="Boolean(pending)||!reviewCanAssign(group,selected(group))" @click="decide(group,'assigned')">{{ reviewIsAssigned(group)?'Change project':`Assign ${duration(group.seconds)}` }}</AppButton>
+  <AppButton compact :disabled="Boolean(pending)" @click="decide(group,'unassigned')">Leave unassigned</AppButton>
 </div>
         <div v-if="suggestion(group) && !group.userAttribution && !reviewIsAssigned(group)" class="review-suggestion">
           <span>
             Suggested <strong>{{ name(suggestion(group)!.projectPath) }}</strong> ·
             {{ suggestion(group)!.source.replaceAll('_', ' ') }} · {{ suggestion(group)!.detail }}
           </span>
-          <button :disabled="Boolean(pending)" @click="assignSuggestion(group)">
+          <AppButton compact :disabled="Boolean(pending)" @click="assignSuggestion(group)">
             Assign {{ duration(group.seconds) }}
-          </button>
+          </AppButton>
         </div>
 
           <details class="review-secondary">
@@ -647,24 +648,24 @@ async function saveSplit(group: HumanReviewGroup) {
             <dd>{{ group.pairs.length }} · kept unchanged when you assign or undo</dd>
           </dl>
           <div class="human-review-actions">
-            <button v-if="!group.reviewSegment && group.userAttribution" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</button>
+            <AppButton compact variant="quiet" v-if="!group.reviewSegment && group.userAttribution"  :disabled="Boolean(pending)" @click="decide(group,'clear')"><RotateCcw :size="12" /> Reset to automatic match</AppButton>
             <template v-if="!group.reviewSegment">
-              <button
+              <AppButton compact
                 v-if="group.end - group.start >= 2"
                 class="btn btn-sm"
                 :disabled="Boolean(pending)"
                 @click="openSplit(group)"
               >
                 Split between projects…
-              </button>
+              </AppButton>
             </template>
             <template v-else>
-              <button class="btn btn-sm" :disabled="Boolean(pending)" @click="openSplit(group)">Change split…</button>
-              <button class="btn btn-sm" :disabled="Boolean(pending)" @click="decide(group, 'clear')">
+              <AppButton compact :disabled="Boolean(pending)" @click="openSplit(group)">Change split…</AppButton>
+              <AppButton compact :disabled="Boolean(pending)" @click="decide(group, 'clear')">
                 Remove split
-              </button>
+              </AppButton>
             </template>
-            <button class="btn btn-sm" @click="emit('note', group.start, group.end, group.label)">Add note</button>
+            <AppButton compact @click="emit('note', group.start, group.end, group.label)">Add note</AppButton>
           </div>
           </details>
           <div v-if="splitDraft?.key === id(group)" class="human-review-split">
@@ -683,25 +684,24 @@ async function saveSplit(group: HumanReviewGroup) {
             <div>
               <span>Before</span>
               <ProjectPicker v-model="splitDraft.before" :paths="projectPaths" label="Project before split" />
-              <button @click="splitDraft.before = ''">Leave unassigned</button>
+              <AppButton compact @click="splitDraft.before = ''">Leave unassigned</AppButton>
             </div>
             <div>
               <span>After</span>
               <ProjectPicker v-model="splitDraft.after" :paths="projectPaths" label="Project after split" />
-              <button @click="splitDraft.after = ''">Leave unassigned</button>
+              <AppButton compact @click="splitDraft.after = ''">Leave unassigned</AppButton>
             </div>
             <p>
               The original recording stays unchanged. The two parts need different projects, or one can stay
               unassigned.
             </p>
-            <button
-              class="btn btn-primary btn-sm"
+            <AppButton compact variant="primary"
               :disabled="Boolean(pending) || splitDraft.before === splitDraft.after"
               @click="saveSplit(group)"
             >
               Save split
-            </button>
-            <button class="btn btn-sm" @click="splitDraft = null">Cancel</button>
+            </AppButton>
+            <AppButton compact @click="splitDraft = null">Cancel</AppButton>
           </div>
           <details v-if="futurePatterns(group).length" class="review-secondary">
             <summary>Rules for future visits</summary>
@@ -709,6 +709,7 @@ async function saveSplit(group: HumanReviewGroup) {
             <label>
               Future visits
               <select
+                class="control-compact"
                 :value="futurePattern(group)"
                 @change="choosePattern(group, ($event.target as HTMLSelectElement).value)"
               >
@@ -717,9 +718,9 @@ async function saveSplit(group: HumanReviewGroup) {
                 </option>
               </select>
             </label>
-            <button class="btn btn-sm" :disabled="Boolean(pending) || !selected(group)" @click="previewRule(group)">
+            <AppButton compact :disabled="Boolean(pending) || !selected(group)" @click="previewRule(group)">
               Preview future rule
-            </button>
+            </AppButton>
             <div v-if="rulePreview === id(group)" class="human-review-rule-preview">
               <strong>Future visits only</strong>
               <span>{{ futurePattern(group) }} and pages beneath it → {{ name(selected(group)) }}</span>
@@ -738,32 +739,32 @@ async function saveSplit(group: HumanReviewGroup) {
                 For shared sites, choose a narrow page prefix. A whole site covers every page. Past activity is
                 assigned separately.
               </small>
-              <button
+              <AppButton compact variant="primary"
                 v-if="!group.userAttribution&&!reviewIsAssigned(group)"
-                class="btn btn-primary btn-sm"
+
                 :disabled="Boolean(pending) || !previewReady(group)"
                 @click="decide(group, 'assigned', true)"
               >
                 Assign activity and save future rule
-              </button>
-              <button
+              </AppButton>
+              <AppButton compact variant="primary"
                 v-else
-                class="btn btn-primary btn-sm"
+
                 :disabled="Boolean(pending) || !previewReady(group)"
                 @click="saveRule(group)"
               >
                 Save future rule
-              </button>
+              </AppButton>
             </div>
           </div>
           </details>
         </div>
 
             </article>
-                <button v-if="context.groups.length>visits(context).length" class="btn btn-quiet btn-sm app-review-more" @click="visitLimits[context.key]=(visitLimits[context.key]||30)+30">Show more visits ({{ context.groups.length-visits(context).length }} remaining)</button>
+                <AppButton compact v-if="context.groups.length>visits(context).length" class="btn btn-quiet btn-sm app-review-more" @click="visitLimits[context.key]=(visitLimits[context.key]||30)+30">Show more visits ({{ context.groups.length-visits(context).length }} remaining)</AppButton>
               </template>
             </section>
-            <button v-if="app.contexts.length>children(app).length" class="btn btn-quiet btn-sm app-review-more" @click="appLimits[app.key]=(appLimits[app.key]||30)+30">Show more {{ app.label }} groups ({{ app.contexts.length-children(app).length }} remaining)</button>
+            <AppButton compact v-if="app.contexts.length>children(app).length" class="btn btn-quiet btn-sm app-review-more" @click="appLimits[app.key]=(appLimits[app.key]||30)+30">Show more {{ app.label }} groups ({{ app.contexts.length-children(app).length }} remaining)</AppButton>
           </template>
         </section>
       </div>
@@ -772,10 +773,10 @@ async function saveSplit(group: HumanReviewGroup) {
         <p class="review-confirmation-scope">Selected visits only<template v-if="selectedContextCount===1"> · {{ allContexts.find(context=>contextMeta.get(context.key)?.checked||contextMeta.get(context.key)?.partial)?.label }}</template>. Choose a project, then confirm below.</p>
         <div ref="bulkPicker" class="bulk-project-picker"><ProjectPicker v-model="bulkProject" :paths="projectPaths" label="Project for selected activity" /></div>
         <span v-if="bulkProject" class="bulk-impact">{{ name(bulkProject) }}: {{ duration(bulkProjectBefore) }} → {{ duration(bulkProjectAfter) }}</span>
-        <button class="btn btn-primary btn-sm" :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ bulkGroups.some(reviewIsAssigned)?'Change project':'Assign' }} {{ duration(selectedSeconds) }}</button>
-        <button class="btn btn-sm" :disabled="Boolean(pending)" @click="bulkDecide('unassigned')">Leave unassigned</button>
-        <button class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" @click="selectedGroups={}">Clear</button>
-        <div v-if="projectPaths.length" class="app-review-project-shortcuts"><button v-for="(path,index) in projectPaths.slice(0,3)" :key="path" class="btn btn-quiet btn-sm" :disabled="Boolean(pending)" :aria-pressed="bulkProject===path" @click="bulkProject=path">{{ index+1 }} {{ name(path) }}</button></div>
+        <AppButton compact variant="primary"  :disabled="Boolean(pending)||!bulkProject" @click="bulkAssign">{{ bulkGroups.some(reviewIsAssigned)?'Change project':'Assign' }} {{ duration(selectedSeconds) }}</AppButton>
+        <AppButton compact :disabled="Boolean(pending)" @click="bulkDecide('unassigned')">Leave unassigned</AppButton>
+        <AppButton compact variant="quiet" :disabled="Boolean(pending)" @click="selectedGroups={}">Clear</AppButton>
+        <div v-if="projectPaths.length" class="app-review-project-shortcuts"><AppButton compact variant="quiet" v-for="(path,index) in projectPaths.slice(0,3)" :key="path"  :disabled="Boolean(pending)" :aria-pressed="bulkProject===path" @click="bulkProject=path">{{ index+1 }} {{ name(path) }}</AppButton></div>
       </div>
       <details v-if="dayHistory.length" class="human-review-history">
         <summary>Decision history · {{ dayHistory.length }} recent changes</summary>
@@ -784,9 +785,9 @@ async function saveSplit(group: HumanReviewGroup) {
             {{ dateTime(action.at) }} · {{ action.count }}
             {{ action.count === 1 ? 'recording' : 'recordings' }} {{ historyLabel(action)
             }}{{ action.undoneAt ? ' · undone' : '' }}
-            <button v-if="action.canUndo" class="btn btn-sm" :disabled="Boolean(pending)" @click="undo(action)">
+            <AppButton compact v-if="action.canUndo"  :disabled="Boolean(pending)" @click="undo(action)">
               Undo
-            </button>
+            </AppButton>
           </li>
         </ol>
         <small>An earlier decision can be undone when its activity has not been changed since.</small>
@@ -827,8 +828,7 @@ async function saveSplit(group: HumanReviewGroup) {
   flex-wrap: wrap;
   margin-bottom: 12px;
 }
-.human-review-controls > button,
-.human-review-controls span button {
+.human-review-controls > button {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: transparent;
@@ -916,25 +916,6 @@ async function saveSplit(group: HumanReviewGroup) {
   color: var(--text);
   font-size: 11px;
 }
-.human-review-actions button,
-.human-review-future button,
-.human-review-more {
-  border: 1px solid var(--border);
-  background: var(--hover);
-  color: var(--text);
-  border-radius: 6px;
-  padding: 7px 9px;
-  font-size: var(--text-xs);
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-.human-review-actions button:disabled,
-.human-review-future button:disabled {
-  opacity: 0.5;
-  cursor: default;
-}
 .human-review-future {
   display: flex;
   align-items: center;
@@ -942,15 +923,9 @@ async function saveSplit(group: HumanReviewGroup) {
   flex-wrap: wrap;
   margin-top: 7px;
 }
-.human-review-future button {
-  background: transparent;
-}
 .human-review-future small {
   font-size: var(--text-xs);
   color: var(--muted);
-}
-.human-review-more {
-  margin-top: 12px;
 }
 .human-review-evidence button {
   border: 1px solid var(--border);
@@ -967,17 +942,6 @@ async function saveSplit(group: HumanReviewGroup) {
   gap: 6px;
   flex-wrap: wrap;
   margin: 0 0 12px;
-}
-.human-review-bulk button {
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--hover);
-  padding: 6px 8px;
-  color: var(--text);
-  font-size: var(--text-xs);
-}
-.human-review-bulk button:disabled {
-  opacity: 0.5;
 }
 .human-review-bulk span,
 .human-review-select {
@@ -1007,12 +971,13 @@ async function saveSplit(group: HumanReviewGroup) {
   flex: 1 1 200px;
   margin-left: auto;
   box-sizing: border-box;
-  padding: 8px 10px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: var(--control-radius);
   background: var(--hover);
   color: var(--text);
-  font-size: 11px;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .human-review-proof {
   font-size: var(--text-xs);
@@ -1046,21 +1011,14 @@ async function saveSplit(group: HumanReviewGroup) {
   outline-offset: -2px;
   border-radius: 6px;
 }
-.human-review-row-head,
-.human-review-actions button,
-.human-review-bulk button {
+.human-review-row-head {
   font-size: 12px;
 }
 .human-review-row-head small,
 .human-review-evidence,
 .human-review-proof,
-.human-review-controls > button,
-.human-review-controls span button {
+.human-review-controls > button {
   font-size: 11px;
-}
-.human-review-actions button,
-.human-review-bulk button {
-  min-height: 34px;
 }
 .human-review-notice {
   display: flex;
@@ -1086,7 +1044,6 @@ async function saveSplit(group: HumanReviewGroup) {
 }
 .human-review-rule-preview button {
   align-self: flex-start;
-  color: var(--blue);
 }
 .human-review {
   overflow: visible;
@@ -1117,12 +1074,6 @@ async function saveSplit(group: HumanReviewGroup) {
 }
 .human-review-future select {
   max-width: min(400px, 70vw);
-  padding: 6px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: var(--panel);
-  color: var(--text);
-  font: inherit;
 }
 .human-review-note {
   display: flex;
@@ -1187,15 +1138,6 @@ async function saveSplit(group: HumanReviewGroup) {
 .human-review-split p {
   margin: 0;
   color: var(--muted);
-}
-.human-review-split button {
-  padding: 6px 9px;
-  border-radius: 6px;
-  background: var(--hover);
-  color: var(--text);
-}
-.human-review-split button:disabled {
-  opacity: 0.5;
 }
 .review-row {
   position: relative;
@@ -1311,29 +1253,6 @@ async function saveSplit(group: HumanReviewGroup) {
 .review-picker :deep(.project-picker-current small) {
   display: none;
 }
-.review-main > button {
-  min-height: 30px;
-  padding: 5px 10px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: var(--hover);
-  color: var(--text);
-  font-size: 12px;
-  cursor: pointer;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 4px;
-}
-.review-main > button:disabled {
-  opacity: 0.45;
-  cursor: default;
-}
-.review-main > button.review-primary:not(:disabled) {
-  background: var(--blue);
-  border-color: var(--blue);
-  color: #fff;
-}
 .review-main > button.review-what {
   min-height: 0;
   padding: 0;
@@ -1370,15 +1289,6 @@ async function saveSplit(group: HumanReviewGroup) {
 }
 .review-suggestion strong {
   color: var(--text);
-}
-.review-suggestion button {
-  padding: 3px 8px;
-  border: 1px solid var(--border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--blue);
-  font-size: 11px;
-  cursor: pointer;
 }
 .review-row .human-review-note {
   margin-left: 118px;

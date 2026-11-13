@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { computed, onMounted, ref, watch } from 'vue';
 import { Folder, Globe2, Plus, Search } from '@lucide/vue';
 import { transport, rulePreviewTransport, type WebsiteRuleImpact } from './transport.ts';
@@ -169,7 +171,7 @@ function openPath() {
 }
 </script>
 <template>
-  <div :class="['project-settings', { scoped: props.project && props.project !== 'all' }]">
+  <AppCard as="div" :class="['project-settings', { scoped: props.project && props.project !== 'all' }]">
     <aside v-if="!props.project || props.project === 'all'" class="project-rail" aria-label="Tracked projects">
       <label class="project-search"
         ><Search :size="14" /><input
@@ -200,7 +202,7 @@ function openPath() {
       <form class="project-open" @submit.prevent="openPath">
         <label for="project-path">Open another folder</label>
         <div>
-          <input id="project-path" v-model.trim="manualPath" placeholder="/Users/…/project" /><button
+          <input id="project-path" v-model.trim="manualPath" placeholder="/Users/…/project" /><button class="btn"
             type="submit"
             aria-label="Open project folder"
             title="Open project folder"
@@ -219,17 +221,13 @@ function openPath() {
         </div>
       </header>
       <div class="project-panel">
-        <div class="panel-heading">
-          <div>
-            <h4>Website matching</h4>
-            <p>Exact rules override automatic matches for this project.</p>
-          </div>
-          <span>{{ rules.length }} {{ rules.length === 1 ? 'rule' : 'rules' }}</span>
-        </div>
+        <SectionHeading title="Website matching" :level="4" size="compact" description="Exact rules override automatic matches for this project." class="panel-heading">
+          <template #actions><span>{{ rules.length }} {{ rules.length === 1 ? 'rule' : 'rules' }}</span></template>
+        </SectionHeading>
         <div v-if="rules.length" class="rule-list">
           <div v-for="rule in rules" :key="rule.pattern" class="rule-row">
             <Globe2 :size="15" /><span>{{ rule.pattern }}</span
-            ><button
+            ><button class="btn"
               :disabled="busy"
               :aria-label="`Remove rule for ${rule.pattern}`"
               @click="remove(rule.pattern)"
@@ -251,7 +249,7 @@ function openPath() {
               placeholder="http://localhost:1420 or https://github.com/owner/repo"
               required
               @input="clearPreview"
-            /><button type="submit" :disabled="busy">Preview rule</button>
+            /><button class="btn btn-primary" type="submit" :disabled="busy">Preview rule</button>
           </div>
         </form>
         <div v-if="preview" class="rule-preview">
@@ -272,16 +270,11 @@ function openPath() {
           <p v-else-if="impact">No captured interval in the last 7 days would have changed.</p>
           <small
             >Applies to future visits. Existing captured intervals and review decisions stay unchanged.</small
-          ><button :disabled="busy || !impact" @click="save(preview)">Save rule</button>
+          ><button class="btn btn-primary" :disabled="busy || !impact" @click="save(preview)">Save rule</button>
         </div>
       </div>
       <div v-if="observations.length" class="project-panel observations">
-        <div class="panel-heading">
-          <div>
-            <h4>Recently seen</h4>
-            <p>Capture evidence from the last ten minutes.</p>
-          </div>
-        </div>
+        <SectionHeading title="Recently seen" :level="4" size="compact" description="Capture evidence from the last ten minutes." class="panel-heading" />
         <div v-for="match in observations" :key="match.key" class="observation-row">
           <div>
             <strong>{{ match.key }}</strong
@@ -291,7 +284,7 @@ function openPath() {
               {{ source(match.suggestions.find((s) => s.projectPath === selected)?.source) }}</small
             >
           </div>
-          <button
+          <button class="btn"
             v-if="!rules.some((rule) => rule.pattern === match.key)"
             :disabled="busy"
             @click="showPreview(match.key)"
@@ -314,7 +307,7 @@ function openPath() {
       </p>
       <p v-if="error || loadError" class="project-error" role="alert">{{ error || loadError }}</p>
     </div>
-  </div>
+  </AppCard>
 </template>
 <style scoped>
 .project-skeleton {
@@ -325,9 +318,6 @@ function openPath() {
   display: grid;
   grid-template-columns: 210px minmax(0, 1fr);
   min-height: 360px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: var(--panel);
   overflow: hidden;
 }
 .project-settings.scoped { grid-template-columns: minmax(0, 1fr); }
@@ -352,11 +342,14 @@ function openPath() {
   min-width: 0;
   width: 100%;
   border: 0;
-  outline: 0;
   background: transparent;
   color: var(--text);
   font: inherit;
-  font-size: 11px;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  box-sizing: border-box;
 }
 .project-search input::placeholder,
 .project-open input::placeholder,
@@ -373,11 +366,13 @@ function openPath() {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 9px 10px;
-  border-radius: 7px;
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border-radius: var(--control-radius);
   color: var(--muted);
   text-align: left;
-  font-size: 11px;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .project-choice span {
   flex: 1;
@@ -423,8 +418,8 @@ function openPath() {
   align-items: center;
   gap: 7px;
   border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 7px 8px;
+  border-radius: var(--control-radius);
+  padding: 0 var(--space-1) 0 0;
 }
 .project-open button {
   color: var(--blue);
@@ -511,11 +506,7 @@ function openPath() {
   overflow-wrap: anywhere;
 }
 .rule-row button,
-.observation-row button {
-  color: var(--blue);
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
+.observation-row button { white-space: nowrap; }
 .empty-rules {
   color: var(--muted);
   font-size: 11px;
@@ -525,17 +516,8 @@ function openPath() {
 .rule-form {
   margin-top: 18px;
 }
-.rule-form > div {
-  padding: 4px 5px 4px 9px;
-}
-.rule-form button {
-  padding: 7px 9px;
-  border-radius: 5px;
-  background: var(--blue);
-  color: white;
-  font-size: var(--text-xs);
-  white-space: nowrap;
-}
+.rule-form > div { padding: 0 var(--space-1) 0 0; }
+.rule-form button { white-space: nowrap; }
 .rule-form button:disabled,
 .rule-row button:disabled,
 .observation-row button:disabled {
@@ -627,10 +609,6 @@ function openPath() {
   color: var(--muted);
 }
 .rule-preview button {
-  margin-top: 10px;
-  padding: 7px 10px;
-  border-radius: 5px;
-  background: var(--blue);
-  color: #fff;
+  margin-top: var(--space-3);
 }
 </style>

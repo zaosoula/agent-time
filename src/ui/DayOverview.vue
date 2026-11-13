@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, useId, watch } from 'vue';
 import { Activity, ArrowUpRight, Bot, Clock3, GitBranch, Layers3, LoaderCircle, Minus, Plus, RotateCcw, User, X } from '@lucide/vue';
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import InfoPopover from './InfoPopover.vue';
 import { inactivityGaps, parallelism } from './overview-metrics.ts';
 import type { Interval } from '../capture/events.ts';
@@ -260,26 +262,25 @@ function move(event: PointerEvent) {
 <template>
   <section class="overview" aria-label="Day overview">
     <div class="overview-cards">
-      <div v-for="figure in figures" :key="figure.label" :class="['overview-card', figure.kind]">
+      <AppCard v-for="figure in figures" :key="figure.label" :class="['overview-card', figure.kind]">
         <span class="figure-label"><component :is="figure.icon" :size="15" />{{ figure.label }}</span>
         <strong v-if="store.summaryLoaded">{{ figure.value }}</strong>
         <strong v-else><span class="skeleton figure-skeleton" aria-label="Loading"></span></strong>
         <small>{{ figure.detail }}</small>
-      </div>
+      </AppCard>
     </div>
 
-    <div class="overview-chart">
-      <div class="chart-head">
-        <div class="chart-title">
-          <span class="chart-symbol"><Activity :size="21" /></span>
-          <div><h2>Activity timeline</h2><p>One shared clock for your work and your agents.</p></div>
-        </div>
+    <AppCard class="overview-chart">
+      <SectionHeading as="div" class="chart-head" title="Activity timeline" description="One shared clock for your work and your agents.">
+        <template #leading><span class="chart-symbol"><Activity :size="21" /></span></template>
+        <template #actions>
         <span v-if="focus" class="focus-chip">
           <strong>{{ projectDisplay(focus.name, store.projects) }}</strong>
           <button class="icon-button" aria-label="Show all projects again" @click="emit('clearFocus')"><X :size="13" /></button>
         </span>
         <span class="range-label"><Clock3 :size="13" />{{ clock(range.start) }}–{{ range.end === store.dayEnd ? '24:00' : clock(range.end) }}</span>
-      </div>
+        </template>
+      </SectionHeading>
       <div class="chart-toolbar">
         <div class="chart-legend">
           <span><i class="swatch agent"></i>Agents working</span>
@@ -347,7 +348,7 @@ function move(event: PointerEvent) {
         </div>
         <p class="chart-hint">Pinch or ⌘-scroll to zoom · Shift-scroll to pan</p>
       </div>
-    </div>
+    </AppCard>
 
     <div class="overview-reading">
       <div class="parallelism">
@@ -370,20 +371,17 @@ function move(event: PointerEvent) {
 <style scoped>
 .overview { display: grid; gap: 14px; margin-bottom: 28px; }
 .overview-cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
-.overview-card { display: flex; flex-direction: column; gap: 10px; padding: 16px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--panel); min-width: 0; }
+.overview-card { display: flex; flex-direction: column; gap: 10px; padding: 16px 14px; --app-card-radius: 12px; }
 .figure-label { display: flex; align-items: center; gap: 7px; font-size: var(--text-sm); color: var(--muted); }
 .figure-label svg { flex: none; color: var(--agent); }
 .overview-card strong { font-size: clamp(22px, 2.2vw, 30px); font-weight: 650; letter-spacing: -0.8px; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .overview-card.agent strong { color: var(--agent); }
 .overview-card.human strong, .overview-card.human svg { color: var(--human); }
 .overview-card small { font-size: var(--text-xs); color: var(--muted); line-height: 1.4; }
-.overview-chart { padding: 22px 24px 14px; border: 1px solid var(--border-strong); border-radius: 16px; background: var(--panel); }
-.chart-head, .chart-title, .chart-toolbar, .chart-legend, .chart-bottom { display: flex; align-items: center; gap: 14px; }
-.chart-head { flex-wrap: wrap; }
-.chart-title { gap: 12px; margin-right: auto; }
+.overview-chart { padding: 22px 24px 14px; --app-card-border: var(--border-strong); --app-card-radius: 16px; }
+.chart-toolbar, .chart-legend, .chart-bottom { display: flex; align-items: center; gap: 14px; }
 .chart-symbol, .parallel-symbol { display: grid; place-items: center; width: 40px; height: 40px; flex: none; border-radius: 11px; background: var(--agent-soft); color: var(--agent); }
-.chart-head h2 { margin: 0; font-size: 18px; font-weight: 650; letter-spacing: -0.3px; }
-.chart-head p { margin: 4px 0 0; font-size: var(--text-sm); color: var(--muted); }
+.chart-head { --section-heading-description-size: var(--text-sm); }
 .range-label { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
 .focus-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 4px 3px 10px; border: 1px solid var(--agent); border-radius: 999px; font-size: var(--text-sm); color: var(--agent); max-width: 100%; }
 .focus-chip strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -397,7 +395,7 @@ function move(event: PointerEvent) {
 .swatch.human { width: 4px; background: var(--human-chart); }
 .swatch.idle { border: 1px solid var(--border); background: repeating-linear-gradient(45deg, var(--border) 0 1px, transparent 1px 5px); }
 .zoom-controls { display: flex; align-items: center; padding: 2px; border: 1px solid var(--border); border-radius: 8px; }
-.zoom-controls .icon-button { width: 28px; height: 26px; color: var(--muted); }
+.zoom-controls .icon-button { width: var(--control-height-compact, 28px); height: var(--control-height-compact, 28px); min-height: var(--control-height-compact, 28px); color: var(--muted); }
 .chart-body { --plot-height: 260px; display: grid; grid-template-columns: 24px minmax(0, 1fr); gap: 10px; }
 .y-axis { position: relative; }
 .y-axis span { position: absolute; right: 0; transform: translateY(50%); font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
@@ -427,7 +425,7 @@ function move(event: PointerEvent) {
 .figure-skeleton { width: 64px; height: 30px; }
 .chart-bottom { justify-content: space-between; flex-wrap: wrap; margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
 .period-controls { display: flex; gap: 4px; flex-wrap: wrap; }
-.period-controls button { padding: 5px 9px; border-radius: 6px; font-size: var(--text-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.period-controls button { min-height: var(--control-height-compact, 28px); padding: var(--control-padding-block-compact, 5px) var(--control-padding-inline-compact, 8px); border-radius: var(--control-radius, 6px); font-size: var(--control-font-size, 12px); line-height: var(--control-line-height, 16px); color: var(--muted); font-variant-numeric: tabular-nums; }
 .period-controls button:hover { background: var(--hover); }
 .period-controls button.active { background: var(--agent-soft); color: var(--agent); }
 .chart-hint { margin: 0; font-size: var(--text-xs); color: var(--muted); }
@@ -445,10 +443,8 @@ function move(event: PointerEvent) {
   .overview-card { padding: 13px; gap: 8px; }
   .overview-card strong { font-size: 26px; }
   .overview-chart { padding: 16px 14px 12px; border-radius: 13px; }
-  .chart-title { gap: 9px; }
   .chart-symbol { width: 33px; height: 33px; }
-  .chart-head h2 { font-size: 16px; }
-  .chart-head p { font-size: 11px; }
+  .chart-head { --section-heading-size: 16px; --section-heading-description-size: 11px; }
   .range-label { margin-left: 42px; }
   .chart-legend { gap: 10px; }
   .chart-toolbar { margin-top: 16px; }

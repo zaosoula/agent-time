@@ -106,14 +106,15 @@ const presentedOpen = useRetainedOpen(open);
   align-items: center;
   gap: 6px;
   width: 100%;
-  min-height: 34px;
-  padding: 7px 9px;
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--control-radius);
   background: var(--hover);
   color: var(--text);
   text-align: left;
-  font-size: var(--text-sm);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .project-picker-current > svg {
   flex: none;
@@ -152,13 +153,14 @@ const presentedOpen = useRetainedOpen(open);
 .project-picker-search {
   box-sizing: border-box;
   width: 100%;
-  padding: 7px 8px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--control-radius);
   background: var(--hover);
   color: var(--text);
   font: inherit;
-  font-size: var(--text-sm);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .project-picker-search:focus-visible {
   outline: 2px solid var(--accent);
@@ -171,9 +173,10 @@ const presentedOpen = useRetainedOpen(open);
 }
 .project-picker-option {
   display: block;
-  padding: 7px 8px;
-  border-radius: var(--radius-sm);
-  font-size: var(--text-sm);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border-radius: var(--control-radius);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
   cursor: pointer;
 }
 .project-picker-option[data-highlighted] {

@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import AppCard from './AppCard.vue';
+import SectionHeading from './SectionHeading.vue';
 import { computed, onMounted, ref } from 'vue';
 import { privacyTransport } from './transport.ts';
 import type { PrivacyExclusion } from '../capture/privacy-exclusions.ts';
@@ -58,13 +60,12 @@ async function remove(item: PrivacyExclusion) {
 }
 </script>
 <template>
-  <section class="privacy-exclusions card">
-    <h3>Activity exclusions</h3>
-    <p>
+  <AppCard as="section" padding="regular" class="privacy-exclusions">
+    <SectionHeading title="Activity exclusions" :level="3" size="compact"><template #description>
       Agent Time does not store foreground samples while an excluded app or exact website hostname is active.
       When site exclusions are set and the current browser hostname is unavailable, Agent Time discards that
       browser sample too. Existing history is kept. Agent hooks remain independent.
-    </p>
+    </template></SectionHeading>
     <form class="privacy-entry" @submit.prevent="add">
       <select v-model="kind" aria-label="Exclusion type" @change="hint = ''">
         <option value="app">App bundle ID</option>
@@ -98,12 +99,11 @@ async function remove(item: PrivacyExclusion) {
     </ul>
     <p v-if="!entries.length && !loadError" class="privacy-empty">No exclusions yet.</p>
     <p v-if="loadError" class="privacy-error" role="alert">{{ loadError }}</p>
-  </section>
+  </AppCard>
 </template>
 <style scoped>
 .privacy-exclusions {
   margin-top: 16px;
-  padding: 19px 20px;
 }
 .privacy-exclusions h3 {
   font-size: var(--text-md);
@@ -127,11 +127,14 @@ async function remove(item: PrivacyExclusion) {
 .privacy-entry select,
 .privacy-entry input {
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--control-radius);
   background: var(--hover);
   color: var(--text);
-  padding: 6px 9px;
-  font-size: var(--text-sm);
+  min-height: var(--control-height);
+  box-sizing: border-box;
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
 }
 .privacy-exclusions ul {
   list-style: none;

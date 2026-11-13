@@ -66,6 +66,18 @@
   --space-4: 16px;
   --space-5: 24px;
   --space-6: 32px;
+  /* Native Mac control density: fields and ordinary actions share one baseline. */
+  --control-height: 32px;
+  --control-height-compact: 28px;
+  --control-font-size: var(--text-sm);
+  --control-line-height: 16px;
+  --control-padding-block: 7px;
+  --control-padding-block-compact: 5px;
+  --control-padding-inline: 10px;
+  --control-padding-inline-compact: 8px;
+  --control-radius: 6px;
+  --control-gap: 6px;
+
   --radius-sm: 5px;
   --radius-md: 8px;
   --radius-lg: 10px;
@@ -104,19 +116,27 @@
   }
 }
 
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
 /* Shared controls ----------------------------------------------------------------------------- */
 .btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 28px;
-  padding: 5px 11px;
+  gap: var(--control-gap);
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
   border: 1px solid var(--border);
-  border-radius: var(--radius-sm);
+  border-radius: var(--control-radius);
   background: var(--panel);
   color: var(--text);
-  font-size: var(--text-sm);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
   font-weight: 500;
   white-space: nowrap;
   box-shadow: var(--shadow-card);
@@ -124,12 +144,14 @@
 .btn:hover:not(:disabled) {
   background: var(--hover);
 }
-.btn-primary {
+.btn-primary,
+.btn.primary {
   border-color: var(--accent);
   background: var(--accent);
   color: var(--accent-contrast);
 }
-.btn-primary:hover:not(:disabled) {
+.btn-primary:hover:not(:disabled),
+.btn.primary:hover:not(:disabled) {
   background: color-mix(in srgb, var(--accent) 88%, #000);
 }
 .btn-quiet {
@@ -149,9 +171,35 @@
   background: var(--status-danger-soft);
 }
 .btn-sm {
-  min-height: 24px;
-  padding: 3px 8px;
-  font-size: var(--text-xs);
+  min-height: var(--control-height-compact);
+  padding: var(--control-padding-block-compact) var(--control-padding-inline-compact);
+}
+
+/* Size fields, not every button: navigation, switches, timeline bars and structured
+   row buttons keep their own geometry. Multi-line and choice controls stay native. */
+:where(
+  input:not([type]),
+  input[type='text'], input[type='search'], input[type='email'], input[type='password'],
+  input[type='url'], input[type='tel'], input[type='number'], input[type='date'],
+  input[type='time'], input[type='datetime-local'], input[type='month'], input[type='week'],
+  select:not([multiple]):not([size]), select:not([multiple])[size='1']
+) {
+  box-sizing: border-box;
+  height: var(--control-height);
+  min-height: var(--control-height);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  border: 1px solid var(--border);
+  border-radius: var(--control-radius);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
+}
+:where(input, select).control-compact {
+  height: var(--control-height-compact);
+  min-height: var(--control-height-compact);
+  padding: var(--control-padding-block-compact) var(--control-padding-inline-compact);
 }
 .badge {
   display: inline-flex;
@@ -260,10 +308,6 @@
 body {
   margin: 0;
 }
-button,
-input {
-  font: inherit;
-}
 button {
   cursor: pointer;
   color: inherit;
@@ -273,7 +317,8 @@ button:disabled {
   cursor: default;
 }
 button:focus-visible,
-input:focus-visible {
+input:focus-visible,
+select:focus-visible {
   outline: 3px solid color-mix(in srgb, var(--accent) 40%, transparent);
   outline-offset: 2px;
 }
@@ -501,13 +546,18 @@ input {
   gap: 17px;
 }
 .icon-button {
-  width: 26px;
-  height: 26px;
+  width: var(--control-height);
+  height: var(--control-height);
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 5px;
   color: var(--muted);
+}
+.icon-button.btn-sm {
+  width: var(--control-height-compact);
+  height: var(--control-height-compact);
+  padding: 0;
 }
 .icon-button:hover {
   background: var(--hover);
@@ -515,11 +565,13 @@ input {
 .capture-button {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 11px;
+  gap: var(--control-gap);
+  min-height: var(--control-height);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
   border: 1px solid var(--border);
-  border-radius: 5px;
-  padding: 5px 9px;
+  border-radius: var(--control-radius);
+  padding: var(--control-padding-block) var(--control-padding-inline);
   box-shadow: 0 1px 1px #00000004;
   background: var(--panel);
 }
@@ -550,19 +602,23 @@ h1 {
 }
 .date-controls {
   display: flex;
+  min-height: var(--control-height);
   align-items: center;
   border: 1px solid var(--border);
   border-radius: 7px;
-  padding: 3px;
+  padding: 1px;
   background: var(--panel);
-  gap: 3px;
+  gap: 2px;
 }
 .date-controls input {
   background: none;
   border: 0;
-  font-size: 11px;
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
+  padding-block: 0;
+  padding-inline: 4px;
   width: 107px;
-  color: #606574;
+  color: var(--muted);
 }
 .today-button {
   font-size: 11px;
@@ -888,9 +944,11 @@ h1 {
 .primary-button {
   background: var(--accent);
   color: var(--accent-contrast);
-  border-radius: 6px;
-  padding: 7px 13px;
-  font-size: 12px;
+  min-height: var(--control-height);
+  border-radius: var(--control-radius);
+  padding: var(--control-padding-block) var(--control-padding-inline);
+  font-size: var(--control-font-size);
+  line-height: var(--control-line-height);
   border: 1px solid #006ee6;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--accent) 9%, transparent);
 }
@@ -2419,8 +2477,8 @@ tbody tr:hover {
   font-weight: 600;
 }
 .banner .icon-button {
-  width: 24px;
-  height: 24px;
+  width: var(--control-height-compact);
+  height: var(--control-height-compact);
 }
 
 /* Narrow windows: the sidebar becomes a compact bar of pages and projects above the content. */

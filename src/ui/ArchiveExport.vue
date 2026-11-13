@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import AppButton from './AppButton.vue';
+import AppCard from './AppCard.vue';
+import {startBackgroundActivity} from './background-activity.ts';
 import { onMounted, ref } from 'vue';
 import { archiveTransport, storageRecoveryTransport, native } from './transport.ts';
 import type { ArchivePreview } from '../capture/store.ts';
@@ -36,11 +39,14 @@ async function exportArchive() {
   busy.value = true;
   error.value = '';
   copied.value = false;
+  const activity=startBackgroundActivity('Creating backup…','data');
   try {
     result.value = await archiveTransport.export();
     toast.success(`Archive created and verified · ${count(result.value.events)} events.`);
     await refresh();
+    activity.finish('Backup ready');
   } catch (cause) {
+    activity.finish();
     error.value = humanizeError(cause);
   } finally {
     busy.value = false;
@@ -150,7 +156,7 @@ onMounted(() => {
 });
 </script>
 <template>
-  <section class="archive-export card">
+  <AppCard as="section" padding="regular" class="archive-export">
     <h3>Back up and recover your history</h3>
     <p>
       Create a verified local copy of captured events, review decisions, splits, day reviews, and notes. The
@@ -171,18 +177,17 @@ onMounted(() => {
         observation.
       </li>
     </ol>
-    <button class="btn btn-primary" :disabled="busy" @click="exportArchive">
+    <AppButton class="btn btn-primary" :disabled="busy" @click="exportArchive">
       {{ busy ? 'Creating archive…' : 'Create archive' }}
-    </button>
-    <button v-if="native" class="btn" :disabled="busy" @click="chooseArchive">
+    </AppButton>
+    <AppButton v-if="native" class="btn" :disabled="busy" @click="chooseArchive">
       Choose archive from Finder…
-    </button>
+    </AppButton>
     <p v-if="error" class="archive-error" role="alert">{{ error }}</p>
     <div v-if="result" role="status">
       <strong>Archive verified · {{ count(result.events) }} events · {{ bytes(result.bytes) }}</strong
       ><code>{{ result.path }}</code
-      ><button class="btn btn-sm" @click="copyPath">{{ copied ? 'Path copied' : 'Copy archive path' }}</button
-      ><small
+      ><AppButton class="btn btn-sm" @click="copyPath">{{ copied ? 'Path copied' : 'Copy archive path' }}</AppButton><small
         >In Finder, press ⇧⌘G and paste the path to find the file. Copy it to your protected backup
         location.</small
       >
@@ -209,7 +214,7 @@ onMounted(() => {
           </option>
         </select></label
       >
-      <button class="btn" :disabled="busy || !selected" @click="inspect">Preview restore</button>
+      <AppButton class="btn" :disabled="busy || !selected" @click="inspect">Preview restore</AppButton>
       <p v-if="preview">
         Archive: {{ preview.archiveEvents }} events. Adds {{ preview.newEvents }} events,
         {{ preview.newNotes }} notes, {{ preview.newDecisions }} decisions, {{ preview.newSplits }} splits,
@@ -221,21 +226,21 @@ onMounted(() => {
         >The archive disagrees with current data. Missing-record restore is blocked; inspect the selected file
         before considering exact replacement.</small
       >
-      <button
+      <AppButton
         v-if="preview"
         class="btn btn-primary"
         :disabled="busy || running || Boolean(conflictCount())"
         @click="restore"
       >
         Restore missing records
-      </button>
-      <button v-if="preview" class="btn btn-danger" :disabled="busy || running" @click="replaceFromArchive">
+      </AppButton>
+      <AppButton v-if="preview" class="btn btn-danger" :disabled="busy || running" @click="replaceFromArchive">
         {{
           confirmReplace === selected
             ? 'Confirm exact replacement on next launch'
             : 'Replace all current data from archive…'
         }}
-      </button>
+      </AppButton>
       <small v-if="confirmReplace === selected" role="alert"
         >The selected archive will replace the complete current database after you quit and reopen Agent Time.
         The current database becomes a local recovery archive.</small
@@ -243,22 +248,20 @@ onMounted(() => {
       <small v-if="running">Pause capture to restore an archive.</small
       ><small v-if="restored" role="status">{{ restored }}</small>
       <div class="archive-cleanup">
-        <button class="btn btn-danger" :disabled="busy || !selected" @click="removeArchive">
+        <AppButton class="btn btn-danger" :disabled="busy || !selected" @click="removeArchive">
           {{
             confirmDelete === selected ? 'Confirm permanent archive deletion' : 'Delete selected archive…'
-          }}</button
-        ><small v-if="confirmDelete === selected" role="alert"
+          }}</AppButton><small v-if="confirmDelete === selected" role="alert"
           >This permanently removes this local archive. The live database is kept. Keep another protected
           backup before confirming.</small
         >
       </div>
     </div>
-  </section>
+  </AppCard>
 </template>
 <style scoped>
 .archive-export {
   margin-top: 16px;
-  padding: 19px 20px;
 }
 .archive-export h3 {
   font-size: var(--text-md);
@@ -299,7 +302,7 @@ onMounted(() => {
 }
 .archive-restore select {
   max-width: 100%;
-  padding: 7px;
+  padding: var(--control-padding-block) var(--control-padding-inline);
   background: var(--hover);
   color: var(--text);
   border: 1px solid var(--border);
