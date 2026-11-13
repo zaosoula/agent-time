@@ -129,16 +129,16 @@ onMounted(()=>void refresh());
 onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevision.value)void refresh(true);});
 </script>
 <template>
-  <section class="day-content billing-page">
+  <section class="day-content app-page billing-page">
     <div class="billing-content">
       <SectionHeading class="day-heading" title="Billing reports" description="Calculate project billing, review the evidence, and export a saved report." :level="1" size="page"><template #actions><AppButton @click="configure">Edit policy</AppButton></template></SectionHeading>
       <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
       <template v-else>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
-        <div v-if="!projects.length" class="empty-state"><h2>Set up your first billing project</h2><p>Group repositories and choose billing rules in Projects before generating a report.</p><AppButton class="btn primary" @click="configure">Configure billing</AppButton></div>
+        <div v-if="!projects.length" class="empty-state"><h2>Set up your first billing project</h2><p>Group repositories and choose billing rules in Projects before generating a report.</p><AppButton variant="primary" @click="configure">Configure billing</AppButton></div>
         <div v-else class="project-picker"><label for="report-project">Billable project</label><select id="report-project" :value="projectId" :disabled="reportBusy" @change="selectProject(($event.target as HTMLSelectElement).value)"><option value="">Choose a project…</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select><AppButton class="btn" :disabled="reportBusy" @click="refresh(true)">Refresh projects</AppButton></div>
       <section v-if="projectId" class="report-section">
-        <nav class="report-actions" aria-label="Billing report views"><AppButton class="btn" :aria-pressed="view==='generate'" @click="view='generate'">Generate</AppButton><AppButton class="btn" :aria-pressed="view==='saved'" @click="showSaved">Saved reports</AppButton></nav>
+        <nav class="report-actions billing-view-tabs" aria-label="Billing report views"><AppButton class="btn" :aria-pressed="view==='generate'" @click="view='generate'">Generate</AppButton><AppButton class="btn" :aria-pressed="view==='saved'" @click="showSaved">Saved reports</AppButton></nav>
         <div v-show="view==='saved'" class="saved-history">
           <p class="hint">Saved reports keep their original rules and totals, even after a policy changes. Most recently saved first.</p>
           <AppButton class="btn" :disabled="historyLoading" @click="loadHistory()">Refresh reports</AppButton>
@@ -151,7 +151,7 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
           <LoadingStatus v-if="historyReporting" label="Opening saved report" />
         </div>
         <p class="hint">Reports use the saved project settings. Each saved report keeps its original rules and results.</p>
-        <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><AppButton class="btn primary" :disabled="reportBusy" type="submit">{{ reporting ? 'Working…' : 'Generate report' }}</AppButton></form>
+        <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><AppButton variant="primary" :disabled="reportBusy" type="submit">{{ reporting ? 'Working…' : 'Generate report' }}</AppButton></form>
         <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>

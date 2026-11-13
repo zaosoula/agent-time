@@ -4,6 +4,7 @@ import { ArrowRight, CalendarDays, CheckCircle2, Layers3, Radio, Search, ShieldC
 import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
 import DayOverview from './DayOverview.vue';
+import SectionHeading from './SectionHeading.vue';
 import DayPicker from './DayPicker.vue';
 import ProjectExplorer from './ProjectExplorer.vue';
 import InfoPopover from './InfoPopover.vue';
@@ -125,19 +126,14 @@ const websites = computed(() => {
 </script>
 
 <template>
-  <section class="day-content">
-    <div class="day-heading">
-      <div>
-        <h1>
-          {{
-            props.mode === 'sessions'
-              ? 'Agents'
-              : store.project === 'all'
-                ? 'Home'
-                : projectLabel(store.project)
-          }}
-        </h1>
-        <p>
+  <section class="day-content app-page today-page">
+    <SectionHeading
+      class="day-heading"
+      :title="props.mode === 'sessions' ? 'Agents' : store.project === 'all' ? 'Home' : projectLabel(store.project)"
+      :level="1"
+      size="page"
+    >
+      <template #description>
           {{
             props.mode === 'sessions'
               ? longDate(store.selectedDate)
@@ -184,10 +180,9 @@ const websites = computed(() => {
               </li>
             </ul>
           </InfoPopover>
-        </p>
-      </div>
-      <DayPicker />
-    </div>
+      </template>
+      <template #actions><DayPicker /></template>
+    </SectionHeading>
 
     <SetupVerification
       v-if="props.mode === 'today' && store.isToday"

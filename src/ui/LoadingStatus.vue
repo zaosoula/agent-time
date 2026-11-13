@@ -9,15 +9,20 @@ onUnmounted(() => clearInterval(timer));
 </script>
 <template>
   <div class="loading-status" role="status" aria-live="polite">
-    <div class="loading-title"><strong>{{ label }}</strong><span aria-hidden="true">{{ elapsedLabel }}</span></div>
-    <progress :value="total ? completed : undefined" :max="total || undefined" :aria-label="label" />
+    <div class="loading-title">
+      <strong>{{ label }}</strong>
+      <progress :value="total ? completed : undefined" :max="total || undefined" :aria-label="label" />
+      <span aria-hidden="true">{{ elapsedLabel }}</span>
+    </div>
     <p v-if="detail">{{ detail }}</p>
   </div>
 </template>
 <style scoped>
-.loading-status { padding: 14px 16px; border: 1px solid var(--border); border-radius: 10px; background: var(--panel); margin: 12px 0; }
-.loading-title { display: flex; justify-content: space-between; gap: 16px; font-size: 12px; }
-.loading-title span, p { color: var(--muted); font-size: 12px; }
-progress { display: block; width: 100%; height: 5px; margin: 10px 0; accent-color: var(--accent); }
-p { margin: 0; line-height: 1.5; }
+.loading-status { padding: 12px 0; margin: 12px 0; }
+.loading-title { display: flex; align-items: center; gap: 12px; font-size: var(--text-caption, 13px); }
+.loading-title strong { font-weight: 500; }
+.loading-title span { margin-left: auto; flex: none; color: var(--muted); font-variant-numeric: tabular-nums; }
+progress { flex: 1; min-width: 40px; max-width: 160px; height: 4px; accent-color: var(--accent); }
+p { margin: 6px 0 0; color: var(--muted); font-size: var(--text-caption, 13px); line-height: 1.45; }
+@media (max-width: 480px) { .loading-title { flex-wrap: wrap; } progress { max-width: 80px; } }
 </style>

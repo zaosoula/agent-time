@@ -39,6 +39,7 @@ import TodayPage from './TodayPage.vue';
 import ReportsPage from './ReportsPage.vue';
 import ProjectsPage from './ProjectsPage.vue';
 import appIcon from './icon.svg';
+import AppearanceControl from './AppearanceControl.vue';
 
 const betaUpdatesEnabled = import.meta.env.VITE_BETA_UPDATES === '1';
 const store = reactive(useStore());
@@ -218,8 +219,9 @@ onUnmounted(() => {
         <div class="titlebar-space" data-tauri-drag-region></div>
         <div class="brand">
           <div class="brand-mark"><img :src="appIcon" alt="" /></div>
-          <span>Agent Time</span><span class="version">Preview</span>
+          <span>Agent Time</span>
         </div>
+        <p class="brand-caption">Your work, with agents.</p>
         <nav class="sidebar-section" aria-label="Pages">
           <button
             v-for="item in pages"
@@ -246,6 +248,7 @@ onUnmounted(() => {
             ></span>
           </button>
         </nav>
+        <button :class="['nav-row', 'mobile-settings', { active: store.page === 'settings' }]" :aria-current="store.page === 'settings' ? 'page' : undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
         <div class="section-label">
           Projects <span v-if="store.summaryLoaded">{{ store.projects.length }}</span>
         </div>
@@ -270,12 +273,14 @@ onUnmounted(() => {
         </div>
         <div class="sidebar-footer">
           <button :class="['nav-row',{active:store.page==='settings'}]" :aria-current="store.page==='settings'?'page':undefined" @click="navigate('settings')"><Settings2 :size="17" /><span>Settings</span></button>
-
+          <div class="workspace-identity"><span class="workspace-mark" aria-hidden="true"><Layers3 :size="18" /></span><div><strong>Personal workspace</strong><span>Stored on this Mac</span></div></div>
+          <p class="appearance-label">Appearance</p>
+          <AppearanceControl />
         </div>
       </aside>
 
       <main class="main-pane">
-        <header class="toolbar" data-tauri-drag-region>
+        <header class="toolbar" data-tauri-drag-region="deep">
           <div class="breadcrumbs">
             <template v-if="showsProject && store.project !== 'all'">
               <span>{{ pageTitle }}</span>

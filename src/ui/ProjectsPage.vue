@@ -73,7 +73,7 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
 </script>
 
 <template>
-  <section class="day-content projects-page">
+  <section class="day-content app-page projects-page">
     <SectionHeading class="day-heading" title="Projects" description="Connect repository activity, website attribution and billing rules." :level="1" size="page"><template #actions><DayPicker /></template></SectionHeading>
     <AppCard class="repository-picker card" padding="compact">
       <label for="projects-repository">Repository</label>
@@ -86,7 +86,7 @@ const overviewHasActivity = computed(() => overviewHumanSeconds.value > 0 || ove
       <details><summary>Open another repository</summary><form @submit.prevent="openFolder"><label for="projects-folder">Repository folder</label><input id="projects-folder" v-model="folder" placeholder="/Users/you/projects/app" /><button class="btn" type="submit">Open folder</button></form><p v-if="folderError" role="alert">{{ folderError }}</p></details>
       <p v-if="repository" class="repository-path">{{ repository }}</p>
     </AppCard>
-    <nav class="workspace-tabs" aria-label="Project sections"><button v-for="section in sections" :key="section.id" :aria-current="store.projectsSection.value === section.id ? 'page' : undefined" :class="{ active: store.projectsSection.value === section.id }" @click="openSection(section.id)">{{ section.label }}</button></nav>
+    <nav class="workspace-tabs" aria-label="Project sections"><button v-for="section in sections" :key="section.id" :aria-current="store.projectsSection.value === section.id ? 'page' : undefined" :class="['workspace-tab', { active: store.projectsSection.value === section.id }]" @click="openSection(section.id)">{{ section.label }}</button></nav>
     <AppCard padding="spacious" v-if="visited.has('overview')" v-show="store.projectsSection.value === 'overview'" class="project-overview card">
       <SectionHeading :title="repository ? projectLabel(repository) : 'Your project workspace'" :description="longDate(store.selectedDate.value)" />
       <p v-if="!store.summaryLoaded.value" role="status">{{ store.pollError.value ? 'Activity could not be loaded. Try refreshing from Home.' : 'Loading activity for this day…' }}</p>

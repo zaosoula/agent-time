@@ -57,7 +57,7 @@ test('shared button supports explicit submit, disabled state, compact sizing and
 
 
 test('shared sizing preserves multiline buttons and excludes choice, range and multiline fields', () => {
-  const source = readFileSync(new URL('../src/ui/style.css', import.meta.url), 'utf8');
+  const source = ['design-tokens.css', 'style.css'].map(file => readFileSync(new URL(`../src/ui/${file}`, import.meta.url), 'utf8')).join('\n');
   const result = compileStyle({ source, filename: 'style.css', id: 'controls-test' });
   assert.deepEqual(result.errors, []);
   const rules = new Map<string, Map<string, string>>();
@@ -66,8 +66,8 @@ test('shared sizing preserves multiline buttons and excludes choice, range and m
     rule.walkDecls(item => { declarations.set(item.prop, item.value); });
     rules.set(rule.selector, declarations);
   });
-  assert.equal(rules.get(':root')!.get('--control-height'), '32px');
-  assert.equal(rules.get(':root')!.get('--control-height-compact'), '28px');
+  assert.equal(rules.get(':root')!.get('--control-height'), '36px');
+  assert.equal(rules.get(':root')!.get('--control-height-compact'), '32px');
   const button = rules.get('.btn')!;
   assert.equal(button.get('min-height'), 'var(--control-height)');
   assert.equal(button.has('height'), false); assert.equal(button.has('max-height'), false);

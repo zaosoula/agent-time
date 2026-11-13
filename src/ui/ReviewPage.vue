@@ -4,6 +4,8 @@
 import { computed, reactive, ref } from 'vue';
 import { CheckCircle2, ChevronLeft, ChevronRight } from '@lucide/vue';
 import HumanReview from './HumanReview.vue';
+import SectionHeading from './SectionHeading.vue';
+import AppCard from './AppCard.vue';
 import DayNotes from './DayNotes.vue';
 import DayPicker from './DayPicker.vue';
 import { useStore } from './store.ts';
@@ -41,16 +43,12 @@ async function markReviewed() {
 </script>
 
 <template>
-  <section class="day-content review-page">
-    <div class="day-heading">
-      <div>
-        <h1>Review</h1>
-        <p>{{ longDate(store.selectedDate) }}: give each piece of activity the right project.</p>
-      </div>
-      <DayPicker />
-    </div>
+  <section class="day-content app-page review-page">
+    <SectionHeading class="day-heading" title="Review" :description="`${longDate(store.selectedDate)} · Give each activity the right project.`" :level="1" size="page">
+      <template #actions><DayPicker /></template>
+    </SectionHeading>
 
-    <div class="review-summary card">
+    <AppCard padding="compact" class="review-summary">
       <div class="review-summary-status">
         <template v-if="store.dayReviewed">
           <CheckCircle2 :size="18" class="good" />
@@ -89,7 +87,7 @@ async function markReviewed() {
       >
         Mark day reviewed
       </button>
-    </div>
+    </AppCard>
 
     <nav v-if="backlog.length" class="review-days" aria-label="Other days to review">
       <button class="btn btn-sm" :disabled="!previousBacklog" @click="previousBacklog && store.setDate(previousBacklog.date)">

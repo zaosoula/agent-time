@@ -272,7 +272,6 @@ function move(event: PointerEvent) {
 
     <AppCard class="overview-chart">
       <SectionHeading as="div" class="chart-head" title="Activity timeline" description="One shared clock for your work and your agents.">
-        <template #leading><span class="chart-symbol"><Activity :size="21" /></span></template>
         <template #actions>
         <span v-if="focus" class="focus-chip">
           <strong>{{ projectDisplay(focus.name, store.projects) }}</strong>
@@ -373,10 +372,11 @@ function move(event: PointerEvent) {
 .overview-cards { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px; }
 .overview-card { display: flex; flex-direction: column; gap: 10px; padding: 16px 14px; --app-card-radius: 12px; }
 .figure-label { display: flex; align-items: center; gap: 7px; font-size: var(--text-sm); color: var(--muted); }
-.figure-label svg { flex: none; color: var(--agent); }
+.figure-label svg { flex: none; color: var(--muted); }
 .overview-card strong { font-size: clamp(22px, 2.2vw, 30px); font-weight: 650; letter-spacing: -0.8px; font-variant-numeric: tabular-nums; line-height: 1.1; }
-.overview-card.agent strong { color: var(--agent); }
-.overview-card.human strong, .overview-card.human svg { color: var(--human); }
+.overview-card.agent strong { color: var(--text); }
+.overview-card.human strong { color: var(--text); }
+.overview-card.human svg { color: var(--muted); }
 .overview-card small { font-size: var(--text-xs); color: var(--muted); line-height: 1.4; }
 .overview-chart { padding: 22px 24px 14px; --app-card-border: var(--border-strong); --app-card-radius: 16px; }
 .chart-toolbar, .chart-legend, .chart-bottom { display: flex; align-items: center; gap: 14px; }
@@ -445,7 +445,7 @@ function move(event: PointerEvent) {
   .overview-chart { padding: 16px 14px 12px; border-radius: 13px; }
   .chart-symbol { width: 33px; height: 33px; }
   .chart-head { --section-heading-size: 16px; --section-heading-description-size: 11px; }
-  .range-label { margin-left: 42px; }
+  .range-label { margin-left: 0; }
   .chart-legend { gap: 10px; }
   .chart-toolbar { margin-top: 16px; }
   .chart-body { --plot-height: 230px; gap: 7px; grid-template-columns: 18px minmax(0, 1fr); }

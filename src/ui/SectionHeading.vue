@@ -9,7 +9,7 @@ withDefaults(defineProps<{
 </script>
 
 <template>
-  <component :is="as" :class="['section-heading', `section-heading--${size}`]">
+  <component :is="as" :class="['section-heading', `section-heading--${size}`, { 'app-page-header': size === 'page' }]">
     <div class="section-heading-row">
       <div class="section-heading-main">
         <slot name="leading" />
@@ -30,8 +30,8 @@ withDefaults(defineProps<{
 .section-heading-main { flex: 1; }
 .section-heading-copy { min-width: 0; }
 .section-heading-actions { flex-wrap: wrap; }
-.section-heading-title { margin: 0; font-size: var(--section-heading-size, 18px); font-weight: 650; letter-spacing: -.3px; }
-.section-heading--page { --section-heading-size: 24px; }
-.section-heading--compact { --section-heading-size: 13px; }
-.section-heading-description { margin: 7px 0 0; color: var(--muted); font-size: var(--section-heading-description-size, 12px); line-height: 1.6; }
+.section-heading-title { margin: 0; font-size: var(--section-heading-size, var(--text-heading, 20px)); font-weight: 600; letter-spacing: -.01em; line-height: 1.25; text-wrap: balance; }
+.section-heading--page { --section-heading-size: var(--text-title, 28px); }
+.section-heading--compact { --section-heading-size: var(--text-label, 14px); }
+.section-heading-description { margin: 7px 0 0; color: var(--muted); font-size: var(--section-heading-description-size, var(--text-caption, 13px)); line-height: 1.45; text-wrap: pretty; }
 </style>

@@ -11,6 +11,6 @@ withDefaults(defineProps<{
   <button
     :type="type"
     :disabled="disabled"
-    :class="['btn', { 'btn-sm': compact }, variant !== 'default' && `btn-${variant}`]"
+    :class="['btn', 'app-button', { 'btn-sm': compact }, variant !== 'default' && `btn-${variant}`]"
   ><slot /></button>
 </template>

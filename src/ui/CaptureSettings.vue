@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import AppCard from './AppCard.vue';
 import SectionHeading from './SectionHeading.vue';
+import AppearanceControl from './AppearanceControl.vue';
 import { ref, computed, watch, onMounted, onUnmounted } from 'vue';
 import { SwitchRoot, SwitchThumb, TabsRoot, TabsList, TabsTrigger, TabsContent } from 'reka-ui';
 import {
@@ -184,7 +185,13 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
     <div class="settings-document">
       <TabsContent v-if="visitedTabs.has('general')" value="general" class="settings-panel">
         <section class="settings-section">
-          <SectionHeading title="General" description="Startup, app information and updates." class="settings-heading" />
+          <SectionHeading title="General" description="Appearance, startup and app updates." class="settings-heading" />
+          <AppCard as="div" padding="none" class="control-list">
+            <div class="control-row appearance-row">
+              <div class="control-copy"><strong>Appearance</strong><p>Choose light, dark, or follow your Mac.</p></div>
+              <AppearanceControl />
+            </div>
+          </AppCard>
           <AppCard as="div" padding="none" class="control-list">
             <div class="control-row">
               <div class="control-copy">
@@ -689,6 +696,10 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
   margin: 0 0 18px;
 }
 .control-list { overflow: hidden; }
+.control-list + .control-list { margin-top: 16px; }
+.appearance-row { flex-wrap: wrap; }
+.appearance-row .control-copy { min-width: 180px; }
+.appearance-row .appearance-control { flex-shrink: 0; }
 .control-row {
   display: flex;
   align-items: center;
@@ -855,5 +866,15 @@ onUnmounted(() => window.removeEventListener('focus', refreshStartup));
 .startup-note p {
   color: var(--status-danger);
   margin: 0 0 8px;
+}
+@media (max-width: 700px) {
+  .settings-layout { flex-direction: column; }
+  .settings-sidebar { width: 100%; padding: 16px 18px 12px; border-right: 0; border-bottom: 1px solid var(--border); overflow: visible; }
+  .settings-sidebar h1 { margin: 0 0 12px; font-size: var(--text-heading); }
+  .settings-tabs { display: flex; overflow-x: auto; gap: 4px; }
+  .settings-nav { width: auto; flex: 0 0 auto; white-space: nowrap; }
+  .settings-sidebar > p { display: none; }
+  .settings-document { padding: 24px 18px; }
+  .appearance-row .appearance-control { max-width: 100%; }
 }
 </style>

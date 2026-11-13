@@ -13,7 +13,7 @@ withDefaults(defineProps<{
 .app-card {
   min-width: 0;
   border: 1px solid var(--app-card-border, var(--border));
-  border-radius: var(--app-card-radius, var(--radius-lg, 10px));
+  border-radius: var(--app-card-radius, var(--radius-lg, 16px));
   background: var(--panel);
   padding: var(--app-card-padding, 0);
 }
