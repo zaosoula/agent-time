@@ -490,9 +490,23 @@ pub fn run(){
   let beta=option_env!("AGENT_TIME_BETA")==Some("1");
   let mut items:Vec<&dyn tauri::menu::IsMenuItem<tauri::Wry>>=vec![&about];
   if beta{items.push(&check);}
-  items.extend([&first as &dyn tauri::menu::IsMenuItem<tauri::Wry>,&toggle,&troubleshooting,&second,&show,&third,&quit]);
-  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&items)?,&edit])?;
+  // Standard macOS app-menu items (Services, Hide ⌘H, Hide Others ⌥⌘H, Show All).
+  let (fourth,fifth)=(tauri::menu::PredefinedMenuItem::separator(app)?,tauri::menu::PredefinedMenuItem::separator(app)?);
+  let services=tauri::menu::PredefinedMenuItem::services(app,None)?;
+  let hide=tauri::menu::PredefinedMenuItem::hide(app,Some("Hide Agent Time"))?;
+  let hide_others=tauri::menu::PredefinedMenuItem::hide_others(app,None)?;
+  let show_all=tauri::menu::PredefinedMenuItem::show_all(app,None)?;
+  items.extend([&first as &dyn tauri::menu::IsMenuItem<tauri::Wry>,&toggle,&troubleshooting,&second,&show,&third,&services,&fourth,&hide,&hide_others,&show_all,&fifth,&quit]);
+  let view=tauri::menu::Submenu::with_items(app,"View",true,&[&tauri::menu::PredefinedMenuItem::fullscreen(app,None)?])?;
+  // Without a Window menu macOS has no ⌘M (Minimize) or ⌘W (Close) shortcut.
+  let window_menu=tauri::menu::Submenu::with_items(app,"Window",true,&[
+   &tauri::menu::PredefinedMenuItem::minimize(app,None)?, &tauri::menu::PredefinedMenuItem::maximize(app,Some("Zoom"))?,
+   &tauri::menu::PredefinedMenuItem::separator(app)?, &tauri::menu::PredefinedMenuItem::bring_all_to_front(app,None)?,
+   &tauri::menu::PredefinedMenuItem::separator(app)?, &tauri::menu::PredefinedMenuItem::close_window(app,None)?])?;
+  let menu=tauri::menu::Menu::with_items(app,&[&tauri::menu::Submenu::with_items(app,"Agent Time",true,&items)?,&edit,&view,&window_menu])?;
   app.set_menu(menu)?;
+  #[cfg(target_os="macos")]
+  window_menu.set_as_windows_menu_for_nsapp()?;
   if !std::env::args().any(|arg|arg=="--background") { if let Some(window)=app.get_webview_window("main"){window.show()?;} }
   Ok(())
  }).on_menu_event(|app,event|{tray::handle(app,event.id().as_ref());if event.id().as_ref()=="show"{if let Some(window)=app.get_webview_window("main"){let _=window.show();let _=window.set_focus();}}})
