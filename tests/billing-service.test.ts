@@ -104,7 +104,7 @@ test('long-range measured totals preserve pre-billing minute credit across midni
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });
 
-test('capture pauses exclude human time without discarding independently captured tools; sleep remains excluded',()=>{
+test('capture pauses exclude human time without discarding tools inside recorded sleep windows',()=>{
  const {output,store}=fixture();try{
  const at=billingDayStart('2026-11-10','Europe/Paris')+36000;
  store.put(makeEvent('capture','capture_stop',{observedAt:at}));
@@ -113,7 +113,7 @@ test('capture pauses exclude human time without discarding independently capture
  store.put(makeEvent('macos','sleep',{observedAt:at+300}));store.put(makeEvent('macos','wake',{observedAt:at+500}));
  store.put(makeEvent('capture','capture_start',{observedAt:at+600}));
  const result=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'}).report;
- assert.equal(result.totals.humanActiveSeconds,0);assert.equal(result.totals.agentWallSeconds,120);assert.equal(result.totals.billableSeconds,120);
+ assert.equal(result.totals.humanActiveSeconds,0);assert.equal(result.totals.agentWallSeconds,240);assert.equal(result.totals.billableSeconds,240);
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });
 
@@ -125,5 +125,17 @@ test('a Mac gap surrounding a pause still excludes agent activity outside the ex
  for(const [id,start,end] of [['before',10,50],['during',200,300],['after',940,980]] as const)for(const [kind,offset] of [['tool_start',start],['tool_end',end]] as const)store.put(makeEvent('hook',kind,{provider:'claude',hostId:'local',sessionId:id,cwd:'/fixture/caex',observedAt:at+offset,data:{toolId:id}}));
  const r=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'}).report;
  assert.equal(r.totals.agentWallSeconds,100);assert.equal(r.totals.humanActiveSeconds,0);assert.equal(r.totals.billableSeconds,120);
+ }finally{store.close();rmSync(output,{recursive:true,force:true});}
+});
+
+test('an unmatched sleep marker does not exclude captured tools but explicit locks still do',()=>{
+ const {output,store}=fixture();try{
+ const at=billingDayStart('2026-11-10','Europe/Paris')+36000;
+ store.put(makeEvent('macos','sleep',{observedAt:at}));
+ for(let offset=1;offset<600;offset+=60)store.put(makeEvent('macos','activity',{observedAt:at+offset,data:{idleSeconds:1000,accessibilityTrusted:true,foregroundBundleId:'fixture'}}));
+ store.put(makeEvent('macos','screen_locked',{observedAt:at+300}));store.put(makeEvent('macos','screen_unlocked',{observedAt:at+500}));
+ for(const [id,start,end] of [['sleep',60,180],['locked',360,480]] as const)for(const [kind,offset] of [['tool_start',start],['tool_end',end]] as const)store.put(makeEvent('hook',kind,{provider:'claude',hostId:'local',sessionId:id,cwd:'/fixture/caex',observedAt:at+offset,data:{toolId:id}}));
+ const r=billingForProject(output,{project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'}).report;
+ assert.equal(r.totals.agentWallSeconds,120);assert.equal(r.totals.billableSeconds,120);assert.equal(r.totals.excludedSeconds,200);
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });

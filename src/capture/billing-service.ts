@@ -36,17 +36,16 @@ export function billingProjects(output:string){
 }
 const sourceProject=(projects:BillingProject[],event:{workspaceId?:string;cwd?:string;projectPath?:string;project?:string|null})=>billingProjectForSource(projects,{workspaceId:event.workspaceId,path:event.projectPath||event.cwd||(event.project?.startsWith('/')?event.project:undefined)||event.workspaceId?.split('::').at(-1),reportedProject:event.project&&!event.project.startsWith('/')?event.project:undefined});
 function exclusions(events:CaptureEvent[],start:number,end:number){
- const result:BillingDayInput['excluded']=[];let stopped:number|undefined,asleep:number|undefined,locked:number|undefined;
+ // Sleep markers are retained as evidence, but are not reliable billing exclusions.
+ const result:BillingDayInput['excluded']=[];let stopped:number|undefined,locked:number|undefined;
  for(const e of [...events].sort((a,b)=>a.observedAt-b.observedAt)){
   if(e.observedAt>end)break;
   if(e.kind==='capture_stop')stopped=e.observedAt;
   if(e.kind==='capture_start'&&stopped!==undefined){result.push({start:stopped,end:e.observedAt,reason:'capture paused',appliesTo:'human'});stopped=undefined;}
-  if(e.kind==='sleep')asleep=e.observedAt;
-  if(e.kind==='wake'&&asleep!==undefined){result.push({start:asleep,end:e.observedAt,reason:'sleep'});asleep=undefined;}
   if(['screen_locked','session_locked'].includes(e.kind))locked=e.observedAt;
   if(['screen_unlocked','session_unlocked'].includes(e.kind)&&locked!==undefined){result.push({start:locked,end:e.observedAt,reason:'locked'});locked=undefined;}
  }
- for(const [at,reason] of [[stopped,'capture paused'],[asleep,'sleep'],[locked,'locked']] as const)if(at!==undefined)result.push({start:at,end,reason,...(reason==='capture paused'?{appliesTo:'human' as const}:{})});
+ for(const [at,reason] of [[stopped,'capture paused'],[locked,'locked']] as const)if(at!==undefined)result.push({start:at,end,reason,...(reason==='capture paused'?{appliesTo:'human' as const}:{})});
  return result.filter(x=>x.end>start&&x.start<end).map(x=>({...x,start:Math.max(start,x.start),end:Math.min(end,x.end)}));
 }
 function plainDecimal(value:number):string{
