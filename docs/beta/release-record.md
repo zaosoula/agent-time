@@ -1,12 +1,18 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.53` candidate — 2026-11-13
+## `0.2.0-beta.53` published and verified — 2026-11-13
 
 Owner requested publication of the two background-continuity fixes (`6e000a2`, `23e10c1`). Explicit native startup/resume ends unconfirmed continuity from the previous invocation and clears stale Dispatch bindings while retaining original late-tool closure ownership. An ordinary prompt after prolonged session inactivity also separates confirmed background segments when no resume hook arrives. A late SessionEnd cannot fill silent gaps. Explicit task completion retains the original long-run duration, and tentative post-gap segments cannot credit permission waits. In-place compaction and continuously observed work retain their semantics. Existing event history, manual decisions and immutable saved billing reports are preserved; derived review caches and new calculations use the revised behavior.
 
 Read-only replay of the supplied customer archive exactly reproduced the screenshot: 625 agent minutes, 69 human minutes, ratio 9.06. Both fixes return 57 agent minutes and the same 69 human minutes: exactly 568 minutes (9h28) removed. All 8,222 non-background intervals and 27 explicitly completed background runs retain their full timings. Later session shutdowns in the archive explain additional inferred overcount. [Detailed semantics and proof](background-continuity.md). The original archive hash was unchanged and the temporary expanded database was removed.
 
-Local validation: 642 JavaScript tests, production typecheck/build and independent code review passed. The signed/notarized release workflow must pass checks, dependency audit, packaged smoke tests and immutable hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+Local validation: 642 JavaScript tests, production typecheck/build and independent code review passed.
+
+GitHub Actions [run 43448846041](https://github.com/zaosoula/agent-time/actions/runs/43448846041) built and published source `4f00bd3d9d7bb10408e5e4816b09b337fe0cb0b0`. CI passed 642 JavaScript tests, 34 native tests, production typecheck/build and dependency audit with zero production vulnerabilities. The signed-build collector/MCP/statusline smoke checks passed. Independent verification confirmed beta.53, all 86 bundled capture/MCP/usage source modules matching source, strict deep signatures, app/DMG stapled tickets and both Gatekeeper assessments. The bundled Node passed 108 timing, billing, real stdio MCP and reported-work tests.
+
+The exact reducer shipped inside the signed app was replayed against the customer archive locally using the packaged Node: 625 agent minutes became 57, a 568-minute correction; 8,222 non-background intervals and 27 explicitly completed background runs remained identical. The temporary database copy was removed; no customer data was uploaded to CI or committed.
+
+The public update manifest, signature and landing installer selection match beta.53. Complete independent public downloads match staged SHA-256: updater archive `e4718480f8ef1ccbc2ff8d448343b8ae522bd924344fda2c0e0c7dd72249562f` (55,797,911 bytes); [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.53/Agent%20Time_0.2.0-beta.53_aarch64.dmg) `32bbabc31a2d2bb23b2035acc369e754a7956afec7703938eb7f555d891d125e` (55,579,170 bytes). Downloaded/expanded packages were removed after verification; evidence metadata and logs remain local. Customer installation/OTA on another Mac is not claimed.
 
 ## `0.2.0-beta.52` published and verified — 2026-11-13
 
