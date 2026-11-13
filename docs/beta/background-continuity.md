@@ -26,4 +26,4 @@ Validation: 642 JavaScript tests passed, production typecheck/build passed, and 
 
 An ordinary prompt must match the background task's native owner, including its child agent ID, before opening a new observation segment or rebinding a Dispatch. Sharing a conversation is insufficient: parent and sibling messages cannot confirm a child's background work. Conversation-wide identity remains appropriate for an explicit invocation restart, while per-task continuation preserves the child identity.
 
-A project replay exposed this missing owner check in beta.53. The correction includes parent/sibling isolation regressions, retains the original overnight archive result and confirmed intervals, advances derived cache/calculation revisions, and leaves saved reports unchanged. It is not part of the already published beta.53 package.
+A project replay exposed this missing owner check in beta.53. The correction includes parent/sibling isolation regressions, retains the original overnight archive result and confirmed intervals, advances derived cache/calculation revisions, and leaves saved reports unchanged. It ships in beta.54 and is not part of the earlier beta.53 package.

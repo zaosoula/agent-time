@@ -1,10 +1,16 @@
 # Agent Time public beta release record
 
-## `0.2.0-beta.54` candidate — 2026-11-13
+## `0.2.0-beta.54` published and verified — 2026-11-13
 
 Owner requested publication of the background-owner correction (`53ca273`). The ordinary-prompt continuity guard now requires the same native execution owner, including child identity: parent and sibling prompts cannot move a child's background task into their own lookup key or confirm extra child time through parent Stop events. Root-to-Dispatch rebinding and conversation-wide explicit restart handling remain intact. Derived review caches and future calculation revisions advance; captured history, manual decisions, pricing configuration and existing immutable reports are unchanged. The separately requested ezyostudio/ui design prototype is isolated and is not included in this release.
 
-Local validation: 643 JavaScript tests, production typecheck/build and independent owner-scope review passed. Read-only project replays exposed and verified the correction, including a new parent/sibling regression. The original client archive still returns 57 agent minutes instead of 625, with the same 8,222 non-background intervals and 27 explicitly completed background runs. No customer database or private billing data is committed or uploaded. The signed/notarized workflow must pass checks, audit, packaged smoke tests and hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+Local validation: 643 JavaScript tests, production typecheck/build and independent owner-scope review passed. Read-only project replays exposed and verified the correction, including a new parent/sibling regression. The original client archive still returns 57 agent minutes instead of 625, with the same 8,222 non-background intervals and 27 explicitly completed background runs. No customer database or private billing data is committed or uploaded. 
+
+GitHub Actions [run 43453539585](https://github.com/zaosoula/agent-time/actions/runs/43453539585) built and published source `f074186f344b4a2520ab54cf4dcc15ecd5727348`. CI passed 643 JavaScript tests, 34 native tests, production typecheck/build and dependency audit with zero production vulnerabilities. Signed-build collector/MCP/statusline smoke checks passed. Independent strict deep signatures, app/DMG stapled tickets and both Gatekeeper assessments passed. The arm64 app declares beta.54; all 86 bundled capture/MCP/usage modules match source and the bundled Node passed 109 timing, billing, real stdio MCP and reported-work tests.
+
+Replaying the original customer archive against the exact reducer inside the signed app still returns 57 agent minutes instead of 625, preserving 8,222 non-background intervals and 27 explicitly completed background runs. The temporary database copy was removed. The separate UI prototype remains on its own local branch and is not part of the release.
+
+The live public manifest, updater signature and landing installer selection match beta.54. Complete independent downloads match staged SHA-256: updater archive `80faae645b38d9981b44bd08a384d247e11c8e82e1f0cb67a96e354d847b44a2` (55,797,486 bytes); [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.54/Agent%20Time_0.2.0-beta.54_aarch64.dmg) `f9a629e1304f1b361f3c0c5bb1fa783d27af96300226cd9e1ab4cb0d2815e7c7` (55,578,998 bytes). Downloaded/expanded packages were removed after verification; evidence metadata and logs remain local. Customer installation/OTA on another Mac is not claimed.
 
 ## `0.2.0-beta.53` published and verified — 2026-11-13
 
