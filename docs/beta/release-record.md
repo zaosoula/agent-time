@@ -1,5 +1,13 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.52` candidate — 2026-11-13
+
+Owner requested publication of main through `6c6713a`. Includes organized Home/Review/Agents/Projects/Billing/Reports workspaces, nested settings and saved report history; shared controls/cards/headings with regular32/compact28 sizing; one bottom capture status, current working-agent count and background billing/storage/backup feedback. Retained page drafts, pending work, native form submission, heading semantics and immutable saved reports are preserved.
+
+Also includes the previously approved billing changes since beta.51: captured agent execution during manual capture pauses remains eligible; sleep markers are not excluded. Locks and unexplained observation gaps retain their existing treatment. No raw history rewrite or automatic re-invoicing of saved reports.
+
+Local verification:634 JS tests, final40 focused UI/lifecycle tests, production typecheck/build passed. Independent review completed; synthetic browser checks verified matching billing controls, shared settings cards, light/dark themes, background progress and return to the completed result. CI must pass the signed/notarized app and DMG checks, test/audit gates and immutable hosted artifact verification before publication. Customer installation/OTA on another Mac is not claimed.
+
 ## `0.2.0-beta.51` published and verified — 2026-11-12
 
 Release owner requested publication. Includes `dadf740`: a retained Billing reports page in the main sidebar, separate from Settings → Billing, and configured identity recognition for reported work contexts. Nine pages remain cached. Project IDs, display names and aliases match declared context without case-sensitive false conflicts; ambiguous ownership remains an error. Raw timing, policy rules, exclusions, counters and immutable saved reports are preserved.
