@@ -604,7 +604,7 @@ async function saveSplit(group: HumanReviewGroup) {
       <div v-if="!store.summaryLoaded" class="human-review-empty" aria-hidden="true"><span v-for="index in 3" :key="index" class="skeleton" style="height:38px;margin:6px 0" /></div>
       <div v-else-if="!apps.length" class="human-review-empty">{{ filterText?'No activity matches this filter.':store.reviewSiteFilter?'No recorded activity for this site on this day.':viewMode==='all'?'No activity in this project on this day.':viewMode==='reviewed'?'No activity is assigned to a project yet.':'No activity needs a project. Choose All activity to see assigned time.' }}</div>
       <div v-else class="review-tree-list" aria-label="Activity hierarchy">
-        <ReviewTreeRow v-for="node in tree" :key="node.key" :node="node" :expanded="expandedTree" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
+        <ReviewTreeRow v-for="node in tree" :key="node.key" :node="node" :date="store.selectedDate" :expanded="expandedTree" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
       </div>
       <section v-if="detailGroup" class="review-inspector" aria-label="Activity details">
         <div class="review-inspector-title"><h3>{{reviewVisitTitle(detailGroup)}}</h3><AppButton compact variant="quiet" @click="inspectedId=''">Close details</AppButton></div>

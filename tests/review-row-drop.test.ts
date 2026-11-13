@@ -1,0 +1,31 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+import {computed,ref,reactive,watch} from 'vue';
+import ts from 'typescript';
+import * as workspace from '../src/ui/review-workspace.ts';
+import * as review from '../src/ui/review-apps.ts';
+import {buildProjectReviewTree} from '../src/ui/review-tree.ts';
+import {projectColor} from '../src/ui/project-identity.ts';
+
+test('project rows accept internal drops including Unassigned; ordinary rows, busy rows and stale dates reject them',()=>{
+ const groups=review.buildAppReviewGroups([{start:0,end:20,state:'human',proof:'observed',sourceEventIds:['a','b'],hostId:'local',foregroundName:'Brave'}]);
+ const target=buildProjectReviewTree(groups)[0]!;
+ const source=readFileSync(new URL('../src/ui/ReviewTreeRow.vue',import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!.replace(/^import[\s\S]*?;\n/gm,'');
+ const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
+ const props=reactive({node:target,date:'2026-11-14',busy:false,selected:{},expanded:{},projects:[]});
+ const bindings={computed,ref,watch,...review,...workspace,projectColor,defineProps:()=>props,withDefaults:(value:unknown)=>value,defineEmits:()=>()=>{}};
+ const row=new Function(...Object.keys(bindings),js+';return {acceptsDrop,dragOver,drop,dropOver};')(...Object.values(bindings));
+ const data=new Map<string,string>();const transfer={types:[workspace.reviewDragType],setData:(k:string,v:string)=>data.set(k,v),getData:(k:string)=>data.get(k)||'',effectAllowed:'',dropEffect:''} as unknown as DataTransfer;
+ let prevented=0;const event={dataTransfer:transfer,preventDefault(){prevented++;}};
+ workspace.beginReviewDrag(props.date,groups,transfer);
+ assert.equal(row.acceptsDrop(event),true);
+ row.dragOver(event);assert.equal(transfer.dropEffect,'move');assert.equal(row.dropOver.value,true);
+ props.busy=true;assert.equal(row.acceptsDrop(event),false);props.busy=false;
+ props.date='2026-11-13';assert.equal(row.acceptsDrop(event),false);props.date='2026-11-14';
+ props.node=target.children[0]!;assert.equal(row.acceptsDrop(event),false);props.node=target;
+ row.drop(event);assert.equal(workspace.reviewDrop.value?.project,null);assert.equal(prevented,2);assert.equal(row.dropOver.value,false);
+ const assigned=buildProjectReviewTree(groups.map(g=>({...g,projectPath:'/argos-shield',userAttribution:'assigned' as const})))[0]!;
+ props.node=assigned;workspace.beginReviewDrag(props.date,groups,transfer);row.drop(event);
+ assert.equal(workspace.reviewDrop.value?.project,'/argos-shield');assert.equal(workspace.reviewDrag.value,null);
+});

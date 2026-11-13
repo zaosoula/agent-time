@@ -12,6 +12,9 @@ export function beginReviewDrag(date:string,groups:AppReviewGroup[],transfer:Dat
   transfer.effectAllowed='move';transfer.setData(reviewDragType,token);
   transfer.setData('text/plain',`Assign ${groups.length} activity visits`);
 }
+export function canAcceptReviewDrop(date:string,transfer:Pick<DataTransfer,'types'>|null){
+  return Boolean(reviewDrag.value&&reviewDrag.value.date===date&&transfer?.types.includes(reviewDragType));
+}
 export function dropReviewActivity(date:string,project:string|null,transfer:DataTransfer) {
   const drag=reviewDrag.value;
   if(!drag||drag.date!==date||transfer.getData(reviewDragType)!==drag.token)return false;

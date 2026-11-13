@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import {computed,ref} from 'vue';
+import {computed,ref,watch} from 'vue';
 import {ChevronRight,Ellipsis,Folder} from '@lucide/vue';
 import {ContextMenuRoot,ContextMenuTrigger,ContextMenuPortal,ContextMenuContent,DropdownMenuRoot,DropdownMenuTrigger,DropdownMenuPortal,DropdownMenuContent} from 'reka-ui';
 import {reviewGroupId,reviewAssignmentLabel,reviewIsAssigned,type AppReviewGroup} from './review-apps.ts';
 import {projectColor} from './project-identity.ts';
 import type {ReviewNode} from './review-tree.ts';
+import {reviewDrag,canAcceptReviewDrop,dropReviewActivity} from './review-workspace.ts';
 import ReviewProjectActions from './ReviewProjectActions.vue';
 
-const props=withDefaults(defineProps<{node:ReviewNode;depth?:number;expanded:Record<string,boolean>;selected:Record<string,boolean>;projects:string[];busy:boolean;selectionSummary?:{seconds:number;visits:number}}>(),{depth:0});
+const props=withDefaults(defineProps<{node:ReviewNode;date:string;depth?:number;expanded:Record<string,boolean>;selected:Record<string,boolean>;projects:string[];busy:boolean;selectionSummary?:{seconds:number;visits:number}}>(),{depth:0});
 const emit=defineEmits<{toggle:[key:string];select:[node:ReviewNode,checked:boolean];assign:[node:ReviewNode,project:string|null];inspect:[group:AppReviewGroup];drag:[node:ReviewNode,event:DragEvent]}>();
 const contextOpen=ref(false);
 const open=computed(()=>Boolean(props.expanded[props.node.key]));
@@ -52,6 +53,22 @@ function drag(event:DragEvent){
   if(props.busy||dragFromControl||(event.target instanceof Element&&event.target.closest('button,input,[role="menuitem"]'))){event.preventDefault();return;}
   emit('drag',props.node,event);
 }
+const dropOver=ref(false);
+watch(reviewDrag,()=>{dropOver.value=false;},{flush:'sync'});
+function acceptsDrop(event:DragEvent){return !props.busy&&props.node.kind==='project'&&currentProject.value!==undefined&&canAcceptReviewDrop(props.date,event.dataTransfer);}
+function dragOver(event:DragEvent){
+  if(!acceptsDrop(event))return;
+  event.preventDefault();event.dataTransfer!.dropEffect='move';dropOver.value=true;
+}
+function dragLeave(event:DragEvent){
+  if(event.currentTarget instanceof Element&&event.relatedTarget instanceof Node&&event.currentTarget.contains(event.relatedTarget))return;
+  dropOver.value=false;
+}
+function drop(event:DragEvent){
+  dropOver.value=false;
+  if(!acceptsDrop(event))return;
+  event.preventDefault();dropReviewActivity(props.date,currentProject.value!,event.dataTransfer!);
+}
 function focusSearch(event:Event){
   event.preventDefault();
   (event.target as HTMLElement)?.querySelector<HTMLInputElement>('input[type="search"]')?.focus();
@@ -68,7 +85,7 @@ function keydown(event:KeyboardEvent){
   <div class="review-tree-branch">
     <ContextMenuRoot v-model:open="contextOpen">
       <ContextMenuTrigger as-child :disabled="busy">
-        <div :id="`review-tree-${node.key}`" class="review-tree-row" :class="{'is-selected':checked||partial,'is-aggregate':node.children.length}" :style="{'--review-depth':depth}" tabindex="0" :draggable="!busy" :title="`${scopeLabel}; drag to a project`" :aria-label="`${node.label}, ${duration}, ${assignment}`" @contextmenu.stop @pointerdown.capture="pointerdown" @keydown="keydown" @dragstart.stop="drag">
+        <div :id="`review-tree-${node.key}`" class="review-tree-row" :class="{'is-selected':checked||partial,'is-aggregate':node.children.length,'is-drop-target':dropOver&&reviewDrag}" :style="{'--review-depth':depth}" tabindex="0" :draggable="!busy" :title="`${scopeLabel}; drag to a project`" :aria-label="`${node.label}, ${duration}, ${assignment}`" @contextmenu.stop @pointerdown.capture="pointerdown" @keydown="keydown" @dragstart.stop="drag" @dragover.stop="dragOver" @dragleave.stop="dragLeave" @drop.stop="drop">
           <button v-if="node.children.length" type="button" class="review-tree-expand" :aria-expanded="open" :aria-label="`${open?'Collapse':'Expand'} ${node.label}`" draggable="false" @dragstart.prevent.stop @click.stop="emit('toggle',node.key)"><ChevronRight :size="14" :class="{'is-open':open}" /></button>
           <span v-else class="review-tree-expand-spacer" />
           <input type="checkbox" class="review-tree-check" :checked="checked" :indeterminate="partial" :aria-checked="partial?'mixed':checked" :aria-label="`Select ${node.label} and its visits`" :disabled="busy||!node.groups.length" draggable="false" @dragstart.prevent.stop @click.stop @change="emit('select',node,($event.target as HTMLInputElement).checked)" />
@@ -83,7 +100,7 @@ function keydown(event:KeyboardEvent){
       <ContextMenuPortal><ContextMenuContent class="review-tree-menu" @open-auto-focus="focusSearch"><ReviewProjectActions context :scope-label="scopeLabel" :projects="projects" :busy="busy" :current-project="currentProject" :can-inspect="canInspect" @assign="emit('assign',node,$event)" @inspect="inspect" /></ContextMenuContent></ContextMenuPortal>
     </ContextMenuRoot>
     <template v-if="open">
-      <ReviewTreeRow v-for="child in node.children" :key="child.key" :node="child" :depth="depth+1" :selection-summary="selectionSummary" :expanded="expanded" :selected="selected" :projects="projects" :busy="busy" @toggle="emit('toggle',$event)" @select="(node,checked)=>emit('select',node,checked)" @assign="(node,project)=>emit('assign',node,project)" @inspect="emit('inspect',$event)" @drag="(node,event)=>emit('drag',node,event)" />
+      <ReviewTreeRow v-for="child in node.children" :key="child.key" :node="child" :date="date" :depth="depth+1" :selection-summary="selectionSummary" :expanded="expanded" :selected="selected" :projects="projects" :busy="busy" @toggle="emit('toggle',$event)" @select="(node,checked)=>emit('select',node,checked)" @assign="(node,project)=>emit('assign',node,project)" @inspect="emit('inspect',$event)" @drag="(node,event)=>emit('drag',node,event)" />
     </template>
   </div>
 </template>
@@ -91,6 +108,7 @@ function keydown(event:KeyboardEvent){
 <style scoped>
 .review-tree-row{display:flex;align-items:center;gap:8px;min-height:38px;padding:3px 8px 3px calc(8px + var(--review-depth)*18px);border-bottom:1px solid var(--border);color:var(--text);font-size:var(--text-sm);cursor:grab;box-sizing:border-box}
 .review-tree-row:hover{background:var(--surface)}
+.review-tree-row.is-drop-target{background:var(--accent-soft);outline:2px solid var(--accent);outline-offset:-2px}
 .review-tree-row.is-selected{background:var(--accent-soft)}
 .review-tree-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .review-tree-row:active{cursor:grabbing}

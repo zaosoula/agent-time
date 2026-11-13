@@ -1,7 +1,7 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {buildAppReviewGroups} from '../src/ui/review-apps.ts';
-import {reviewAssignmentParts,beginReviewDrag,dropReviewActivity,reviewDrag,reviewDrop,reviewDragType} from '../src/ui/review-workspace.ts';
+import {reviewAssignmentParts,beginReviewDrag,dropReviewActivity,reviewDrag,reviewDrop,reviewDragType,canAcceptReviewDrop} from '../src/ui/review-workspace.ts';
 const group=(segment?:'before'|'after')=>buildAppReviewGroups([{start:0,end:20,state:'human',proof:'observed',sourceEventIds:['a','b'],hostId:'local',foregroundName:'Editor',reviewSegment:segment}])[0]!;
 test('assignment deduplicates ancestors and preserves selected split halves',()=>{
  const before=group('before'),after=group('after');
@@ -19,4 +19,14 @@ test('drag rejects external tokens and stale dates without issuing assignment',(
  assert.equal(reviewDrop.value?.project,'/project');assert.equal(reviewDrop.value?.ids.length,1);assert.equal(reviewDrag.value,null);
  assert.equal(dropReviewActivity('2026-11-13','/other',transfer),false);
  assert.equal(data.get('text/plain'),'Assign 1 activity visits');
+});
+
+test('drop affordances accept only an internal drag on its current day',()=>{
+ reviewDrag.value={token:'internal',date:'2026-11-14',ids:['visit'],seconds:12};
+ assert.equal(canAcceptReviewDrop('2026-11-14',{types:[reviewDragType]}),true);
+ assert.equal(canAcceptReviewDrop('2026-11-13',{types:[reviewDragType]}),false);
+ assert.equal(canAcceptReviewDrop('2026-11-14',{types:['text/plain']}),false);
+ assert.equal(canAcceptReviewDrop('2026-11-14',null),false);
+ reviewDrag.value=null;
+ assert.equal(canAcceptReviewDrop('2026-11-14',{types:[reviewDragType]}),false);
 });
