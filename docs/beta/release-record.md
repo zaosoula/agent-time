@@ -1,5 +1,11 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.56` release candidate — 2026-11-14
+
+The owner requested publication of the shared filters and toolbar date selector, including the accumulated review improvements since beta.55. Includes project-parent review grouping, descendant assignment with project-row drop targets, synchronized timeline selection, Unified / By category / Chronological views, display grouping controls and clearer saved report explanations. The shared period/project scope retains independent page searches and cached context. Daily review edits remain day-scoped; period reports reuse the existing daily calculations and yield between days. Existing timing rules, capture history, billing policy calculations and saved snapshots are preserved. No productivity score is added.
+
+Pre-release local evidence: 678 JavaScript tests and 35 native tests passed for the shared-scope implementation. The final toolbar move passed production typecheck/build and 22 focused scope/context/layout checks. Browser validation used an isolated database copy and exercised shared scope, independent searches, retained review layout, project filtering, the toolbar range popover, and desktop/narrow layouts. No customer database is committed or uploaded. Publication, signed artifact verification and hosted hashes are pending below; installation and an actual OTA update on a second Mac are not yet claimed.
+
 ## `0.2.0-beta.55` published and verified — 2026-11-13
 
 Owner requested publication of the approved full-app design and all latest corrections. Includes shared ezyostudio design foundations, light/dark/system appearance in Settings, simplified fully scrollable sidebar with BETA badge, Billing within Reports, expandable projects and agent sessions on Home, capture/connection tabs, and page-aligned loading feedback. Existing page state, in-flight billing work, real charts and measurements remain intact. The macOS window-control corrections from PR #37 are ported while retaining the current Troubleshooting menu. All beta.54 timing corrections are included; no capture/calculation rewrite is introduced by this design release.
