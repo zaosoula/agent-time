@@ -32,7 +32,7 @@ Tests ciblés : chargement courant avant backlog, réponses périmées, sortie i
 
 La compilation et les tests complets sont exécutés en fin de branche. Aucun code Rust ni schéma du pont natif n’a été modifié. Le bundle principal reste au-dessus du seuil indicatif de 500 Ko de Vite ; son découpage est un travail distinct.
 
-Aucune nouvelle beta n’est publiée par cette implémentation ; beta.56 reste la version distribuée.
+Ces vérifications ont précédé la publication. Après approbation explicite du propriétaire, beta.57 a été publiée et vérifiée le 14 novembre 2026 ; voir le [registre de publication](../beta/release-record.md).
 
 
 ## Contrôle visuel et préservation
@@ -55,4 +55,4 @@ La revue indépendante a signalé un risque d’élargissement par identité de 
 - `npm run build` : contrôle TypeScript et construction Vite réussis ; avertissement de taille du bundle déjà décrit.
 - `git diff --check` : aucune erreur d’espacement.
 
-Implémentation : `6f4082d` (chargement), `8225b36` (détails), `0a9b9ba` (affectations), `6ada478` (portée), `7a4f11c` (transferts exacts et focus après revue). La branche reste isolée pour vérification ; elle n’est ni fusionnée dans main ni publiée.
+Implémentation : `6f4082d` (chargement), `8225b36` (détails), `0a9b9ba` (affectations), `6ada478` (portée), `7a4f11c` (transferts exacts et focus après revue). Après ces vérifications, le propriétaire a demandé la publication : les quatre lots et correctifs ont été intégrés dans main puis distribués dans beta.57.

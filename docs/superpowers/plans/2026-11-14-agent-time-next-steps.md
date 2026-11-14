@@ -84,4 +84,4 @@ Lot 1 d'abord : il améliore le parcours quotidien et fournit les mesures. Lot 2
 
 ## Résultat de l’exécution
 
-Les quatre lots sont implémentés sur `codex/agent-time-next-steps`. Mesures, choix et vérifications : [validation](../../validation/2026-11-14-next-steps.md). Les détails Billing restent locaux à leur onglet retenu. La progression historique est explicite et indéterminée ; aucun pourcentage simulé. Les transferts Home/Review conservent les paires et segments exacts.
+Les quatre lots, implémentés sur `codex/agent-time-next-steps`, ont ensuite été intégrés à main et publiés dans beta.57 sur demande explicite du propriétaire. Mesures, choix et vérifications : [validation](../../validation/2026-11-14-next-steps.md). Les détails Billing restent locaux à leur onglet retenu. La progression historique est explicite et indéterminée ; aucun pourcentage simulé. Les transferts Home/Review conservent les paires et segments exacts.
