@@ -30,7 +30,7 @@
 
 ---
 
-### Lot 1 — Mesurer et raccourcir le chemin de chargement
+### Task 1: Lot 1 — Mesurer et raccourcir le chemin de chargement
 
 **Files:** `src/ui/store.ts`, `src/ui/polling.ts`, `src/capture/collector.ts`, `src/capture/protocol.ts`, `src/ui/transport.ts`, `src/ui/LoadingStatus.vue`; tests dans `tests/page-context.test.ts`, `tests/protocol.test.ts` et un nouveau `tests/review-backlog-loading.test.ts`.
 
@@ -43,7 +43,7 @@
 - [ ] Vérifier : `node --test tests/page-context.test.ts tests/protocol.test.ts tests/review-backlog-loading.test.ts`, puis répéter la baseline. Documenter le gain réel et tout coût mémoire ; ne pas promettre de seuil absolu avant les mesures.
 - [ ] Livrer ce lot séparément, avec preuve d'égalité des résultats avant/après.
 
-### Lot 2 — Un panneau de détails commun
+### Task 2: Lot 2 — Un panneau de détails commun
 
 **Files:** créer `src/ui/ActivityDetailsPanel.vue` et `src/ui/activity-detail-target.ts`; intégrer dans `src/ui/HumanReview.vue`, `src/ui/SessionExplorer.vue` et `src/ui/ReportsPage.vue`. Réutiliser `src/ui/AgentExecutionDetails.vue`, `src/ui/page-presentation.ts` et les types existants.
 
@@ -55,7 +55,7 @@
 - [ ] Vérifier les tests de sélection/affectation existants, `tests/page-context.test.ts`, puis les interactions clavier et les trois modes d'apparence dans le navigateur.
 - [ ] Livrer sans nouvelle API de mesure ni modification de données.
 
-### Lot 3 — Actions d'affectation cohérentes
+### Task 3: Lot 3 — Actions d'affectation cohérentes
 
 **Files:** `src/ui/ReviewProjectActions.vue`, `src/ui/review-workspace.ts`, `src/ui/HumanReview.vue`, `src/ui/TodayPage.vue`, `src/ui/WeeklyReview.vue`; tests `tests/review-workspace.test.ts`, `tests/human-review-group-actions.test.ts` et `tests/review-row-drop.test.ts`.
 
@@ -67,7 +67,7 @@
 - [ ] Tester changement de date pendant une action, segment `before`/`after`, déplacement vers Unassigned et annulation sans perte de l'autre segment.
 - [ ] Vérifier les trois suites ci-dessus et les parcours souris/clavier ; livrer séparément.
 
-### Lot 4 — Portée et justification des rapports
+### Task 4: Lot 4 — Portée et justification des rapports
 
 **Files:** `src/ui/WeeklyReview.vue`, `src/ui/BillingReports.vue`, `src/ui/BillingReportExplanation.vue`, `src/ui/UsagePage.vue`; tests `tests/billing-reports-ui.test.ts`, `tests/shared-layouts-ui.test.ts`, `tests/workspace-scope.test.ts`.
 

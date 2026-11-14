@@ -303,13 +303,29 @@ function createStore() {
     }
   }
 
+  const dayReviewLoading = ref(false), backlogLoading = ref(false), dayReviewRequest = ref(0);
   async function loadDayReview() {
+    const attempt = ++dayReviewRequest.value;
     const date = selectedDate.value;
+    dayReviewLoading.value = true;
+    backlogLoading.value = false;
     try {
-      const value = await dayReviewTransport.status(date, page.value === 'review');
-      if (date === selectedDate.value) dayReview.value = value;
+      const value = await dayReviewTransport.status(date, false);
+      if (attempt !== dayReviewRequest.value || date !== selectedDate.value) return;
+      dayReview.value = value;
+      dayReviewLoading.value = false;
+      if (page.value === 'review') {
+        backlogLoading.value = true;
+        const complete = await dayReviewTransport.status(date, true);
+        if (attempt === dayReviewRequest.value && date === selectedDate.value) dayReview.value = complete;
+      }
     } catch {
-      /* The review page shows review errors when the user acts. */
+      /* Keep current-day data when the optional backlog could not be read. */
+    } finally {
+      if (attempt === dayReviewRequest.value && date === selectedDate.value) {
+        dayReviewLoading.value = false;
+        backlogLoading.value = false;
+      }
     }
   }
 
@@ -852,6 +868,8 @@ function createStore() {
     reportedWork,
     dayReview,
     dayReviewed,
+    dayReviewLoading,
+    backlogLoading,
     notes,
     pollError,
     reviewRevision,

@@ -498,9 +498,20 @@ export class Collector {
   }
   dayReviewStatus(date:string,includeBacklog=true){
     localDayBounds(date);
-    const current=this.dayReviewSnapshot(date),backlog=[];
+    const current=this.dayReviewSnapshot(date),backlog:Array<{date:string;pendingGroups:number;unmatchedSeconds:number;conflicts:number;gaps:number}>=[];
     for(let days=1;includeBacklog&&days<=7;days++){const key=addDays(date,-days);const item=this.pastDayReviewSnapshot(key);if(item.hasActivity&&(!item.completedAt||item.stale))backlog.push({date:key,pendingGroups:item.pendingGroups,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});}
     const {fingerprint:_,...view}=current;return {...view,backlog};
+  }
+  /** Same projection as dayReviewStatus; yield between historical days so UI requests can proceed. */
+  async dayReviewStatusAsync(date:string,includeBacklog=true){
+    const current=this.dayReviewStatus(date,false);
+    if(!includeBacklog)return current;
+    for(let days=1;days<=7;days++){
+      await new Promise<void>(resolve=>setImmediate(resolve));
+      const key=addDays(date,-days),item=this.pastDayReviewSnapshot(key);
+      if(item.hasActivity&&(!item.completedAt||item.stale))current.backlog.push({date:key,pendingGroups:item.pendingGroups,unmatchedSeconds:item.unmatchedSeconds,conflicts:item.conflicts,gaps:item.gaps});
+    }
+    return current;
   }
   markDayReview(date:string){
     if(!this.lockOwned&&existsSync(join(this.output,'capture.lock')))throw new Error('Review activity in the app that owns capture');

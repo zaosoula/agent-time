@@ -3,6 +3,7 @@
 // that still need a look, and gaps and notes.
 import { computed, reactive, ref } from 'vue';
 import { CheckCircle2, ChevronLeft, ChevronRight } from '@lucide/vue';
+import LoadingStatus from './LoadingStatus.vue';
 import HumanReview from './HumanReview.vue';
 import SectionHeading from './SectionHeading.vue';
 import AppCard from './AppCard.vue';
@@ -90,6 +91,8 @@ async function markReviewed() {
       </button>
     </AppCard>
 
+    <LoadingStatus v-if="store.dayReviewLoading" label="Loading day review status" />
+    <LoadingStatus v-else-if="store.backlogLoading" label="Checking other days to review" detail="Your selected day is ready. Checking the previous seven days in the background." />
     <nav v-if="backlog.length" class="review-days" aria-label="Other days to review">
       <button class="btn btn-sm" :disabled="!previousBacklog" @click="previousBacklog && store.setDate(previousBacklog.date)">
         <ChevronLeft :size="13" />Earlier
