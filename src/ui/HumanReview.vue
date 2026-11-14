@@ -21,7 +21,7 @@ import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTreeRow from './ReviewTreeRow.vue';
 import {buildReviewLayout,defaultReviewGrouping,type ReviewLayout,type ReviewGrouping,type ReviewNode} from './review-tree.ts';
-import {reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
+import {assignReviewActivity,reviewFocus,reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
 import ReviewViewControls from './ReviewViewControls.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
 import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
@@ -413,7 +413,7 @@ async function assignGroups(rows:AppReviewGroup[],path:string|null){
   const parts=reviewAssignmentParts(rows);
   if(parts.pairs.length+parts.segments.length>10000){error.value='This selection is too large. Select at most 10,000 recorded intervals.';return;}
   const seconds=rows.reduce((sum,g)=>sum+g.seconds,0),count=rows.length;
-  if(await act('tree',date=>transport.setHumanDecision(parts.pairs,path?'assigned':'unassigned',path||undefined,date,parts.segments.length?parts.segments:undefined))){
+  if(await act('tree',date=>assignReviewActivity(rows,path,date,transport.setHumanDecision))){
     notice.value=`${duration(seconds)} · ${count} visits ${path?`assigned to ${name(path)}`:'left unassigned'}. Undo restores previous assignments.`;
     selectedGroups.value={};bulkProject.value='';inspectedId.value='';
   }
@@ -428,6 +428,12 @@ watch(reviewDrop,request=>{
   if(rows.length!==ids.size){error.value='The activity changed during the drag. Select it again.';return;}
   void assignGroups(rows,request.project);
 });
+watch(reviewFocus,request=>{
+ if(!request||store.page!=='review'||request.date!==store.selectedDate)return;
+ viewMode.value='all';
+ selectedGroups.value=Object.fromEntries(request.ids.map(id=>[id,true]));
+ if(request.ids.length===1)inspectedId.value=request.ids[0]!;
+},{immediate:true});
 function selectVisibleTree(){selectedGroups.value=Object.fromEntries(activeGroups.value.map(g=>[id(g),true]));}
 function toggleTree(){const open=tree.value.some(n=>!expandedTree.value[n.key]);expandedTree.value=Object.fromEntries(tree.value.map(n=>[n.key,open]));}
 // ---- Decisions ----------------------------------------------------------------------------

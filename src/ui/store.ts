@@ -1,3 +1,4 @@
+import {requestReviewFocus} from './review-workspace.ts';
 import {createWorkspaceScope} from './workspace-scope.ts';
 import {emptyActivityFilters,filterActivity,type ActivityFilters} from '../capture/activity-filter.ts';
 // Shared dashboard state. One store owns every poll and every value that several views need, so the
@@ -191,6 +192,15 @@ function createStore() {
     if (!isValidDateString(value) || value === selectedDate.value) return false;
     selectedDate.value = value;
     return true;
+  }
+
+  function openReview(date:string,nextProject=project.value,ids:string[]=[],filters?:ActivityFilters){
+    if(!isValidDateString(date))return;
+    setDate(date);
+    reviewSiteFilter.value='';
+    pageFilters.value={...pageFilters.value,review:filters?{...filters}:emptyActivityFilters()};
+    navigate('review',nextProject);
+    requestReviewFocus(date,ids);
   }
 
   // ---- Fetched state -----------------------------------------------------------------------
@@ -882,6 +892,7 @@ function createStore() {
     refreshUsage: () => pollers.usage.refresh(),
     refreshWebsiteProjects: loadWebsiteProjects,
     refreshDayReview: loadDayReview,
+    openReview,
     refreshNotes: loadNotes,
     applyReviewedSummary,
     markDayReviewed,

@@ -80,12 +80,12 @@ function openSidebarProject(path:string) {
   else store.openProject(path,'overview');
 }
 function dragOverProject(event:DragEvent,path:string) {
-  if(store.page!=='review'||!reviewDrag.value||reviewDrag.value.date!==store.selectedDate||!event.dataTransfer?.types.includes(reviewDragType))return;
+  if(!['today','review'].includes(store.page)||!reviewDrag.value||reviewDrag.value.date!==store.selectedDate||!event.dataTransfer?.types.includes(reviewDragType))return;
   event.preventDefault();event.dataTransfer.dropEffect='move';dropTarget.value=path;
 }
 function dropOnProject(event:DragEvent,path:string) {
   dropTarget.value='';
-  if(store.page!=='review'||!event.dataTransfer)return;
+  if(!['today','review'].includes(store.page)||!event.dataTransfer)return;
   event.preventDefault();dropReviewActivity(store.selectedDate,path==='unassigned'?null:path,event.dataTransfer);
 }
 watch(()=>store.page,()=>{reviewDrag.value=null;dropTarget.value='';});

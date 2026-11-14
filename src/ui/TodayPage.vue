@@ -1,6 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { ArrowRight, CalendarDays, CheckCircle2, Layers3, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
+import HumanActivityActions from './HumanActivityActions.vue';
+import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
+import {buildAppReviewGroups,reviewGroupId,type AppReviewGroup} from './review-apps.ts';
+import {assignReviewActivity,reviewDrop,requestReviewFocus} from './review-workspace.ts';
+import {transport,reviewTransport} from './transport.ts';
 import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
 import DayOverview from './DayOverview.vue';
@@ -58,6 +63,41 @@ const macSource = computed(() => store.confidence.sources.find((source) => sourc
 
 // ---- Your activity details --------------------------------------------------------------
 const humanIntervals = computed(() => store.filteredIntervals.filter((interval) => interval.state === 'human'));
+const editableHumanGroups=computed(()=>buildAppReviewGroups(humanIntervals.value));
+function tabReviewGroups(tab:{workspaceId:string;tabId:string}){return buildAppReviewGroups(humanIntervals.value.filter(i=>i.workspaceId===tab.workspaceId&&i.tabId===tab.tabId));}
+function pageReviewGroups(site:{project:string},url:string){return buildAppReviewGroups(humanIntervals.value.filter(i=>i.browserUrl===url&&intervalProject(i)===site.project));}
+const humanDetails=ref<{kind:'human';date:string;groups:AppReviewGroup[]}|null>(null),humanBusy=ref(false),humanUndo=ref('');
+function inspectHuman(groups:AppReviewGroup[]){humanDetails.value={kind:'human',date:store.selectedDate,groups};}
+async function assignHuman(groups:AppReviewGroup[],project:string|null){
+ if(humanBusy.value)return;
+ const date=store.selectedDate;
+ humanBusy.value=true;humanUndo.value='';
+ try{
+  const previous=new Set((await reviewTransport.history()).map(action=>action.id));
+  const summary=await assignReviewActivity(groups,project,date,transport.setHumanDecision);
+  store.applyReviewedSummary(summary,date);
+  const history=await reviewTransport.history();
+  if(date===store.selectedDate){
+   const ids=new Set(groups.flatMap(group=>group.pairs.flat()));
+   const candidates=history.filter(item=>!previous.has(item.id)&&item.canUndo&&item.mode===(project?'assigned':'unassigned')&&item.projectPath===project&&item.eventIds.length===ids.size&&item.eventIds.every(id=>ids.has(id)));
+   humanUndo.value=candidates.length===1?candidates[0]!.id:'';humanDetails.value=null;
+  }
+  toast.success('Activity assignment saved.','human-assignment');
+ }catch(cause){toast.error(cause,'human-assignment');}finally{humanBusy.value=false;}
+}
+async function undoHuman(){
+ if(humanBusy.value||!humanUndo.value)return;
+ const date=store.selectedDate,id=humanUndo.value;humanBusy.value=true;
+ try{store.applyReviewedSummary(await reviewTransport.undo(id,date),date);if(date===store.selectedDate)humanUndo.value='';}catch(cause){toast.error(cause,'human-assignment');}finally{humanBusy.value=false;}
+}
+function openHumanReview(date:string,ids:string[]){store.openReview(date,'all',ids);}
+watch(()=>store.selectedDate,()=>{humanDetails.value=null;humanUndo.value='';});
+watch(reviewDrop,request=>{
+ if(!request||store.page!=='today'||request.date!==store.selectedDate)return;
+ const ids=new Set(request.ids),groups=editableHumanGroups.value.filter(group=>ids.has(reviewGroupId(group)));
+ if(groups.length===ids.size)void assignHuman(groups,request.project);
+ else toast.error('Activity changed during the drag. Select it again.','human-assignment');
+});
 const humanTabs = computed(() => {
   const groups = new Map<
     string,
@@ -264,12 +304,13 @@ const websites = computed(() => {
         </span>
         <b>{{ duration(store.humanTime) }}</b>
       </summary>
+      <p v-if="humanUndo" role="status">Activity assignment saved. <button class="btn btn-sm" :disabled="humanBusy" @click="undoHuman">Undo assignment</button></p>
       <div v-for="tab in humanTabs" :key="tab.workspaceId + tab.tabId" class="human-tab-row">
         <span>
           <strong>{{ tab.title }}</strong>
           <small>Orca · {{ projectLabel(workspaceProject(tab.workspaceId)) }}</small>
         </span>
-        <b>{{ duration(tab.seconds) }}</b>
+        <b>{{ duration(tab.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="tabReviewGroups(tab)" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
       </div>
       <details v-for="site in websites" :key="site.domain + '::' + site.project" class="human-site">
         <summary class="human-tab-row website-row">
@@ -288,11 +329,12 @@ const websites = computed(() => {
             <strong>{{ sitePage.title }}</strong>
             <small :title="sitePage.url">{{ sitePage.url }}</small>
           </span>
-          <b>{{ duration(sitePage.seconds) }}</b>
+          <b>{{ duration(sitePage.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="pageReviewGroups(site,sitePage.url)" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
         </div>
       </details>
     </details>
 
+    <ActivityDetailsPanel v-if="humanDetails" :target="humanDetails" @close="humanDetails=null" @review="openHumanReview" />
     <div class="activity-note">
       <ShieldCheck :size="14" />
       <span>Recorded on this Mac only. Your time is estimated from activity; agent time comes from their events.</span>

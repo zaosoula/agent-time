@@ -30,3 +30,12 @@ test('drop affordances accept only an internal drag on its current day',()=>{
  reviewDrag.value=null;
  assert.equal(canAcceptReviewDrop('2026-11-14',{types:[reviewDragType]}),false);
 });
+
+test('shared assignment sends original segments, captures the originating day and enforces the combined limit',async()=>{
+ const {assignReviewActivity}=await import('../src/ui/review-workspace.ts');
+ const group={pairs:[['a','b']],reviewSegment:'before'} as any;let sent:any[]=[];
+ const save=async(...args:any[])=>{sent=args;return 'saved';};
+ assert.equal(await assignReviewActivity([group],null,'2026-11-12',save),'saved');
+ assert.deepEqual(sent,[[],'unassigned',undefined,'2026-11-12',[{pair:['a','b'],segment:'before'}]]);
+ await assert.rejects(()=>assignReviewActivity([{pairs:Array.from({length:10001},(_,i)=>[String(i),'end'])} as any],'/p','2026-11-12',save),/10,000/);
+});

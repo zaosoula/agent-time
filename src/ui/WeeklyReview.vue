@@ -140,7 +140,7 @@ function exportReviewed() {
         <p v-if="refreshedAt">Refreshes every minute.</p>
         <div class="weekly-trend" aria-label="Daily activity trend">
           <div v-for="day in review.days" :key="day.date" class="trend-day">
-            <strong class="trend-date">{{ shortDate(day.date) }}</strong>
+            <button class="btn btn-sm trend-date" :aria-label="`Open ${day.date} in Review`" @click="store.openReview(day.date,store.project,[],store.pageFilters.time)">{{ shortDate(day.date) }} · Review</button>
             <div class="trend-bars">
               <span
                 class="mac"

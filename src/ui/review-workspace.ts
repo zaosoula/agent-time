@@ -29,3 +29,13 @@ export function reviewAssignmentParts(groups:AppReviewGroup[]) {
   }
   return {pairs:[...pairs.values()],segments:[...segments.values()].filter(s=>!pairs.has(JSON.stringify(s.pair)))};
 }
+
+/** All entry points submit the exact same recorded pairs/segments, scoped to their originating day. */
+export async function assignReviewActivity<T>(groups:AppReviewGroup[],project:string|null,date:string,save:(pairs:Array<[string,string]>,mode:'assigned'|'unassigned',projectPath?:string,date?:string,segments?:Array<{pair:[string,string];segment:'before'|'after'}>)=>Promise<T>):Promise<T>{
+ const parts=reviewAssignmentParts(groups);
+ if(!groups.length||!parts.pairs.length&&!parts.segments.length)throw new Error('Select recorded activity first.');
+ if(parts.pairs.length+parts.segments.length>10000)throw new Error('This selection is too large. Select at most 10,000 recorded intervals.');
+ return save(parts.pairs,project?'assigned':'unassigned',project||undefined,date,parts.segments.length?parts.segments:undefined);
+}
+export const reviewFocus = shallowRef<{date:string;ids:string[];sequence:number}|null>(null);
+export function requestReviewFocus(date:string,ids:string[]=[]){reviewFocus.value={date,ids:[...ids],sequence:++sequence};}
