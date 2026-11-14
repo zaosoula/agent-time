@@ -1,5 +1,10 @@
 # Agent Time public beta release record
 
+## `0.2.0-beta.57` candidate — 2026-11-14
+
+The release owner requested publication of all four post-beta.56 lots and their final fixes. Implementation spans `6f4082d`, `8225b36`, `0a9b9ba`, `6ada478`, `7a4f11c`; validation is recorded in [the four-lot evidence](../validation/2026-11-14-next-steps.md). The selected day loads before cooperative backlog checks; shared details, exact human assignments and explicit report scope preserve existing timing formulas and data. Source and artifact revision, CI gates and public byte checks will be appended after the signed publishing run completes. This candidate does not claim installation or OTA completion on the owner's Mac.
+
+
 ## `0.2.0-beta.56` published and verified — 2026-11-14
 
 The owner requested publication of the shared filters and toolbar date selector, including the accumulated review improvements since beta.55. Includes project-parent review grouping, descendant assignment with project-row drop targets, synchronized timeline selection, Unified / By category / Chronological views, grouping controls and clearer saved report explanations. The shared period/project scope retains independent page searches and cached context. Daily review edits remain day-scoped; period reports reuse the existing daily calculations and yield between days. Existing timing rules, capture history, billing policy calculations and saved snapshots are preserved. No productivity score is added.
