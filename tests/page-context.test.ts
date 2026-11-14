@@ -72,14 +72,14 @@ test('discarded hidden-page requests retry on return instead of leaving a perman
  for(const kind of ['WorkOutcomes','WeeklyReview']){
   const source=readFileSync(new URL(`../src/ui/${kind}.vue`,import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!.replace(/^import .*;\n/gm,'');
   const code=ts.transpileModule(source,{compilerOptions:{module:ts.ModuleKind.None,target:ts.ScriptTarget.ES2022}}).outputText;
-  const store=reactive({page:kind==='WorkOutcomes'?'outcomes':'weekly',selectedDate:'2026-11-10',project:'all',timelineProjects:[],reviewRevision:0});
+  const store=reactive({page:kind==='WorkOutcomes'?'outcomes':'weekly',selectedDate:'2026-11-10',project:'all',timelineProjects:[],reviewRevision:0,period:{from:'2026-11-10',to:'2026-11-10'},pageFilters:{time:{search:'',app:'',site:'',device:'',assignment:'all'},evidence:{search:''}}});
   const pending:Array<(value:unknown)=>void>=[],activated:Array<()=>void>=[];
   const read=()=>new Promise(resolve=>pending.push(resolve));
-  const bindings={defineProps:()=>({}),usePagePresentation:()=>ref(true),computed:requireVue.computed,reactive,ref,watch:requireVue.watch,onMounted:()=>{},onUnmounted:()=>{},onActivated:(fn:()=>void)=>activated.push(fn),useStore:()=>store,workOutcomeTransport:{list:read},weeklyTransport:{review:read},windowVisible:ref(true),humanizeError:String,clock:String};
+  const bindings={defineProps:()=>({}),usePagePresentation:()=>ref(true),computed:requireVue.computed,reactive,ref,watch:requireVue.watch,onMounted:()=>{},onUnmounted:()=>{},onActivated:(fn:()=>void)=>activated.push(fn),useStore:()=>store,workOutcomeTransport:{list:read},weeklyTransport:{review:read,period:read},windowVisible:ref(true),humanizeError:String,clock:String};
   const state=new Function(...Object.keys(bindings),code+';return {loading,error,load};')(...Object.values(bindings));
-  assert.equal(pending.length,1);const page=store.page;store.page='settings';store.selectedDate='2026-11-17';await nextTick();
+  assert.equal(pending.length,1);const page=store.page;store.page='settings';store.selectedDate='2026-11-17';store.period={from:'2026-11-17',to:'2026-11-17'};await nextTick();
   pending[0]!({projects:[],days:[]});await new Promise(resolve=>setTimeout(resolve,0));assert.equal(state.loading.value,false);
-  store.selectedDate='2026-11-10';await nextTick();store.page=page;for(const activate of activated)activate();await nextTick();assert.equal(pending.length,2,kind);
+  store.selectedDate='2026-11-10';store.period={from:'2026-11-10',to:'2026-11-10'};await nextTick();store.page=page;for(const activate of activated)activate();await nextTick();assert.equal(pending.length,2,kind);
   pending[1]!({projects:[],days:[]});await new Promise(resolve=>setTimeout(resolve,0));assert.equal(state.loading.value,false);
  }
 });

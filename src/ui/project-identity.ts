@@ -25,7 +25,7 @@ export function sessionProject(session: Pick<Session, 'cwd' | 'workspaceId'> & {
 }
 
 export function projectLabel(path: string): string {
-  return path === unassignedProject ? path : path.split('/').filter(Boolean).at(-1) || path;
+  return path === unassignedProject || path === 'unassigned' ? unassignedProject : path.split('/').filter(Boolean).at(-1) || path;
 }
 
 export function projectDisplay(path: string, paths: string[]): string {

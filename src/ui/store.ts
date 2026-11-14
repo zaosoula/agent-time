@@ -1,3 +1,5 @@
+import {createWorkspaceScope} from './workspace-scope.ts';
+import {emptyActivityFilters,filterActivity,type ActivityFilters} from '../capture/activity-filter.ts';
 // Shared dashboard state. One store owns every poll and every value that several views need, so the
 // same data is fetched and derived once, polling pauses while the window is hidden, and each poll only
 // runs while a page that shows its data is open.
@@ -135,7 +137,14 @@ function createStore() {
   const billingProjectRevision = ref(0);
   const project = ref('all');
   const search = ref('');
+  const pageFilters=ref<Record<string,ActivityFilters>>({today:emptyActivityFilters(),review:emptyActivityFilters(),time:emptyActivityFilters(),evidence:emptyActivityFilters()});
+  watch(search,value=>{if(pageFilters.value.today!.search!==value)pageFilters.value.today!.search=value;});
+  const filterKey=computed(()=>page.value==='reports'?reportsSection.value:page.value);
+  const activityFilters=computed(()=>pageFilters.value[filterKey.value]||emptyActivityFilters());
+  function setActivityFilters(value:ActivityFilters){pageFilters.value={...pageFilters.value,[filterKey.value]:value};if(filterKey.value==='today')search.value=value.search;}
+
   const selectedDate = ref(dateString(new Date()));
+  const workspaceScope=createWorkspaceScope(selectedDate);
   const selectedSessionKey = ref('');
   /** Ticks every second while visible; only the now-cursor and live labels read it. */
   const now = ref(Date.now() / 1000);
@@ -144,7 +153,7 @@ function createStore() {
 
   /** Website prefix the review queue is filtered to, set from Capture health. */
   const reviewSiteFilter = ref('');
-  const reviewProjectFilter = ref('unassigned');
+  const reviewProjectFilter = project;
 
   function navigate(destination: Page, nextProject?: string) {
     // Native menus and older links retain their destination IDs.
@@ -186,6 +195,8 @@ function createStore() {
 
   // ---- Fetched state -----------------------------------------------------------------------
   const summary = shallowRef<Summary>(emptySummary);
+  const knownProjects=ref<string[]>([]);
+  const reportFilterOptions=ref<{app:string[];site:string[];device:string[]}>({app:[],site:[],device:[]});
   const summaryLoaded = ref(false);
   const status = shallowRef<CaptureStatus | null>(null);
   const captureHealth = shallowRef<CaptureHealth | null>(null);
@@ -215,6 +226,7 @@ function createStore() {
     if (key === summaryKey) return;
     summaryKey = key;
     summary.value = markRaw(next);
+    knownProjects.value=[...new Set([...knownProjects.value,...next.sessions.map(sessionProject),...next.intervals.map(intervalProject)].filter(p=>p.startsWith('/')))].sort();
   }
 
   const summaryPages: Page[] = ['today', 'sessions', 'review', 'projects'];
@@ -432,7 +444,11 @@ function createStore() {
         end: Math.min(interval.end, end),
       }));
   });
-  const daySessionIntervals = computed(() => indexSessionIntervals(dayIntervals.value));
+  // Home filters stay local even while this shared data feeds Projects or Evidence.
+  const homeFilters=computed(()=>page.value==='today'?pageFilters.value.today!:emptyActivityFilters());
+  const effectiveSearch=computed(()=>page.value==='today'?search.value:'');
+  const homeIntervals=computed(()=>filterActivity({...summary.value,intervals:dayIntervals.value},homeFilters.value));
+  const daySessionIntervals = computed(() => indexSessionIntervals(homeIntervals.value));
   const firstSessionByEvidence = computed(() => {
     const sessions = new Map<string, Session>();
     for (const session of summary.value.sessions) {
@@ -473,11 +489,11 @@ function createStore() {
           observedSeconds: unionSeconds(running.map((interval) => [interval.start, interval.end])),
         };
       })
-      .filter((session) => project.value === 'all' || sessionProject(session) === project.value)
+      .filter((session) => (project.value === 'all' || sessionProject(session) === (project.value==='unassigned'?unassignedProject:project.value)) && (homeFilters.value.app||homeFilters.value.site||homeFilters.value.device||homeFilters.value.assignment!=='all'?daySessionIntervals.value.grouped.has(sessionIntervalKey(session)):true))
       .sort((a, b) => b.seconds - a.seconds || b.lastObservedAt - a.lastObservedAt),
   );
   const sessions = computed(() => {
-    const query = search.value.trim().toLowerCase();
+    const query = effectiveSearch.value.trim().toLowerCase();
     if (!query) return allSessions.value;
     return allSessions.value.filter((session) =>
       [
@@ -506,14 +522,14 @@ function createStore() {
         (!session.child && activeChildren.has(JSON.stringify([session.hostId ?? null, session.sessionId ?? null]))),
     );
   });
-  const humanBySession = computed(() => humanIntervalsBySession(summary.value.sessions, dayIntervals.value));
+  const humanBySession = computed(() => humanIntervalsBySession(summary.value.sessions, homeIntervals.value));
   const visibleSessionKeys = computed(() => new Set(creditedSessions.value.map(sessionIntervalKey)));
   const filteredIntervals = computed(() =>
     project.value === 'all'
-      ? dayIntervals.value
-      : dayIntervals.value.filter((interval) => {
+      ? homeIntervals.value
+      : homeIntervals.value.filter((interval) => {
           if (interval.state === 'human')
-            return Boolean((interval.workspaceId || interval.projectPath) && intervalProject(interval) === project.value);
+            return intervalProject(interval) === (project.value==='unassigned'?unassignedProject:project.value);
           return visibleSessionKeys.value.has(intervalSessionKey(interval));
         }),
   );
@@ -663,7 +679,7 @@ function createStore() {
       (session) => daySessionIntervals.value.grouped.get(sessionIntervalKey(session)) || [],
       sessionProject,
       workspaceProject,
-      !search.value.trim(),
+      !effectiveSearch.value.trim(),
     );
     return groups.map((group) => {
       const ordered = (group.sessions as DaySession[]).sort((a, b) => {
@@ -811,6 +827,8 @@ function createStore() {
     project,
     search,
     selectedDate,
+    ...workspaceScope,
+    pageFilters,filterKey,activityFilters,setActivityFilters,knownProjects,reportFilterOptions,
     selectedSessionKey,
     selectedSession,
     setDate,

@@ -8,10 +8,19 @@ export interface WeeklyReview {startDate:string;endDate:string;projects:WeeklyPr
 const dateString=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
 const project=(interval:Interval)=>intervalProjectPath(interval)||'Unassigned';
 export function weeklyReview(input:Summary|((date:string)=>Summary),startDate:string,acceptedDays:ReadonlySet<string>=new Set()):WeeklyReview{
+ const end=new Date(`${startDate}T12:00:00`);end.setDate(end.getDate()+6);return periodReview(input,startDate,dateString(end),acceptedDays);
+}
+export function periodReview(input:Summary|((date:string)=>Summary),startDate:string,throughDate:string,acceptedDays:ReadonlySet<string>=new Set()):WeeklyReview{
+ const steps=periodReviewSteps(input,startDate,throughDate,acceptedDays);let next=steps.next();while(!next.done)next=steps.next();return next.value;
+}
+/** Each yield releases a completed day; callers may let capture run before reading the next. */
+export function* periodReviewSteps(input:Summary|((date:string)=>Summary),startDate:string,throughDate:string,acceptedDays:ReadonlySet<string>=new Set()):Generator<void,WeeklyReview,unknown>{
  if(!/^\d{4}-\d{2}-\d{2}$/.test(startDate))throw new Error('Invalid week start');
  const start=new Date(`${startDate}T00:00:00`);
  if(Number.isNaN(start.getTime())||dateString(start)!==startDate)throw new Error('Invalid week start');
- const end=new Date(start);end.setDate(end.getDate()+7);
+ const end=new Date(`${throughDate}T00:00:00`);
+ if(Number.isNaN(end.getTime())||dateString(end)!==throughDate||throughDate<startDate||end.getTime()-start.getTime()>366*86400000)throw new Error('Invalid report period (maximum 367 days)');
+ end.setDate(end.getDate()+1);
  const rows=new Map<string,WeeklyProject>(),reviewedEntries:ReviewedEntry[]=[],days:WeeklyReview['days']=[];
  const totals={humanSeconds:0,agentSeconds:0,agentWallSeconds:0,elapsedSeconds:0,reviewedSeconds:0};
  for(let day=new Date(start);day<end;day.setDate(day.getDate()+1)){
@@ -39,6 +48,7 @@ export function weeklyReview(input:Summary|((date:string)=>Summary),startDate:st
   days.push({date:dateString(day),...dayTotals});
   totals.humanSeconds+=dayTotals.humanSeconds;totals.agentSeconds+=dayTotals.agentSeconds;totals.agentWallSeconds+=dayTotals.agentWallSeconds;totals.elapsedSeconds+=dayTotals.elapsedSeconds;
   totals.reviewedSeconds+=all.filter(interval=>interval.state==='human'&&(interval.userAttribution||accepted&&intervalProjectPath(interval))).reduce((sum,interval)=>sum+interval.end-interval.start,0);
+  yield;
  }
  const projects=[...rows.values()].sort((a,b)=>b.elapsedSeconds-a.elapsedSeconds||a.project.localeCompare(b.project));
  const endDate=new Date(end);endDate.setDate(endDate.getDate()-1);

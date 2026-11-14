@@ -1,14 +1,15 @@
 import {startBackgroundActivity,backgroundActivities,clearCompletedBackgroundActivities} from '../src/ui/background-activity.ts';
-import{test}from'node:test';import assert from'node:assert/strict';import{readFileSync}from'node:fs';import{computed,ref}from'vue';import{randomUUID}from'node:crypto';import ts from'typescript';
+import{test}from'node:test';import assert from'node:assert/strict';import{readFileSync}from'node:fs';import{computed,ref,watch}from'vue';import{randomUUID}from'node:crypto';import ts from'typescript';
 function page(){
  const source=readFileSync(new URL('../src/ui/BillingReports.vue',import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!.replace(/^import .*;\n/gm,'');
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const calls:Array<{method:string;params:any}>=[],activated:Array<()=>void>=[];const revision=ref(0);let finish!:(value:any)=>void;
- const store={billingProjectRevision:revision,settingsSection:ref('general'),openProject:(...params:any[])=>calls.push({method:'open-project',params}),navigate:(page:string)=>calls.push({method:'navigate',params:page})};
- const project={id:'example',name:'Example',policies:[{effectiveFrom:'2026-01-01'}]};
+ const scope=ref({from:'2026-11-01',to:'2026-11-14',mode:'day'});
+ const store={project:ref('all'),period:scope,setPeriod:(from:string,to:string)=>{scope.value={...scope.value,from,to};},billingProjectRevision:revision,settingsSection:ref('general'),openProject:(...params:any[])=>calls.push({method:'open-project',params}),navigate:(page:string)=>calls.push({method:'navigate',params:page})};
+ const project={id:'example',name:'Example',sources:{repositories:['/example']},policies:[{effectiveFrom:'2026-01-01'}]};
  const request=async(method:string,params:any)=>{calls.push({method,params});if(method==='billing_projects')return{projects:[project]};if(method==='billing_report_history')return{reports:[{reportId:'historical',projectId:'example',fromDate:'2026-10-01',toDate:'2026-10-02'}],nextHistoryCursor:'9'};if(method==='billing_report')return new Promise(resolve=>{finish=resolve;});return null;};
  backgroundActivities.value=[];
- const bindings={startBackgroundActivity,clearCompletedBackgroundActivities,sessionStorage:{setItem:(key:string,value:string)=>calls.push({method:'saved-setting',params:{key,value}})},computed,ref,onMounted:()=>{},onUnmounted:()=>{},onActivated:(fn:()=>void)=>activated.push(fn),useStore:()=>store,request,humanizeError:String,toast:{success(){}},crypto:{randomUUID},setTimeout:()=>1,clearTimeout:()=>{}};
+ const bindings={startBackgroundActivity,clearCompletedBackgroundActivities,sessionStorage:{setItem:(key:string,value:string)=>calls.push({method:'saved-setting',params:{key,value}})},computed,ref,watch,onMounted:()=>{},onUnmounted:()=>{},onActivated:(fn:()=>void)=>activated.push(fn),useStore:()=>store,request,humanizeError:String,toast:{success(){}},crypto:{randomUUID},setTimeout:()=>1,clearTimeout:()=>{}};
  const state=new Function(...Object.keys(bindings),js+';return{refresh,selectProject,loadReport,configure,projectId,fromDate,toDate,report,reporting,cursor,view,showSaved,loadHistory,loadSavedReport,history,historyCursor,savedReport,generatedReport,generatedCursor,savedCursor};')(...Object.values(bindings));
  return{state,calls,activated,revision,store,finish:(value:any)=>finish(value)};
 }
@@ -50,4 +51,12 @@ test('saved reports browse without disturbing the pending generated report and o
  await p.state.loadHistory(true);assert.equal(p.calls.at(-1)!.params.historyCursor,'9');assert.equal(p.calls.at(-1)!.params.cursor,undefined);
  const historyCalls=p.calls.filter(c=>c.method==='billing_report_history').length,retainedRows=p.state.history.value.length;p.state.view.value='generate';p.state.showSaved();await Promise.resolve();assert.equal(p.calls.filter(c=>c.method==='billing_report_history').length,historyCalls);assert.equal(p.state.history.value.length,retainedRows);
  await p.state.loadHistory();assert.equal(p.calls.filter(c=>c.method==='billing_report_history').length,historyCalls+1);assert.equal(p.calls.at(-1)!.params.historyCursor,undefined);assert.equal(p.state.history.value.length,1);
+});
+
+test('new billing requests use shared dates while an existing snapshot exports its original scope',async()=>{
+ const p=page();await p.state.refresh();p.store.period.value={from:'2026-11-06',to:'2026-11-12',mode:'custom'};
+ const pending=p.state.loadReport();let input=p.calls.at(-1)!.params;assert.equal(input.fromDate,'2026-11-06');assert.equal(input.toDate,'2026-11-12');
+ p.store.period.value={from:'2026-11-01',to:'2026-11-14',mode:'custom'};
+ const snapshot={reportId:'original-scope',projectId:'example',fromDate:'2026-11-06',toDate:'2026-11-12',days:[]};p.finish({report:snapshot,nextCursor:null});await pending;assert.deepEqual(p.state.report.value,snapshot);
+ const exporting=p.state.loadReport(false,'csv');input=p.calls.at(-1)!.params;assert.equal(input.fromDate,'2026-11-06');assert.equal(input.toDate,'2026-11-12');assert.equal(input.reportId,'original-scope');p.finish({report:snapshot,nextCursor:null});await exporting;
 });

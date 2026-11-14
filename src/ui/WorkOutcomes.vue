@@ -31,7 +31,7 @@ onActivated(refreshDate);
 const visible = computed(
   () =>
     outcomes.value?.projects.filter(
-      (item) => props.project === 'all' || item.projectPath === props.project,
+      (item) => (props.project === 'all' || item.projectPath === props.project) && (!store.pageFilters.evidence.search.trim()||[item.projectPath,...item.commits.map(c=>c.subject)].join(' ').toLocaleLowerCase().includes(store.pageFilters.evidence.search.trim().toLocaleLowerCase())),
     ) || [],
 );
 const count = computed(() => visible.value.reduce((total, item) => total + item.commits.length, 0));

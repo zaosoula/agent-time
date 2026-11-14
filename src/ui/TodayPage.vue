@@ -5,7 +5,6 @@ import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
 import DayOverview from './DayOverview.vue';
 import SectionHeading from './SectionHeading.vue';
-import DayPicker from './DayPicker.vue';
 import ProjectExplorer from './ProjectExplorer.vue';
 import InfoPopover from './InfoPopover.vue';
 import SetupVerification from './SetupVerification.vue';
@@ -181,7 +180,7 @@ const websites = computed(() => {
             </ul>
           </InfoPopover>
       </template>
-      <template #actions><DayPicker /></template>
+
     </SectionHeading>
 
     <SetupVerification
@@ -253,7 +252,7 @@ const websites = computed(() => {
     </div>
 
     <section class="activity-panel">
-      <div class="panel-toolbar"><label class="search-field"><Search :size="14" /><input v-model="store.search" type="search" aria-label="Search sessions" placeholder="Search sessions, providers or projects…" /></label><button class="btn btn-sm" @click="store.openUsageLimits()">Account limits</button></div>
+      <div class="panel-toolbar"><button class="btn btn-sm" @click="store.openUsageLimits()">Account limits</button></div>
       <ProjectExplorer v-model:focus="chartFocus" />
     </section>
 

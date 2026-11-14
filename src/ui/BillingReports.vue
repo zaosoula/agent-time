@@ -2,7 +2,7 @@
 import AppButton from './AppButton.vue';
 import BillingReportExplanation from './BillingReportExplanation.vue';
 import SectionHeading from './SectionHeading.vue';
-import {computed,onMounted,onUnmounted,onActivated,ref} from 'vue';
+import {computed,onMounted,onUnmounted,onActivated,ref,watch} from 'vue';
 import type {BillingProject,BillingReport,BillingReportSummary,BillingHistoryReply} from '../capture/billing-types.ts';
 import type {BillingProgress} from '../capture/billing-progress.ts';
 import {request} from './transport.ts';
@@ -50,9 +50,10 @@ async function loadSavedReport(item:BillingReportSummary|DisplayReport,more=fals
  }catch(cause){activity.finish();historyError.value=humanizeError(cause);}
  finally{historyReporting.value=false;}
 }
-const localDate=(date:Date)=>`${date.getFullYear()}-${String(date.getMonth()+1).padStart(2,'0')}-${String(date.getDate()).padStart(2,'0')}`;
-const today=localDate(new Date());
-const fromDate=ref(`${today.slice(0,7)}-01`),toDate=ref(today);
+const fromDate=computed({get:()=>store.period.value.from,set:(value:string)=>{store.setPeriod(value,store.period.value.to);}}),toDate=computed({get:()=>store.period.value.to,set:(value:string)=>{store.setPeriod(store.period.value.from,value);}});
+const scopedProjects=computed(()=>store.project.value==='all'?projects.value:store.project.value==='unassigned'?[]:projects.value.filter(p=>p.sources.repositories.some(root=>store.project.value===root||store.project.value.startsWith(root.replace(/\/+$/,'')+'/'))));
+function syncScope(){if(reportBusy.value)return;const candidates=scopedProjects.value;if(store.project.value==='all'&&!projectId.value&&candidates.length===1){selectProject(candidates[0]!.id);return;}if(store.project.value!=='all'){const next=candidates.length===1?candidates[0]!.id:'';if(next!==projectId.value)selectProject(next);}}
+watch([store.project,projects,reportBusy],syncScope);
 let projectRevision=-1,refreshing=false;
 async function refresh(background=false){
  if(refreshing)return;refreshing=true;const revision=store.billingProjectRevision.value;
@@ -60,7 +61,7 @@ async function refresh(background=false){
  try{
   const result=await request<{projects:BillingProject[]}>('billing_projects');
   projects.value=result.projects;projectRevision=revision;
-  if(!projectId.value&&projects.value.length===1)selectProject(projects.value[0]!.id);
+  syncScope();if(!projectId.value&&scopedProjects.value.length===1)selectProject(scopedProjects.value[0]!.id);
  }catch(cause){error.value=humanizeError(cause);}
  finally{refreshing=false;if(!background)loading.value=false;}
 }
@@ -69,8 +70,7 @@ function selectProject(id:string){
  clearCompletedBackgroundActivities('billing');
  projectId.value=id;generatedReport.value=null;generatedCursor.value=null;generatedExportPath.value='';error.value='';
  historyAttempt++;historyLoading.value=false;historyLoaded.value=false;history.value=[];historyCursor.value=null;savedReport.value=null;savedCursor.value=null;savedExportPath.value='';historyError.value='';if(view.value==='saved')void loadHistory();
- const first=projects.value.find(p=>p.id===id)?.policies[0]?.effectiveFrom;
- if(first){fromDate.value=first>`${today.slice(0,7)}-01`?first:`${today.slice(0,7)}-01`;if(toDate.value<fromDate.value)toDate.value=fromDate.value;}
+
 }
 function configure(){store.openProject(undefined,'billing',projectId.value||undefined);}
 const countingLabel=(mode:'minutes'|'seconds'|undefined)=>mode==='minutes'?'Minutes per activity block':'Actual seconds';
@@ -135,9 +135,10 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
       <SectionHeading class="day-heading" title="Billing reports" description="Calculate project billing, review the evidence, and export a saved report." :level="2" size="section"><template #actions><AppButton @click="configure">Edit policy</AppButton></template></SectionHeading>
       <LoadingStatus v-if="loading" label="Loading billing projects" detail="Reading your saved projects and billing rules." />
       <template v-else>
+<p v-if="projects.length&&!scopedProjects.length" class="notice">No billable project is configured for this repository filter. Choose All activity or configure its billing project.</p>
         <p v-if="error" class="error" role="alert">{{ error }}</p>
         <div v-if="!projects.length" class="empty-state"><h2>Set up your first billing project</h2><p>Group repositories and choose billing rules in Projects before generating a report.</p><AppButton variant="primary" @click="configure">Configure billing</AppButton></div>
-        <div v-else class="project-picker"><label for="report-project">Billable project</label><select id="report-project" :value="projectId" :disabled="reportBusy" @change="selectProject(($event.target as HTMLSelectElement).value)"><option value="">Choose a project…</option><option v-for="item in projects" :key="item.id" :value="item.id">{{ item.name }}</option></select><AppButton class="btn" :disabled="reportBusy" @click="refresh(true)">Refresh projects</AppButton></div>
+        <div v-else class="project-picker"><label for="report-project">Billable project</label><select id="report-project" :value="projectId" :disabled="reportBusy" @change="selectProject(($event.target as HTMLSelectElement).value)"><option value="">Choose a project…</option><option v-for="item in scopedProjects" :key="item.id" :value="item.id">{{ item.name }}</option></select><AppButton class="btn" :disabled="reportBusy" @click="refresh(true)">Refresh projects</AppButton></div>
       <section v-if="projectId" class="report-section">
         <nav class="report-actions billing-view-tabs" aria-label="Billing report views"><AppButton class="btn" :aria-pressed="view==='generate'" @click="view='generate'">Generate</AppButton><AppButton class="btn" :aria-pressed="view==='saved'" @click="showSaved">Saved reports</AppButton></nav>
         <div v-show="view==='saved'" class="saved-history">

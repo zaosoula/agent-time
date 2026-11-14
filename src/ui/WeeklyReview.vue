@@ -1,10 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, onActivated, reactive, ref, watch } from 'vue';
-import { ChevronLeft, ChevronRight } from '@lucide/vue';
 import { weeklyTransport } from './transport.ts';
 import { reviewedCsv, type WeeklyReview } from '../capture/weekly.ts';
 import { useStore } from './store.ts';
-import { dateString, duration, shiftDate, shortDate } from './format.ts';
+import { duration, shortDate } from './format.ts';
 import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 
@@ -17,6 +16,7 @@ const goals = ref<Record<string, number>>({}),
 const goalKey = 'agent-time:weekly-reviewed-goals:v1',
   remindKey = 'agent-time:weekly-goal-reminders:v1';
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
+let filterTimer:ReturnType<typeof setTimeout>|undefined;
 const refreshedAt = ref<number | null>(null);
 onMounted(() => {
   try {
@@ -40,7 +40,7 @@ onMounted(() => {
     if (windowVisible.value && (store.page === 'weekly' || store.page === 'reports' && store.reportsSection === 'time') && !loading.value) void load();
   }, 60_000);
 });
-onUnmounted(() => clearInterval(refreshTimer));
+onUnmounted(() => {clearInterval(refreshTimer);clearTimeout(filterTimer);});
 function setGoal(path: string, event: Event) {
   const hours = Number((event.target as HTMLInputElement).value);
   if (!Number.isFinite(hours) || hours < 0 || hours > 168) return;
@@ -61,18 +61,13 @@ function setReminder(event: Event) {
 }
 let loadGeneration = 0;
 let requestedContext = '', committedContext = '';
-function currentContext() { return `${monday.value}:${store.reviewRevision}`; }
+function currentContext() { return JSON.stringify([store.period.from,store.period.to,store.project,store.pageFilters.time,store.reviewRevision]); }
 function refreshContext() {
   const context = currentContext();
   if (!(store.page === 'weekly' || store.page === 'reports' && store.reportsSection === 'time') || loading.value && requestedContext === context || review.value && committedContext === context || error.value && requestedContext === context) return;
   void load();
 }
 onActivated(refreshContext);
-const monday = computed(() => {
-  const day = new Date(store.selectedDate + 'T12:00:00');
-  day.setDate(day.getDate() - ((day.getDay() + 6) % 7));
-  return `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
-});
 const label = (path: string) =>
   path === 'Unassigned' ? path : path.split('/').filter(Boolean).at(-1) || path;
 const trendMax = computed(() =>
@@ -84,16 +79,17 @@ const trendMax = computed(() =>
 const width = (seconds: number) => `${Math.max(0, (seconds / trendMax.value) * 100)}%`;
 async function load() {
   const generation = ++loadGeneration,
-    startDate = monday.value,
+    startDate = currentContext(),
     revision = store.reviewRevision;
   requestedContext = currentContext();
   loading.value = true;
   error.value = '';
   try {
-    const next = await weeklyTransport.review(startDate);
-    if (generation === loadGeneration && startDate === monday.value && revision === store.reviewRevision) {
+    const next = await weeklyTransport.period(store.period.from,store.period.to,store.project,{...store.pageFilters.time});
+    if (generation === loadGeneration && startDate === currentContext() && revision === store.reviewRevision) {
       review.value = next;
-      committedContext = `${startDate}:${revision}`;
+      if(next.options)store.reportFilterOptions=next.options;
+      committedContext = startDate;
       refreshedAt.value = Date.now();
     }
   } catch (cause) {
@@ -102,16 +98,14 @@ async function load() {
     if (generation === loadGeneration) loading.value = false;
   }
 }
-watch([monday, () => store.reviewRevision], refreshContext, { immediate: true });
-const weekEnd = computed(() => shiftDate(monday.value, 6));
-const thisWeek = computed(() => monday.value <= dateString(new Date()) && dateString(new Date()) <= weekEnd.value);
+watch(()=>[store.period,store.project,store.pageFilters.time,store.reviewRevision],()=>{clearTimeout(filterTimer);if(store.pageFilters.time.search.trim())filterTimer=setTimeout(refreshContext,300);else refreshContext();},{immediate:true,deep:true});
 function exportReviewed() {
-  if (!review.value?.reviewedEntries.length) return;
+  if (!review.value?.reviewedEntries.length||committedContext!==currentContext()) return;
   const blob = new Blob([reviewedCsv(review.value.reviewedEntries)], { type: 'text/csv;charset=utf-8' });
   const url = URL.createObjectURL(blob),
     link = document.createElement('a');
   link.href = url;
-  link.download = `agent-time-reviewed-${monday.value}.csv`;
+  link.download = `agent-time-reviewed-${review.value.startDate}-${review.value.endDate}.csv`;
   link.click();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
@@ -121,17 +115,9 @@ function exportReviewed() {
     <div class="day-heading">
       <div>
         <h2>Time report</h2>
-        <p>{{ shortDate(monday) }} – {{ shortDate(weekEnd) }}</p>
+        <p>{{store.periodLabel}} · {{store.project==='all'?'All activity':label(store.project)}}</p>
       </div>
-      <div class="date-controls">
-        <button class="icon-button" aria-label="Previous week" @click="store.setDate(shiftDate(store.selectedDate, -7))">
-          <ChevronLeft :size="16" />
-        </button>
-        <button class="icon-button" aria-label="Next week" @click="store.setDate(shiftDate(store.selectedDate, 7))">
-          <ChevronRight :size="16" />
-        </button>
-        <button class="btn btn-sm" :disabled="thisWeek" @click="store.setDate(dateString(new Date()))">This week</button>
-      </div>
+
     </div>
     <div class="weekly-review card">
     <div class="weekly-body">
@@ -139,9 +125,9 @@ function exportReviewed() {
         Your time, agent time and elapsed time are measured separately. When agents work in parallel, agent
         time can be more than the time that passed. These are measured activity totals; use the Billing tab for billable time, rounding and amounts.
       </p>
-      <p v-if="loading && !review" role="status">Loading week…</p>
+      <p v-if="loading" role="status">Loading selected period…</p>
       <p v-if="error" class="weekly-error" role="alert">{{ error }}</p>
-      <template v-if="review"
+      <template v-if="review && committedContext===currentContext()"
         ><div class="weekly-totals">
           <span
             >You <strong>{{ duration(review.totals.humanSeconds) }}</strong></span
@@ -187,7 +173,7 @@ function exportReviewed() {
               <th title="Clock time with any agent working">Agent wall clock</th>
               <th>Elapsed</th>
               <th>Reviewed</th>
-              <th>Reviewed goal</th>
+              <th v-if="store.period.mode==='week'">Reviewed goal</th>
             </tr>
           </thead>
           <tbody>
@@ -198,7 +184,7 @@ function exportReviewed() {
               <td>{{ duration(project.agentWallSeconds) }}</td>
               <td>{{ duration(project.elapsedSeconds) }}</td>
               <td>{{ duration(project.reviewedSeconds) }}</td>
-              <td>
+              <td v-if="store.period.mode==='week'">
                 <input
                   class="goal-input"
                   type="number"
@@ -221,17 +207,17 @@ function exportReviewed() {
               </td>
             </tr>
             <tr v-if="!review.projects.length">
-              <td colspan="7">No recorded activity this week.</td>
+              <td colspan="7">No recorded activity in this period and filter.</td>
             </tr>
           </tbody>
         </table>
-        <label class="goal-reminder"
+        <label v-if="store.period.mode==='week'" class="goal-reminder"
           ><input type="checkbox" :checked="remind" @change="setReminder" /> Remind me here when reviewed
           project time is below its weekly goal</label
         >
         <p
           v-if="
-            remind &&
+            store.period.mode==='week' && remind &&
             review.projects.some(
               (project) =>
                 goals[project.project] > 0 && project.reviewedSeconds < goals[project.project] * 3600,

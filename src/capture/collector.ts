@@ -34,7 +34,8 @@ import {outdatedHookTargets} from './hook-warning.ts';
 import {diagnosticSummary} from './diagnostics.ts';
 import {sourceStates} from './source-state.ts';
 import {PrivacyExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
-import {weeklyReview} from './weekly.ts';
+import {weeklyReview,periodReviewSteps} from './weekly.ts';
+import {filterActivity,emptyActivityFilters,type ActivityFilters} from './activity-filter.ts';
 import {localWorkOutcomes} from './work-outcomes.ts';
 import {storageUsage} from './storage-usage.ts';
 import {captureChecks} from './capture-checks.ts';
@@ -758,6 +759,18 @@ export class Collector {
       if(snapshot.completedAt&&!snapshot.stale&&!snapshot.pendingGroups)accepted.add(date);
       return day;
     },startDate,accepted);
+  }
+  async periodReview(from:string,to:string,project='all',filters:ActivityFilters=emptyActivityFilters()){
+    const accepted=new Set<string>(),apps=new Set<string>(),sites=new Set<string>(),devices=new Set<string>();
+    const steps=periodReviewSteps(date=>{
+      const day=this.daySummary(date,15000),snapshot=this.dayReviewSnapshot(date);
+      if(snapshot.completedAt&&!snapshot.stale&&!snapshot.pendingGroups)accepted.add(date);
+      for(const i of day.intervals){const app=i.foregroundName||i.browserBundleId||i.foregroundBundleId;if(app)apps.add(app);if(i.browserDomain)sites.add(i.browserDomain);devices.add(i.hostId||'local');}
+      return {...day,intervals:filterActivity(day,filters,project)};
+    },from,to,accepted);
+    let next=steps.next();
+    while(!next.done){await new Promise<void>(resolve=>setImmediate(resolve));next=steps.next();}
+    return {...next.value,options:{app:[...apps].sort(),site:[...sites].sort(),device:[...devices].sort()}};
   }
   workOutcomes(date:string){localDayBounds(date);return localWorkOutcomes(this.windowSummary(date,15000),date);}
   manualNotes(date:string){return this.store.manualNotes(date);}

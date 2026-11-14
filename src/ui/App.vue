@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {capturePageScroll, restorePageScroll} from './page-scroll.ts';
+import WorkspaceFilterBar from './WorkspaceFilterBar.vue';
 import LoadingStatus from './LoadingStatus.vue';
 import {backgroundActivities,dismissBackgroundActivity} from './background-activity.ts';
 import {storagePressureDetail} from '../capture/storage-pressure-status.ts';
@@ -56,7 +57,7 @@ const pageTitle = computed(() => store.page === 'settings' ? 'Settings' : pages.
 const dayPages: Page[] = ['today', 'review'];
 const projectPages: Page[] = ['today', 'projects'];
 const showsProject = computed(() => projectPages.includes(store.page) || store.page === 'reports' && store.reportsSection === 'evidence');
-const activityFilter = computed(() => store.page === 'today');
+const scopedPage=computed(()=>['today','review','reports'].includes(store.page));
 
 const reviewProjectSeconds = computed(() => {
   const totals = new Map<string,number>();
@@ -66,14 +67,14 @@ const reviewProjectSeconds = computed(() => {
   }
   return totals;
 });
-const sidebarProjects=computed(()=>store.page==='review'?[...new Set([...store.projects,...(store.websiteProjects?.projects||[]),...reviewProjectSeconds.value.keys()].filter(p=>p.startsWith('/')))].sort((a,b)=>projectDisplay(a,store.projects).localeCompare(projectDisplay(b,store.projects))):store.projects);
+const sidebarProjects=computed(()=>scopedPage.value?[...new Set([...store.knownProjects,...store.projects,...(store.websiteProjects?.projects||[]),...reviewProjectSeconds.value.keys()].filter(p=>p.startsWith('/')))].sort((a,b)=>projectDisplay(a,store.projects).localeCompare(projectDisplay(b,store.projects))):store.projects);
 const reviewTotal = computed(()=>store.appReviewGroups.reduce((sum,g)=>sum+g.seconds,0));
 const dropTarget=ref('');
 function clearReviewDrag(){reviewDrag.value=null;dropTarget.value='';}
 onMounted(()=>window.addEventListener('dragend',clearReviewDrag));
 onUnmounted(()=>window.removeEventListener('dragend',clearReviewDrag));
 function openSidebarProject(path:string) {
-  if(store.page==='review')store.reviewProjectFilter=path;
+  if(scopedPage.value)store.navigate(store.page,path);
   else if(path==='all')navigate(showsProject.value?store.page:'today','all');
   else store.openProject(path,'overview');
 }
@@ -274,17 +275,17 @@ onUnmounted(() => {
           Projects <span v-if="store.summaryLoaded">{{ sidebarProjects.length }}</span>
         </div>
         <button
-          :class="['project-row', { selected: store.page==='review'?store.reviewProjectFilter==='all':store.project === 'all' && showsProject }]"
+          :class="['project-row', { selected: store.project === 'all' && (scopedPage||showsProject) }]"
           @click="openSidebarProject('all')"
         >
-          <Folder :size="16" /><span>{{store.page==='review'?'All activity':'All projects'}}</span><small v-if="store.page==='review'" class="project-time">{{duration(reviewTotal)}}</small>
+          <Folder :size="16" /><span>{{scopedPage?'All activity':'All projects'}}</span><small v-if="store.page==='review'" class="project-time">{{duration(reviewTotal)}}</small>
         </button>
-        <button v-if="store.page==='review'" :class="['project-row',{selected:store.reviewProjectFilter==='unassigned','review-drop-target':dropTarget==='unassigned'}]" @click="openSidebarProject('unassigned')" @dragover="dragOverProject($event,'unassigned')" @dragleave="dropTarget=''" @drop="dropOnProject($event,'unassigned')"><CircleHelp :size="16"/><span>Unassigned</span><small class="project-time">{{duration(reviewProjectSeconds.get('unassigned')||0)}}</small></button>
+        <button v-if="scopedPage" :class="['project-row',{selected:store.project==='unassigned','review-drop-target':dropTarget==='unassigned'}]" @click="openSidebarProject('unassigned')" @dragover="dragOverProject($event,'unassigned')" @dragleave="dropTarget=''" @drop="dropOnProject($event,'unassigned')"><CircleHelp :size="16"/><span>Unassigned</span><small v-if="store.page==='review'" class="project-time">{{duration(reviewProjectSeconds.get('unassigned')||0)}}</small></button>
         <div class="project-list">
           <button
             v-for="name in sidebarProjects"
             :key="name"
-            :class="['project-row', { selected: store.page==='review'?store.reviewProjectFilter===name:store.project === name && showsProject, 'review-drop-target':dropTarget===name }]"
+            :class="['project-row', { selected: store.project === name && (scopedPage||showsProject), 'review-drop-target':dropTarget===name }]"
             @click="openSidebarProject(name)" @dragover="dragOverProject($event,name)" @dragleave="dropTarget=''" @drop="dropOnProject($event,name)"
           >
             <span class="project-dot" :style="{ background: projectColor(name) }"></span>
@@ -310,7 +311,6 @@ onUnmounted(() => {
             <strong v-else>{{ pageTitle }}</strong>
           </div>
           <div class="toolbar-actions">
-            <select v-if="activityFilter" class="toolbar-project" :value="store.project" aria-label="Filter activity by project" @change="navigate(store.page,($event.target as HTMLSelectElement).value)"><option value="all">All projects</option><option v-for="path in store.projects" :key="path" :value="path">{{ projectDisplay(path,store.projects) }}</option></select>
             <TooltipRoot v-if="dayPages.includes(store.page)">
               <TooltipTrigger as-child>
                 <button class="icon-button" aria-label="Export this day as CSV" @click="exportOpen = true">
@@ -388,6 +388,7 @@ onUnmounted(() => {
           </button>
         </div>
         <LoadingStatus class="page-loading" v-if="!store.summaryLoaded && ['today', 'review', 'projects'].includes(store.page)" :key="store.selectedDate" :label="store.status ? 'Preparing your activity' : 'Connecting to capture'" :detail="store.status ? 'Reading the selected day and applying your project decisions. You can open another section while this loads.' : 'Waiting for the local capture service. Your saved history stays on this Mac.'" />
+        <WorkspaceFilterBar v-if="scopedPage" />
         <KeepAlive :max="5">
           <TodayPage
             v-if="store.page === 'today'"

@@ -25,7 +25,7 @@ watch(()=>store.reportsSection,(next,previous)=>{
    <WeeklyReview v-if="store.reportsSection==='time'" key="time" />
    <UsagePage v-else-if="store.reportsSection==='usage'" key="usage" :status="store.status" />
    <BillingReports v-else-if="store.reportsSection==='billing'" key="billing" />
-   <WorkOutcomes v-else key="evidence" :active="store.page === 'reports' && store.reportsSection === 'evidence'" />
+   <WorkOutcomes v-else key="evidence" :show-date-picker="false" :active="store.page === 'reports' && store.reportsSection === 'evidence'" />
   </KeepAlive>
  </section>
 </template>

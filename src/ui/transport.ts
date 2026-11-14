@@ -93,6 +93,7 @@ export const privacyTransport = {
     request<PrivacyExclusion[]>('privacy_exclusions_set', { entries }),
 };
 export const weeklyTransport = {
+  period: (fromDate:string,toDate:string,project:string,filters:import('../capture/activity-filter.ts').ActivityFilters) => request<WeeklyReview & {options?:{app:string[];site:string[];device:string[]}}>('period_review',{fromDate,toDate,project,filters}),
   review: (startDate: string) => request<WeeklyReview>('weekly_review', { startDate }),
 };
 export const workOutcomeTransport = {

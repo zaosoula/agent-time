@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import {matchesActivity} from '../capture/activity-filter.ts';
 import AppButton from './AppButton.vue';
 import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, reactive } from 'vue';
 import { Check, ChevronRight, RotateCcw, AppWindow } from '@lucide/vue';
@@ -36,7 +37,7 @@ const choices = ref<Record<string, string>>({}),
   notice = ref(''),
   pending = ref(''),
   viewMode = ref<'queue' | 'reviewed' | 'all'>('queue'),
-  filterText = ref(''),
+  filterText = computed({get:()=>store.pageFilters.review.search,set:(value:string)=>{store.pageFilters.review.search=value;}}),
   openApps = ref<Record<string,boolean>>({}),
   appLimits = ref<Record<string,number>>({}),
   openContexts = ref<Record<string,boolean>>({}),
@@ -93,6 +94,7 @@ const projectPaths = computed(() =>
 const groups = computed(() =>
   store.appReviewGroups.filter(
     (group) =>
+      matchesActivity({state:'human',start:group.start,end:group.end,proof:'observed',sourceEventIds:[],foregroundName:group.appName,browserDomain:group.browserDomain,browserUrl:group.browserUrl,browserTitle:group.label,hostId:group.hostId,workspaceId:group.projectPath,userAttribution:group.userAttribution,attributionSource:group.attributionSource}, {...store.pageFilters.review,search:''}) &&
       (store.reviewProjectFilter==='all'||(store.reviewProjectFilter==='unassigned'?!reviewIsAssigned(group):reviewIsAssigned(group)&&group.projectPath===store.reviewProjectFilter)) &&
       (!store.reviewSiteFilter ||
       Boolean(
@@ -236,7 +238,7 @@ watch(
     let initial=initialReviewState(undefined);
     try {initial=initialReviewState(JSON.parse(sessionStorage.getItem(key)||'{}'));}catch{/* Ignore invalid saved review state. */}
     viewMode.value=store.reviewProjectFilter==='all'?initial.viewMode:'all';
-    filterText.value=initial.filterText;
+    // Search is retained with this page, independently of the selected day.
     focused.value=initial.focused;
   },
   { immediate: true },
@@ -616,7 +618,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <button :class="{active:viewMode==='queue'}" :aria-pressed="viewMode==='queue'" @click="viewMode=viewMode==='queue'?'all':'queue'">Needs review only</button>
         <span class="badge info">{{store.reviewProjectFilter==='all'?'All activity':store.reviewProjectFilter==='unassigned'?'Unassigned':name(store.reviewProjectFilter)}}</span>
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<AppButton compact variant="quiet" @click="store.reviewSiteFilter=''">Clear filter</AppButton></span>
-        <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
+
       </div>
       <ReviewViewControls v-model:layout="reviewLayout" v-model:grouping="grouping" />
       <p v-if="reviewLayout==='category'" class="app-review-explanation">Applications, websites and pages are different views of the same visits. Their totals are not added together; selecting a visit in one also selects it in the others.</p>

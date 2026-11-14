@@ -1,3 +1,4 @@
+import {matchesActivity,emptyActivityFilters} from '../src/capture/activity-filter.ts';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
@@ -24,9 +25,9 @@ function editor(input: Interval[]) {
   const js = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None } }).outputText;
   const writes: unknown[][] = [], scopes = effectScope();
   const groups = review.buildAppReviewGroups(input);
-  const store = reactive({ selectedDate: '2026-11-13', dayIntervals: input, appReviewGroups: groups,
+  const store = reactive({ pageFilters:{review:emptyActivityFilters()}, selectedDate: '2026-11-13', dayIntervals: input, appReviewGroups: groups,
     websiteProjects: { projects: ['/project'], matches: [] }, notes: [], reviewSiteFilter: '', reviewProjectFilter: 'all', page: 'review', applyReviewedSummary() {} });
-  const bindings = { ...review, ...reviewTree, ...reviewWorkspace, Element: ReviewElement, document: { body: {}, getElementById: () => null }, computed, ref, watch, reactive, nextTick, humanReviewState,
+  const bindings = { matchesActivity, ...review, ...reviewTree, ...reviewWorkspace, Element: ReviewElement, document: { body: {}, getElementById: () => null }, computed, ref, watch, reactive, nextTick, humanReviewState,
     defineEmits: () => () => {}, useStore: () => store, windowVisible: ref(true),
     onMounted() {}, onUnmounted() {}, onActivated() {}, onDeactivated() {},
     sessionStorage: { getItem: () => JSON.stringify({ version: 2, viewMode: 'all' }), setItem() {} },

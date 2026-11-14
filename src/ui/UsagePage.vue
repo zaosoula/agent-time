@@ -5,7 +5,7 @@ import { usePagePresentation } from './page-presentation.ts';
 import AppCard from './AppCard.vue';
 import SectionHeading from './SectionHeading.vue';
 import { useStore } from './store.ts';
-import { compactNumber, count, dateTime, usd } from './format.ts';
+import { compactNumber, count, dateTime, usd, shiftDate } from './format.ts';
 const props = defineProps<{ status: CaptureStatus | null }>();
 const store = useStore();
 const limitsSection=ref<HTMLElement|null>(null);
@@ -58,27 +58,19 @@ const total = (start: string, end?: string) =>
       (a, d) => ({ tokens: a.tokens + d.tokens, usd: a.usd + d.usd, unpriced: a.unpriced + d.unpriced }),
       { tokens: 0, usd: 0, unpriced: 0 },
     );
-const periods = computed(() => [
-  { title: 'Today', ...total(today.value, today.value) },
-  { title: 'This week', ...total(week.value, today.value) },
-  { title: 'This month', ...total(month.value + '-01', today.value) },
-]);
-const days = computed(() =>
-  Array.from({ length: new Date(now.value).getDate() }, (_, i) => {
-    const date = month.value + '-' + String(i + 1).padStart(2, '0');
-    const entries = rows.value.filter((d) => d.date === date);
-    return {
-      date,
-      day: i + 1,
-      tokens: entries.reduce((a, d) => a + d.tokens, 0),
-      usd: entries.reduce((a, d) => a + d.usd, 0),
-    };
-  }),
-);
+const periods = computed(() => [{title:'Selected period',...total(store.period.value.from,store.period.value.to)}]);
+const days = computed(() => {
+ const result=[];
+ for(let date=store.period.value.from;date<=store.period.value.to;date=shiftDate(date,1)){
+  const entries=rows.value.filter(d=>d.date===date);
+  result.push({date,day:Number(date.slice(-2)),tokens:entries.reduce((a,d)=>a+d.tokens,0),usd:entries.reduce((a,d)=>a+d.usd,0)});
+ }
+ return result;
+});
 const peak = computed(() => Math.max(1, ...days.value.map((d) => d.tokens)));
 const breakdown = computed(() =>
   rows.value
-    .filter((d) => d.date === today.value)
+    .filter((d) => d.date >= store.period.value.from && d.date <= store.period.value.to)
     .reduce(
       (a, d) => ({
         input: a.input + d.counts.input,
@@ -107,7 +99,7 @@ onMounted(() => {
 </script>
 <template>
   <section class="usage-page">
-    <SectionHeading as="div" class="usage-heading" title="Usage" description="Usage from sessions captured by Agent Time." size="page">
+    <SectionHeading as="div" class="usage-heading" title="Usage" description="Token totals follow the selected period. Provider account limits remain live and account-wide." size="page">
       <template #actions>
       <select v-model="provider" aria-label="Filter usage provider">
         <option value="all">All providers</option>
@@ -132,7 +124,7 @@ onMounted(() => {
     <template v-else>
       <div class="usage-metrics">
         <AppCard as="article" padding="regular" class="usage-metric" v-for="period in periods" :key="period.title">
-          <small>{{ period.title }}’s tokens</small><strong>{{ number(period.tokens) }}</strong
+          <small>{{ period.title }} tokens</small><strong>{{ number(period.tokens) }}</strong
           ><span
             >{{ money(period.usd) }}
             <small>API equivalent{{ period.unpriced ? ' · priced portion' : '' }}</small></span
@@ -140,7 +132,7 @@ onMounted(() => {
         </AppCard>
       </div>
       <AppCard class="usage-panel">
-        <SectionHeading as="div" class="usage-panel-title" title="Daily usage this month" size="compact">
+        <SectionHeading as="div" class="usage-panel-title" title="Daily usage in selected period" size="compact">
           <template #actions><small>{{
             usage?.scanning
               ? `Reading history · ${usage.filesScanned} files checked`
@@ -162,7 +154,7 @@ onMounted(() => {
           </div>
         </div>
         <div class="usage-breakdown">
-          <span>Today’s breakdown</span>
+          <span>Selected period breakdown</span>
           <dl>
             <div>
               <dt>Input</dt>
@@ -222,7 +214,7 @@ onMounted(() => {
         <p v-if="!limits.length" class="usage-empty">No account limits have been received yet.</p>
       </AppCard>
       <AppCard class="usage-panel">
-        <SectionHeading as="div" class="usage-panel-title" title="Models this month" size="compact" />
+        <SectionHeading as="div" class="usage-panel-title" title="Models in available history" size="compact" />
         <table>
           <thead>
             <tr>

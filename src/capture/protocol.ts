@@ -1,3 +1,4 @@
+import {emptyActivityFilters,type ActivityFilters} from './activity-filter.ts';
 import {humanDecisionSelection,type HumanDecisionSegment} from './human-review.ts';
 import {validBillingProgressId} from './billing-progress.ts';
 import {validateBillingProject} from './billing-store.ts';
@@ -7,6 +8,7 @@ import { validateSettings, type CaptureSettings } from './settings.ts';
 import {agentById} from './sources/agent-registry.ts';
 import {validateExclusions,type PrivacyExclusion} from './privacy-exclusions.ts';
 import {MAX_DECISION_PAIRS,validateManualNote,type ManualNote} from './store.ts';
+interface Controller {periodReview?(from:string,to:string,project:string,filters:ActivityFilters):unknown;}
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatus?(date:string,includeBacklog?:boolean):unknown;markDayReview?(date:string):unknown;}
 interface Controller {billingReportHistory?(request:ReturnType<typeof validateBillingHistoryRequest>):unknown;billingReportProgress?(id:string):unknown;billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
 interface Controller {reportedWork?(date:string):unknown;stopReportedTimer?(taskCounterId:string,discard?:boolean):unknown;}
@@ -127,6 +129,13 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='reported_work'){
       if(!controller.reportedWork||Object.keys(params).length!==1||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date)||Number.isNaN(new Date(`${params.date}T00:00:00`).getTime())||new Date(`${params.date}T00:00:00`).toLocaleDateString('en-CA')!==params.date)throw new Error('Invalid reported work date');
       return {id,result:controller.reportedWork(params.date)};
+    }
+    if(request.method==='period_review'){
+      if(!controller.periodReview||Object.keys(params).some(k=>!['fromDate','toDate','project','filters'].includes(k))||typeof params.fromDate!=='string'||typeof params.toDate!=='string'||params.project!==undefined&&(typeof params.project!=='string'||params.project.length>4096))throw new Error('Invalid report scope');
+      if(params.filters!==undefined&&(!params.filters||typeof params.filters!=='object'||Array.isArray(params.filters)))throw new Error('Invalid activity filters');
+      const filters={...emptyActivityFilters(),...object(params.filters)};
+      if(Object.keys(filters).some(k=>!['search','app','site','device','assignment'].includes(k))||Object.values(filters).some(v=>typeof v!=='string'||v.length>4096)||!['all','assigned','unassigned'].includes(filters.assignment))throw new Error('Invalid activity filters');
+      return {id,result:await controller.periodReview(params.fromDate,params.toDate,params.project as string||'all',filters)};
     }
     if(request.method==='weekly_review'){
       if(!controller.weeklyReview||Object.keys(params).length!==1||typeof params.startDate!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.startDate))throw new Error('Invalid week start');
