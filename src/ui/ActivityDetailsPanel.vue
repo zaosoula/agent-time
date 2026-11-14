@@ -7,12 +7,12 @@ import {usePagePresentation} from './page-presentation.ts';
 import {activityDetailSpans,type ActivityDetailTarget} from './activity-detail-target.ts';
 import {reviewGroupId,reviewVisitTitle,reviewAssignmentLabel} from './review-apps.ts';
 import {duration,preciseClock} from './format.ts';
-const props=defineProps<{target:ActivityDetailTarget;focusOnOpen?:boolean}>();
+const props=withDefaults(defineProps<{target:ActivityDetailTarget;focusOnOpen?:boolean;invoker?:HTMLElement|null}>(),{focusOnOpen:true});
 const emit=defineEmits<{close:[];review:[date:string,ids:string[]]}>();
 const active=usePagePresentation(),root=ref<HTMLElement|null>(null);
 let returnFocus:HTMLElement|null=null;
-onMounted(()=>{returnFocus=document.activeElement instanceof HTMLElement?document.activeElement:null;if(props.focusOnOpen!==false)void nextTick(()=>nextTick(()=>{if(active.value)root.value?.focus();}));});
-onBeforeUnmount(()=>{if(active.value&&returnFocus?.isConnected)returnFocus.focus();});
+onMounted(()=>{returnFocus=props.invoker||(document.activeElement instanceof HTMLElement?document.activeElement:null);if(props.focusOnOpen!==false)void nextTick(()=>requestAnimationFrame(()=>{if(active.value)root.value?.focus();}));});
+onBeforeUnmount(()=>{if(props.focusOnOpen!==false)void nextTick(()=>{if(active.value&&returnFocus?.isConnected)returnFocus.focus();});});
 const title=computed(()=>props.target.kind==='human'?(props.target.groups.length===1?reviewVisitTitle(props.target.groups[0]!):`${props.target.groups.length} activity visits`):props.target.kind==='agent'?'Agent execution':'Saved billing report');
 const spans=computed(()=>activityDetailSpans(props.target));
 function close(event?:KeyboardEvent){event?.stopPropagation();event?.preventDefault();emit('close');}

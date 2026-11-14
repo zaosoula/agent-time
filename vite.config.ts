@@ -29,7 +29,8 @@ export default defineConfig({
             let body = '';
             for await (const chunk of req) {
               body += chunk;
-              if (body.length > 65536) throw new Error('Request too large');
+              // Bounded, but large enough for the protocol's 10,000 selected UUID pairs.
+              if (body.length > 2097152) throw new Error('Request too large');
             }
             const reply = await dispatchRequest(JSON.parse(body), collector);
             res.setHeader('Content-Type', 'application/json');

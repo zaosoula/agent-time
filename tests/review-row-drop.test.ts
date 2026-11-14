@@ -14,7 +14,7 @@ test('project rows accept internal drops including Unassigned; ordinary rows, bu
  const source=readFileSync(new URL('../src/ui/ReviewTreeRow.vue',import.meta.url),'utf8').match(/<script setup lang="ts">([\s\S]*?)<\/script>/)![1]!.replace(/^import[\s\S]*?;\n/gm,'');
  const js=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.None}}).outputText;
  const props=reactive({node:target,date:'2026-11-14',busy:false,selected:{},expanded:{},projects:[]});
- const bindings={computed,ref,watch,...review,...workspace,projectColor,defineProps:()=>props,withDefaults:(value:unknown)=>value,defineEmits:()=>()=>{}};
+ const bindings={useRetainedOpen:(value:any)=>value,computed,ref,watch,...review,...workspace,projectColor,defineProps:()=>props,withDefaults:(value:unknown)=>value,defineEmits:()=>()=>{}};
  const row=new Function(...Object.keys(bindings),js+';return {acceptsDrop,dragOver,drop,dropOver};')(...Object.values(bindings));
  const data=new Map<string,string>();const transfer={types:[workspace.reviewDragType],setData:(k:string,v:string)=>data.set(k,v),getData:(k:string)=>data.get(k)||'',effectAllowed:'',dropEffect:''} as unknown as DataTransfer;
  let prevented=0;const event={dataTransfer:transfer,preventDefault(){prevented++;}};

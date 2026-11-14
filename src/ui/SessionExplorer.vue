@@ -45,7 +45,7 @@ async function inspectExecution(item: AgentExecution, event: MouseEvent) {
       await nextTick();
       document.querySelector<HTMLElement>('.execution-sheet [aria-label="Back to executions"]')?.focus();
     }
-  } else executionKey.value = executionKey.value === item.key ? '' : item.key;
+  } else {returnFocus=event.currentTarget as HTMLElement;executionKey.value = executionKey.value === item.key ? '' : item.key;}
 }
 async function backToExecutions() {
   const key = sheetExecutionKey.value;
@@ -219,7 +219,7 @@ const presentedOpen = useRetainedOpen(sheetOpen);
             <b>{{ duration(item.seconds) }}</b>
             <ChevronRight :size="14" :class="{ open: execution?.key === item.key }" />
           </button>
-          <ActivityDetailsPanel v-if="!narrow && execution?.key === item.key" :target="{kind:'agent',date:store.selectedDate.value,execution:item}" @close="executionKey=''" />
+          <ActivityDetailsPanel v-if="!narrow && execution?.key === item.key" :invoker="returnFocus" :target="{kind:'agent',date:store.selectedDate.value,execution:item}" @close="executionKey=''" />
         </li>
       </ul>
       <button v-if="narrow && selected.executions.length > 5" class="view-executions" @click="openExecutions">

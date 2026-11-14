@@ -21,10 +21,10 @@ import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTreeRow from './ReviewTreeRow.vue';
 import {buildReviewLayout,defaultReviewGrouping,type ReviewLayout,type ReviewGrouping,type ReviewNode} from './review-tree.ts';
-import {assignReviewActivity,reviewFocus,reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
+import {assignReviewActivity,reviewFocus,reviewPartKeys,reviewSelectionIsCurrent,type ReviewParts,reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
 import ReviewViewControls from './ReviewViewControls.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
-import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
+import {buildAppReviewGroups,reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
 
 const emit = defineEmits<{
   note: [start: number, end: number, label: string];
@@ -92,8 +92,14 @@ const projectPaths = computed(() =>
 );
 
 // Derive app visits from the same day intervals used by the shared timing totals.
+const focusParts=ref<ReviewParts|null>(null);
+const scopedGroups=computed(()=>{
+ if(!focusParts.value)return store.appReviewGroups;
+ const selected=reviewPartKeys(focusParts.value);
+ return buildAppReviewGroups(store.dayIntervals.filter(interval=>interval.sourceEventIds.length===2&&selected.has(JSON.stringify([...interval.sourceEventIds,interval.reviewSegment||'']))));
+});
 const groups = computed(() =>
-  store.appReviewGroups.filter(
+  scopedGroups.value.filter(
     (group) =>
       matchesActivity({state:'human',start:group.start,end:group.end,proof:'observed',sourceEventIds:[],foregroundName:group.appName,browserDomain:group.browserDomain,browserUrl:group.browserUrl,browserTitle:group.label,hostId:group.hostId,workspaceId:group.projectPath,userAttribution:group.userAttribution,attributionSource:group.attributionSource}, {...store.pageFilters.review,search:''}) &&
       (store.reviewProjectFilter==='all'||(store.reviewProjectFilter==='unassigned'?!reviewIsAssigned(group):reviewIsAssigned(group)&&group.projectPath===store.reviewProjectFilter)) &&
@@ -402,6 +408,7 @@ function focusNode(node:ReviewNode){focused.value=node.key;}
 function clearSelection(){selectedGroups.value={};bulkProject.value='';}
 
 const inspectedId=ref('');
+const inspectedInvoker=ref<HTMLElement|null>(null);
 const detailGroup=computed(()=>activeGroups.value.find(g=>id(g)===inspectedId.value));
 const selectionSummary=computed(()=>({seconds:selectedSeconds.value,visits:bulkGroups.value.length}));
 function toggleNode(key:string){expandedTree.value[key]=!renderExpanded.value[key];}
@@ -419,17 +426,22 @@ async function assignGroups(rows:AppReviewGroup[],path:string|null){
   }
 }
 function dragNode(node:ReviewNode,event:DragEvent){if(pending.value||!event.dataTransfer)return;beginReviewDrag(store.selectedDate,actionGroups(node),event.dataTransfer);}
-function inspectGroup(group:AppReviewGroup){inspectedId.value=id(group);openRows.value[id(group)]=true;}
-watch(()=>store.reviewProjectFilter,()=>{viewMode.value='all';selectedGroups.value={};expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';});
-watch(()=>store.selectedDate,()=>{expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';reviewDrag.value=null;});
+function inspectGroup(group:AppReviewGroup){
+ const find=(nodes:ReviewNode[]):ReviewNode|undefined=>{for(const node of nodes){if(node.kind==='visit'&&node.groups.some(g=>id(g)===id(group)))return node;const child=find(node.children);if(child)return child;}};
+ const node=find(tree.value);inspectedInvoker.value=node?document.getElementById(`review-tree-${node.key}`):null;
+ inspectedId.value=id(group);openRows.value[id(group)]=true;
+}
+watch(()=>store.reviewProjectFilter,()=>{focusParts.value=null;viewMode.value='all';selectedGroups.value={};expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';});
+watch(()=>store.selectedDate,()=>{focusParts.value=null;expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';reviewDrag.value=null;});
 watch(reviewDrop,request=>{
   if(!request||store.page!=='review'||request.date!==store.selectedDate)return;
-  const ids=new Set(request.ids),rows=activeGroups.value.filter(g=>ids.has(id(g)));
-  if(rows.length!==ids.size){error.value='The activity changed during the drag. Select it again.';return;}
+  const rows=request.groups;
+  if(!rows?.length||!reviewSelectionIsCurrent(rows,activeGroups.value)){error.value='The activity changed during the drag. Select it again.';return;}
   void assignGroups(rows,request.project);
 });
 watch(reviewFocus,request=>{
  if(!request||store.page!=='review'||request.date!==store.selectedDate)return;
+ focusParts.value=request.parts||null;
  viewMode.value='all';
  selectedGroups.value=Object.fromEntries(request.ids.map(id=>[id,true]));
  if(request.ids.length===1)inspectedId.value=request.ids[0]!;
@@ -627,6 +639,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<AppButton compact variant="quiet" @click="store.reviewSiteFilter=''">Clear filter</AppButton></span>
 
       </div>
+      <p v-if="focusParts" class="human-review-notice">Showing the exact visits opened from Home. <AppButton compact variant="quiet" @click="focusParts=null;clearSelection()">Show all visits</AppButton></p>
       <ReviewViewControls v-model:layout="reviewLayout" v-model:grouping="grouping" />
       <p v-if="reviewLayout==='category'" class="app-review-explanation">Applications, websites and pages are different views of the same visits. Their totals are not added together; selecting a visit in one also selects it in the others.</p>
       <p v-if="reviewLayout==='chronological'" class="app-review-explanation">Individual visits in time order. Each row keeps its recorded boundaries; gaps are not filled.</p>
@@ -641,7 +654,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <ReviewTreeRow v-for="node in visibleTree" :key="node.key" :node="node" :date="store.selectedDate" :expanded="renderExpanded" :show-assignment="reviewLayout!=='unified'||!grouping.byProject" :focused="focused" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @focus="focusNode" @activate="activateNode" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
       </div>
       <AppButton v-if="reviewLayout==='chronological'&&visibleTree.length<tree.length" compact variant="quiet" @click="chronologicalLimit+=100">Show next {{Math.min(100,tree.length-visibleTree.length)}} visits · {{tree.length-visibleTree.length}} remaining</AppButton>
-      <ActivityDetailsPanel v-if="detailGroup" :key="id(detailGroup)" :target="{kind:'human',date:store.selectedDate,groups:[detailGroup]}" @close="inspectedId=''">
+      <ActivityDetailsPanel v-if="detailGroup" :key="id(detailGroup)" :invoker="inspectedInvoker" :target="{kind:'human',date:store.selectedDate,groups:[detailGroup]}" @close="inspectedId=''">
         <template v-for="group in [detailGroup]" :key="id(group)">
 <div class="review-detail">
 <p v-if="reviewIsAssigned(group)" class="review-attribution-note">Already counted in {{ name(group.projectPath!) }}. No confirmation is needed.</p>

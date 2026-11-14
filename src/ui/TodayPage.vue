@@ -1,10 +1,11 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue';
 import { ArrowRight, CalendarDays, CheckCircle2, Layers3, Radio, Search, ShieldCheck, Timer } from '@lucide/vue';
+import type {Interval} from '../capture/events.ts';
 import HumanActivityActions from './HumanActivityActions.vue';
 import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
 import {buildAppReviewGroups,reviewGroupId,type AppReviewGroup} from './review-apps.ts';
-import {assignReviewActivity,reviewDrop,requestReviewFocus} from './review-workspace.ts';
+import {assignReviewActivity,reviewDrop,reviewSelectionIsCurrent} from './review-workspace.ts';
 import {transport,reviewTransport} from './transport.ts';
 import { toast } from './toast.ts';
 import { minuteCreditSeconds } from '../capture/correlate.ts';
@@ -65,9 +66,10 @@ const macSource = computed(() => store.confidence.sources.find((source) => sourc
 const humanIntervals = computed(() => store.filteredIntervals.filter((interval) => interval.state === 'human'));
 const editableHumanGroups=computed(()=>buildAppReviewGroups(humanIntervals.value));
 function tabReviewGroups(tab:{workspaceId:string;tabId:string}){return buildAppReviewGroups(humanIntervals.value.filter(i=>i.workspaceId===tab.workspaceId&&i.tabId===tab.tabId));}
-function pageReviewGroups(site:{project:string},url:string){return buildAppReviewGroups(humanIntervals.value.filter(i=>i.browserUrl===url&&intervalProject(i)===site.project));}
+const openSites=ref<Record<string,boolean>>({});
 const humanDetails=ref<{kind:'human';date:string;groups:AppReviewGroup[]}|null>(null),humanBusy=ref(false),humanUndo=ref('');
-function inspectHuman(groups:AppReviewGroup[]){humanDetails.value={kind:'human',date:store.selectedDate,groups};}
+const humanDetailsInvoker=ref<HTMLElement|null>(null);
+function inspectHuman(groups:AppReviewGroup[],invoker:HTMLElement|null){humanDetailsInvoker.value=invoker;humanDetails.value={kind:'human',date:store.selectedDate,groups};}
 async function assignHuman(groups:AppReviewGroup[],project:string|null){
  if(humanBusy.value)return;
  const date=store.selectedDate;
@@ -90,12 +92,12 @@ async function undoHuman(){
  const date=store.selectedDate,id=humanUndo.value;humanBusy.value=true;
  try{store.applyReviewedSummary(await reviewTransport.undo(id,date),date);if(date===store.selectedDate)humanUndo.value='';}catch(cause){toast.error(cause,'human-assignment');}finally{humanBusy.value=false;}
 }
-function openHumanReview(date:string,ids:string[]){store.openReview(date,'all',ids);}
+function openHumanReview(date:string,ids:string[]){store.openReview(date,'all',ids,undefined,humanDetails.value?.groups);}
 watch(()=>store.selectedDate,()=>{humanDetails.value=null;humanUndo.value='';});
 watch(reviewDrop,request=>{
  if(!request||store.page!=='today'||request.date!==store.selectedDate)return;
- const ids=new Set(request.ids),groups=editableHumanGroups.value.filter(group=>ids.has(reviewGroupId(group)));
- if(groups.length===ids.size)void assignHuman(groups,request.project);
+ const groups=request.groups;
+ if(groups?.length&&reviewSelectionIsCurrent(groups,editableHumanGroups.value))void assignHuman(groups,request.project);
  else toast.error('Activity changed during the drag. Select it again.','human-assignment');
 });
 const humanTabs = computed(() => {
@@ -121,10 +123,10 @@ const humanTabs = computed(() => {
     .sort((a, b) => b.seconds - a.seconds);
 });
 const websites = computed(() => {
-  type Page = { url: string; title: string; intervals: Array<[number, number]> };
+  type Page = { url: string; title: string; intervals: Array<[number, number]>; observations:Interval[] };
   const groups = new Map<
     string,
-    { domain: string; project: string; intervals: Array<[number, number]>; browsers: Set<string>; pages: Map<string, Page> }
+    { domain: string; project: string; intervals: Array<[number, number]>; browsers: Set<string>; pages: Map<string, Page>; observations:Interval[] }
   >();
   for (const interval of humanIntervals.value) {
     if (!interval.browserDomain) continue;
@@ -138,14 +140,16 @@ const websites = computed(() => {
     }
     const project = (interval.workspaceId || interval.projectPath) ? intervalProject(interval) : unassignedProject;
     const key = `${domain}::${project}`;
-    const group = groups.get(key) || { domain, project, intervals: [], browsers: new Set<string>(), pages: new Map<string, Page>() };
+    const group = groups.get(key) || { domain, project, intervals: [], browsers: new Set<string>(), pages: new Map<string, Page>(), observations:[] as Interval[] };
     group.intervals.push([interval.start, interval.end]);
+    group.observations.push(interval);
     if (interval.browserBundleId)
       group.browsers.add(
         store.status?.sources.find((source) => source.bundleId === interval.browserBundleId)?.name || interval.browserBundleId,
       );
     if (interval.browserUrl) {
-      const page = group.pages.get(interval.browserUrl) || { url: interval.browserUrl, title: interval.browserTitle || domain, intervals: [] };
+      const page = group.pages.get(interval.browserUrl) || { url: interval.browserUrl, title: interval.browserTitle || domain, intervals: [],observations:[] as Interval[] };
+      page.observations.push(interval);
       page.title = interval.browserTitle || page.title;
       page.intervals.push([interval.start, interval.end]);
       group.pages.set(interval.browserUrl, page);
@@ -156,8 +160,9 @@ const websites = computed(() => {
     .map((group) => ({
       ...group,
       seconds: minuteCreditSeconds(group.intervals),
+      reviewGroups:buildAppReviewGroups(group.observations),
       pages: [...group.pages.values()]
-        .map((page) => ({ ...page, seconds: minuteCreditSeconds(page.intervals) }))
+        .map((page) => ({ ...page, seconds: minuteCreditSeconds(page.intervals), reviewGroups:buildAppReviewGroups(page.observations) }))
         .sort((a, b) => b.seconds - a.seconds),
     }))
     .sort((a, b) => b.seconds - a.seconds);
@@ -312,7 +317,7 @@ const websites = computed(() => {
         </span>
         <b>{{ duration(tab.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="tabReviewGroups(tab)" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
       </div>
-      <details v-for="site in websites" :key="site.domain + '::' + site.project" class="human-site">
+      <details v-for="site in websites" :key="site.domain + '::' + site.project" class="human-site" @toggle="openSites[site.domain+'::'+site.project]=($event.target as HTMLDetailsElement).open">
         <summary class="human-tab-row website-row">
           <span>
             <strong>{{ site.domain }}</strong>
@@ -322,19 +327,19 @@ const websites = computed(() => {
               {{ site.pages.length }} {{ site.pages.length === 1 ? 'page' : 'pages' }}
             </small>
           </span>
-          <b>{{ duration(site.seconds) }}</b>
+          <b>{{ duration(site.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="site.reviewGroups" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
         </summary>
-        <div v-for="sitePage in site.pages" :key="sitePage.url" class="human-tab-row web-page-row">
+        <template v-if="openSites[site.domain+'::'+site.project]"><div v-for="sitePage in site.pages" :key="sitePage.url" class="human-tab-row web-page-row">
           <span>
             <strong>{{ sitePage.title }}</strong>
             <small :title="sitePage.url">{{ sitePage.url }}</small>
           </span>
-          <b>{{ duration(sitePage.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="pageReviewGroups(site,sitePage.url)" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
-        </div>
+          <b>{{ duration(sitePage.seconds) }}</b><HumanActivityActions :date="store.selectedDate" :groups="sitePage.reviewGroups" :projects="store.knownProjects" :busy="humanBusy" @assign="assignHuman" @inspect="inspectHuman" />
+        </div></template>
       </details>
     </details>
 
-    <ActivityDetailsPanel v-if="humanDetails" :target="humanDetails" @close="humanDetails=null" @review="openHumanReview" />
+    <ActivityDetailsPanel v-if="humanDetails" :target="humanDetails" :invoker="humanDetailsInvoker" @close="humanDetails=null" @review="openHumanReview" />
     <div class="activity-note">
       <ShieldCheck :size="14" />
       <span>Recorded on this Mac only. Your time is estimated from activity; agent time comes from their events.</span>

@@ -39,3 +39,11 @@ test('shared assignment sends original segments, captures the originating day an
  assert.deepEqual(sent,[[],'unassigned',undefined,'2026-11-12',[{pair:['a','b'],segment:'before'}]]);
  await assert.rejects(()=>assignReviewActivity([{pairs:Array.from({length:10001},(_,i)=>[String(i),'end'])} as any],'/p','2026-11-12',save),/10,000/);
 });
+
+test('drag freezes exact pairs so a later larger group cannot expand the assignment',()=>{
+ const original=group(),data=new Map<string,string>();
+ const transfer={setData:(k:string,v:string)=>data.set(k,v),getData:(k:string)=>data.get(k)||'',effectAllowed:''} as unknown as DataTransfer;
+ beginReviewDrag('2026-11-12',[original],transfer);original.pairs.push(['b','c']);
+ dropReviewActivity('2026-11-12','/project',transfer);
+ assert.deepEqual(reviewDrop.value?.groups?.[0]?.pairs,[['a','b']]);
+});

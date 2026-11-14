@@ -17,7 +17,7 @@ import { dayConfidence } from '../capture/day-confidence.ts';
 import { unobservedGaps } from '../capture/gaps.ts';
 import { outdatedHookTargets } from '../capture/hook-warning.ts';
 import { groupHumanReview, humanReviewState, type HumanReviewGroup } from '../capture/human-review.ts';
-import {buildAppReviewGroups,reviewContextGroups} from './review-apps.ts';
+import {buildAppReviewGroups,reviewContextGroups,type AppReviewGroup} from './review-apps.ts';
 import { humanIntervalsBySession } from '../capture/orca-focus.ts';
 import {
   dayReviewTransport,
@@ -194,13 +194,13 @@ function createStore() {
     return true;
   }
 
-  function openReview(date:string,nextProject=project.value,ids:string[]=[],filters?:ActivityFilters){
+  function openReview(date:string,nextProject=project.value,ids:string[]=[],filters?:ActivityFilters,groups?:AppReviewGroup[]){
     if(!isValidDateString(date))return;
     setDate(date);
     reviewSiteFilter.value='';
     pageFilters.value={...pageFilters.value,review:filters?{...filters}:emptyActivityFilters()};
     navigate('review',nextProject);
-    requestReviewFocus(date,ids);
+    requestReviewFocus(date,ids,groups);
   }
 
   // ---- Fetched state -----------------------------------------------------------------------

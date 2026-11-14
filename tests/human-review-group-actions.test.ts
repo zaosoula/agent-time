@@ -34,8 +34,8 @@ function editor(input: Interval[]) {
     transport: { setHumanDecision: async (...args: unknown[]) => { writes.push(args); return {}; } },
     reviewTransport: { history: async () => [] }, minuteCreditSeconds: () => 0,
     humanizeError: String, duration: String, clock: String, preciseClock: String };
-  const state = scopes.run(() => new Function(...Object.keys(bindings), js + ';return {assignNode,selectNode,activateNode,focusNode,focusedIds,reviewLayout,grouping,selectTimeline,tree,visibleTree,expandedTree,focused,keyboard,root,bulkAssign,bulkProject,selectedGroups,bulkGroups,pending,splitDraft,toggleOpen,isOpen};')(...Object.values(bindings)));
-  return { state, writes, groups, stop: () => scopes.stop() };
+  const state = scopes.run(() => new Function(...Object.keys(bindings), js + ';return {activeGroups,assignNode,selectNode,activateNode,focusNode,focusedIds,reviewLayout,grouping,selectTimeline,tree,visibleTree,expandedTree,focused,keyboard,root,bulkAssign,bulkProject,selectedGroups,bulkGroups,pending,splitDraft,toggleOpen,isOpen};')(...Object.values(bindings)));
+  return { state, writes, groups, store, stop: () => scopes.stop() };
 }
 
 const descendants = (nodes: reviewTree.ReviewNode[]): reviewTree.ReviewNode[] => nodes.flatMap(node => [node, ...descendants(node.children)]);
@@ -150,4 +150,17 @@ test('row selection highlights its exact visit IDs and survives layout and group
   assert.equal(p.state.bulkGroups.value.length,1);
   assert.equal(p.writes.length,0,'presentation and selection must not write attribution');
  }finally{p.stop();}
+});
+
+
+test('Home navigation keeps an exact pair subset even when Review groups a larger contiguous visit',async()=>{
+ const first=interval('first',0,{browserTitle:'Wanted'}),second=interval('second',10,{browserTitle:'Other'});
+ const p=editor([first,second]);
+ try{
+  const subset=review.buildAppReviewGroups([first]);
+  assert.equal(p.groups[0]!.pairs.length,2);
+  reviewWorkspace.requestReviewFocus('2026-11-13',subset.map(review.reviewGroupId),subset);await nextTick();
+  assert.deepEqual(p.state.activeGroups.value.flatMap((g:any)=>g.pairs),[['first-a','first-b']]);
+  await p.state.assignNode(p.state.tree.value[0],'/chosen');assert.deepEqual(p.writes[0]![0],[['first-a','first-b']]);
+ }finally{p.stop();reviewWorkspace.reviewFocus.value=null;}
 });

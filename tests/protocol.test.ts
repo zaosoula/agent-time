@@ -140,3 +140,9 @@ test('billing history protocol bounds metadata pages and keeps its cursor separa
  for(const input of [{},{project:''},{project:'x',cursor:'12'},{project:'x',reportId:'saved'},{project:'x',path:'/elsewhere'},{project:'x',limit:51},{project:'x',historyCursor:'../12'},{project:'x',historyCursor:'9007199254740992'}])assert.ok('error' in await dispatchRequest({id:'h',method:'billing_report_history',params:input},c));
  assert.equal(calls.length,1);
 });
+
+test('review status awaits the cooperative handler with its controller context',async()=>{
+ const controller={token:'ready',dayReviewStatus(){throw new Error('synchronous backlog should not run');},async dayReviewStatusAsync(date:string,includeBacklog=true){await Promise.resolve();return {date,includeBacklog,token:this.token};}};
+ const reply=await dispatchRequest({id:'cooperative',method:'day_review_status',params:{date:'2026-11-12',includeBacklog:false}},controller as any);
+ assert.deepEqual(reply,{id:'cooperative',result:{date:'2026-11-12',includeBacklog:false,token:'ready'}});
+});
