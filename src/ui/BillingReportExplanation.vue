@@ -25,7 +25,7 @@ const sources=computed(()=>[
    <li class="billable-step"><span>Billable time</span><strong :title="seconds(report.totals.billableSeconds)">{{hours(report.totals.billableSeconds)}}</strong></li>
   </ol>
   <details><summary>Coverage and calculation details</summary>
-   <p>These coverage figures describe the whole report period. They are not additional deductions from the billable total above.</p>
+   <p>These coverage figures describe the whole report period. They are not additional deductions from the billable total above. Aggregate windows do not identify the cause of every exclusion. Saved warnings show the evidence available when this report was generated; current Review evidence may differ.</p>
    <dl><dt>Exclusion windows</dt><dd>{{hours(report.totals.excludedSeconds)}}</dd><dt>Unknown coverage</dt><dd>{{hours(report.totals.unknownSeconds)}}</dd><dt>Cross-project overlap</dt><dd>{{hours(report.totals.crossProjectOverlapSeconds)}}</dd><dt>Agent-only wall time</dt><dd>{{hours(report.totals.agentOnlyWallSeconds)}}</dd><dt>Known AI cost</dt><dd>{{report.totals.aiKnownAmount}} {{report.currency||''}}</dd><dt>Calculation version</dt><dd>{{report.calculationVersion}}</dd></dl>
    <p>{{report.explanation}}</p>
   </details>

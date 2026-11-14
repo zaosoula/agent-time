@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import ReportScope from './ReportScope.vue';
 import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
 import AppButton from './AppButton.vue';
-import BillingReportExplanation from './BillingReportExplanation.vue';
 import SectionHeading from './SectionHeading.vue';
 import {computed,onMounted,onUnmounted,onActivated,ref,watch} from 'vue';
 import type {BillingProject,BillingReport,BillingReportSummary,BillingHistoryReply} from '../capture/billing-types.ts';
@@ -157,7 +157,7 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
         <p class="hint">The project, inclusive dates and its configured time zone define the report scope. Generating saves a snapshot of its rules and results; exports reuse that snapshot.</p>
         <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><AppButton variant="primary" :disabled="reportBusy" type="submit">{{ reporting ? 'Working…' : 'Generate and save report' }}</AppButton></form>
         <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
-        <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
+        <template v-if="report"><ReportScope :from="report.fromDate" :through="report.toDate" :source="`Full billing project · ${report.projectName}`" :timezone="report.timezone" mode="snapshot" detail="Original report scope and saved policy results. Current date, repository and search filters do not change this snapshot or its exports. Review day opens current evidence across all projects, which may differ from the saved sources." /><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
           <AppButton compact @click="detailsOpen=!detailsOpen">{{detailsOpen?'Hide calculation details':'Explain this saved report'}}</AppButton>
           <ActivityDetailsPanel v-if="detailsOpen" :key="report.reportId" :target="{kind:'billing',report}" @close="detailsOpen=false" />

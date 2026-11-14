@@ -60,3 +60,10 @@ test('new billing requests use shared dates while an existing snapshot exports i
  const snapshot={reportId:'original-scope',projectId:'example',fromDate:'2026-11-06',toDate:'2026-11-12',days:[]};p.finish({report:snapshot,nextCursor:null});await pending;assert.deepEqual(p.state.report.value,snapshot);
  const exporting=p.state.loadReport(false,'csv');input=p.calls.at(-1)!.params;assert.equal(input.fromDate,'2026-11-06');assert.equal(input.toDate,'2026-11-12');assert.equal(input.reportId,'original-scope');p.finish({report:snapshot,nextCursor:null});await exporting;
 });
+
+test('saved scope and calculation explanation use snapshot fields and do not invent exclusion causes',()=>{
+ const billing=readFileSync(new URL('../src/ui/BillingReports.vue',import.meta.url),'utf8');
+ assert(billing.includes(':from="report.fromDate"'));assert(billing.includes(':through="report.toDate"'));assert(billing.includes(':timezone="report.timezone"'));assert(billing.includes('mode="snapshot"'));
+ const details=readFileSync(new URL('../src/ui/ActivityDetailsPanel.vue',import.meta.url),'utf8');assert(details.includes('Original observations are not embedded in this snapshot'));assert(details.includes(':report="target.report"'));
+ const explanation=readFileSync(new URL('../src/ui/BillingReportExplanation.vue',import.meta.url),'utf8');assert(explanation.includes('do not identify the cause of every exclusion'));assert(explanation.includes('not additional deductions'));
+});

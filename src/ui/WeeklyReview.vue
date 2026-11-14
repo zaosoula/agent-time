@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import ReportScope from './ReportScope.vue';
+import LoadingStatus from './LoadingStatus.vue';
 import { computed, onMounted, onUnmounted, onActivated, reactive, ref, watch } from 'vue';
 import { weeklyTransport } from './transport.ts';
 import { reviewedCsv, type WeeklyReview } from '../capture/weekly.ts';
@@ -125,10 +127,12 @@ function exportReviewed() {
         Your time, agent time and elapsed time are measured separately. When agents work in parallel, agent
         time can be more than the time that passed. These are measured activity totals; use the Billing tab for billable time, rounding and amounts.
       </p>
-      <p v-if="loading" role="status">Loading selected period…</p>
+      <LoadingStatus v-if="loading" label="Loading selected period" detail="Reading activity for each day. Large archives can take longer; you can use other sections while this runs." />
       <p v-if="error" class="weekly-error" role="alert">{{ error }}</p>
       <template v-if="review && committedContext===currentContext()"
-        ><div class="weekly-totals">
+        ><ReportScope :from="review.startDate" :through="review.endDate" :source="store.project==='all'?'All projects':store.project==='unassigned'?'Unassigned activity':`Repository · ${store.project}`" mode="live" detail="Measured activity with the current page filters. Open a day in Review for individual visits. These are not billable totals." />
+        <p v-if="!review.totals.humanSeconds&&!review.totals.agentSeconds" role="status">No measured activity in this scope. This does not establish complete capture coverage.</p>
+        <div class="weekly-totals">
           <span
             >You <strong>{{ duration(review.totals.humanSeconds) }}</strong></span
           ><span

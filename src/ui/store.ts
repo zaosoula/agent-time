@@ -405,6 +405,8 @@ function createStore() {
   );
 
   watch(selectedDate, () => {
+    dayReviewRequest.value++;
+    dayReviewLoading.value=false;backlogLoading.value=false;
     summaryRevision++;
     // Drop the previous day's summary so the page shows loading, not an empty day, until this one arrives.
     summaryLoaded.value = false;
@@ -444,7 +446,10 @@ function createStore() {
   async function markDayReviewed() {
     const date = selectedDate.value;
     const value = await dayReviewTransport.mark(date);
-    if (date === selectedDate.value) dayReview.value = value;
+    if (date === selectedDate.value) {
+      dayReviewRequest.value++;dayReviewLoading.value=false;backlogLoading.value=false;
+      dayReview.value = value;
+    }
     reviewRevision.value++;
     return value;
   }

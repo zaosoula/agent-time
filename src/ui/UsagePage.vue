@@ -2,6 +2,7 @@
 import { computed, ref, onMounted, onActivated, nextTick, watch } from 'vue';
 import type { CaptureStatus } from './transport.ts';
 import { usePagePresentation } from './page-presentation.ts';
+import ReportScope from './ReportScope.vue';
 import AppCard from './AppCard.vue';
 import SectionHeading from './SectionHeading.vue';
 import { useStore } from './store.ts';
@@ -122,6 +123,7 @@ onMounted(() => {
       <span class="skeleton skeleton-chart"></span>
     </div>
     <template v-else>
+      <ReportScope :from="store.period.value.from" :through="store.period.value.to" source="All projects · selected provider" mode="live" detail="Token usage is not reliably linked to repositories, so the global project filter does not restrict these figures. Account limits are current and account-wide; model totals below cover available history." />
       <div class="usage-metrics">
         <AppCard as="article" padding="regular" class="usage-metric" v-for="period in periods" :key="period.title">
           <small>{{ period.title }} tokens</small><strong>{{ number(period.tokens) }}</strong
@@ -230,7 +232,7 @@ onMounted(() => {
               <td>{{ m.unpriced ? 'Unavailable' : money(m.usd) }}</td>
             </tr>
             <tr v-if="!models.length">
-              <td colspan="3" class="usage-empty">No model usage captured this month.</td>
+              <td colspan="3" class="usage-empty">No model usage in available history.</td>
             </tr>
           </tbody>
         </table>
