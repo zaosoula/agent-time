@@ -18,8 +18,9 @@ import { humanizeError } from './errors.ts';
 import { windowVisible } from './polling.ts';
 import ProjectPicker from './ProjectPicker.vue';
 import ReviewTreeRow from './ReviewTreeRow.vue';
-import {buildProjectReviewTree,type ReviewNode} from './review-tree.ts';
+import {buildReviewLayout,defaultReviewGrouping,type ReviewLayout,type ReviewGrouping,type ReviewNode} from './review-tree.ts';
 import {reviewAssignmentParts,reviewDrag,reviewDrop,beginReviewDrag} from './review-workspace.ts';
+import ReviewViewControls from './ReviewViewControls.vue';
 import ReviewTimeline from './ReviewTimeline.vue';
 import {reviewAppSections,reviewContextGroups,reviewCheckState,reviewGroupId,reviewSelection,reviewShortcutAllowed,reviewViewGroups,initialReviewState,reviewAssignmentLabel,reviewIsAssigned,reviewCanAssign,reviewContextTitle,reviewVisitTitle,type AppReviewGroup,type ReviewAppSection,type ReviewContextGroup} from './review-apps.ts';
 
@@ -169,10 +170,10 @@ function selectVisible(){
   selectedGroups.value=Object.fromEntries(visibleContexts.value.flatMap(context=>contextMeta.value.get(context.key)!.eligible).map(group=>[id(group),true]));
 }
 function toggleContext(context:ReviewContextGroup){openContexts.value[context.key]=!isContextOpen(context);}
-async function selectTimeline(groupId:string){
+async function selectTimeline(groupId:string,additive=false){
   if(pending.value)return;
   const group=activeGroups.value.find(group=>id(group)===groupId);if(!group)return;
-  selectedGroups.value[groupId]=!selectedGroups.value[groupId];
+  selectedGroups.value=additive?{...selectedGroups.value,[groupId]:!selectedGroups.value[groupId]}:{[groupId]:true};
   await focusGroup(group);
 }
 watch([viewMode,filterText,()=>store.reviewSiteFilter],()=>{selectedGroups.value={};bulkProject.value='';focused.value='';},{flush:'sync'});
@@ -326,8 +327,8 @@ function keyboard(event: KeyboardEvent) {
   if (event.metaKey || event.ctrlKey || event.altKey) return;
   if(pending.value)return;
   const rows:ReviewNode[]=[];
-  const walk=(nodes:ReviewNode[])=>{for(const node of nodes){rows.push(node);if(expandedTree.value[node.key])walk(node.children);}};
-  walk(tree.value);
+  const walk=(nodes:ReviewNode[])=>{for(const node of nodes){rows.push(node);if(renderExpanded.value[node.key])walk(node.children);}};
+  walk(visibleTree.value);
   const focusedElement=event.target instanceof Element?event.target.closest('.review-tree-row'):null;
   const focusedKey=focusedElement?.id.replace(/^review-tree-/, '')||focused.value;
   const current=rows.findIndex(row=>row.key===focusedKey),row=rows[current];
@@ -360,6 +361,7 @@ async function focusGroup(group:HumanReviewGroup){
   };
   const path=find(tree.value);if(!path)return;
   for(const node of path.slice(0,-1))expandedTree.value[node.key]=true;
+  if(reviewLayout.value==='chronological')chronologicalLimit.value=Math.max(chronologicalLimit.value,Math.ceil((tree.value.findIndex(n=>n.key===path.at(-1)!.key)+1)/100)*100);
   focused.value=path.at(-1)!.key;
   inspectGroup(group as AppReviewGroup);
   await nextTick();document.getElementById(`review-tree-${focused.value}`)?.focus();
@@ -376,11 +378,30 @@ onUnmounted(() => window.removeEventListener('keydown', keyboard));
 
 // ---- Hierarchical review ---------------------------------------------------------------
 const expandedTree=ref<Record<string,boolean>>({});
-const tree=computed(()=>buildProjectReviewTree(activeGroups.value));
+const reviewLayout=ref<ReviewLayout>('unified');
+const grouping=ref<ReviewGrouping>({...defaultReviewGrouping});
+const chronologicalLimit=ref(100);
+const tree=computed(()=>buildReviewLayout(activeGroups.value,reviewLayout.value,grouping.value));
+const visibleTree=computed(()=>reviewLayout.value==='chronological'?tree.value.slice(0,chronologicalLimit.value):tree.value);
+const renderExpanded=computed(()=>({...Object.fromEntries(tree.value.filter(n=>n.kind==='category').map(n=>[n.key,true])),...expandedTree.value}));
+const expansionByLayout=new Map<ReviewLayout,Record<string,boolean>>();
+watch(reviewLayout,(next,previous)=>{expansionByLayout.set(previous,expandedTree.value);expandedTree.value=expansionByLayout.get(next)||{};});
+const focusedIds=computed(()=>{
+ const find=(nodes:ReviewNode[]):ReviewNode|undefined=>{for(const node of nodes){if(node.key===focused.value)return node;const match=find(node.children);if(match)return match;}};
+ return Object.fromEntries((find(tree.value)?.groups||[]).map(g=>[id(g),true]));
+});
+function activateNode(node:ReviewNode,event:MouseEvent){
+ if(pending.value)return;focused.value=node.key;
+ if(event.metaKey||event.ctrlKey||event.shiftKey)selectNode(node,!node.groups.every(g=>selectedGroups.value[id(g)]));
+ else selectedGroups.value=Object.fromEntries(node.groups.map(g=>[id(g),true]));
+}
+function focusNode(node:ReviewNode){focused.value=node.key;}
+function clearSelection(){selectedGroups.value={};bulkProject.value='';}
+
 const inspectedId=ref('');
 const detailGroup=computed(()=>activeGroups.value.find(g=>id(g)===inspectedId.value));
 const selectionSummary=computed(()=>({seconds:selectedSeconds.value,visits:bulkGroups.value.length}));
-function toggleNode(key:string){expandedTree.value[key]=!expandedTree.value[key];}
+function toggleNode(key:string){expandedTree.value[key]=!renderExpanded.value[key];}
 function selectNode(node:ReviewNode,checked:boolean){if(pending.value)return;for(const group of node.groups)selectedGroups.value[id(group)]=checked;}
 function actionGroups(node:ReviewNode){return node.groups.some(g=>selectedGroups.value[id(g)])?bulkGroups.value:node.groups;}
 async function assignNode(node:ReviewNode,path:string|null){return assignGroups(actionGroups(node),path);}
@@ -396,8 +417,8 @@ async function assignGroups(rows:AppReviewGroup[],path:string|null){
 }
 function dragNode(node:ReviewNode,event:DragEvent){if(pending.value||!event.dataTransfer)return;beginReviewDrag(store.selectedDate,actionGroups(node),event.dataTransfer);}
 function inspectGroup(group:AppReviewGroup){inspectedId.value=id(group);openRows.value[id(group)]=true;}
-watch(()=>store.reviewProjectFilter,()=>{viewMode.value='all';selectedGroups.value={};expandedTree.value={};inspectedId.value='';});
-watch(()=>store.selectedDate,()=>{expandedTree.value={};inspectedId.value='';reviewDrag.value=null;});
+watch(()=>store.reviewProjectFilter,()=>{viewMode.value='all';selectedGroups.value={};expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';});
+watch(()=>store.selectedDate,()=>{expandedTree.value={};expansionByLayout.clear();chronologicalLimit.value=100;inspectedId.value='';reviewDrag.value=null;});
 watch(reviewDrop,request=>{
   if(!request||store.page!=='review'||request.date!==store.selectedDate)return;
   const ids=new Set(request.ids),rows=activeGroups.value.filter(g=>ids.has(id(g)));
@@ -588,7 +609,7 @@ async function saveSplit(group: HumanReviewGroup) {
 <template>
   <section ref="root" class="human-review" aria-labelledby="human-review-title">
     <div class="human-review-body">
-      <ReviewTimeline :date="store.selectedDate" :intervals="intervals" :groups="activeGroups" :selected="selectedGroups" :focused="focused" @select="selectTimeline" />
+      <ReviewTimeline :date="store.selectedDate" :intervals="intervals" :groups="activeGroups" :selected="selectedGroups" :focused-ids="focusedIds" @select="selectTimeline" />
       <div class="app-review-heading"><h2 id="human-review-title">Your Mac activity <small>{{ duration(observedSeconds) }} {{ viewMode==='queue'?'needs a project':'observed' }}</small></h2><span>{{ apps.length }} apps</span></div>
       <p class="app-review-explanation">Estimated active time in your foreground apps. Automatically assigned time already counts toward its project; no confirmation is needed.</p>
       <div class="human-review-controls" role="group" aria-label="Activity view">
@@ -597,6 +618,10 @@ async function saveSplit(group: HumanReviewGroup) {
         <span v-if="store.reviewSiteFilter" class="badge info">{{ store.reviewSiteFilter }}<AppButton compact variant="quiet" @click="store.reviewSiteFilter=''">Clear filter</AppButton></span>
         <input v-model="filterText" class="human-review-filter" type="search" aria-label="Filter activity by app, website, project, or evidence" placeholder="Filter by app, website or project" />
       </div>
+      <ReviewViewControls v-model:layout="reviewLayout" v-model:grouping="grouping" />
+      <p v-if="reviewLayout==='category'" class="app-review-explanation">Applications, websites and pages are different views of the same visits. Their totals are not added together; selecting a visit in one also selects it in the others.</p>
+      <p v-if="reviewLayout==='chronological'" class="app-review-explanation">Individual visits in time order. Each row keeps its recorded boundaries; gaps are not filled.</p>
+      <div class="review-selection-summary" aria-live="polite"><span>{{activeGroups.length}} visits · {{duration(observedSeconds)}} in this view<template v-if="bulkGroups.length"> · <strong>{{bulkGroups.length}} selected · {{duration(selectedSeconds)}}</strong></template></span><AppButton v-if="bulkGroups.length" compact variant="quiet" @click="clearSelection">Clear selection</AppButton></div>
       <div class="app-review-tools"><AppButton compact variant="quiet" :disabled="!apps.length" @click="toggleTree">Expand / collapse groups</AppButton><AppButton compact variant="quiet" :disabled="Boolean(pending)||!activeGroups.length" @click="selectVisibleTree">Select filtered activity</AppButton></div>
       <p v-if="pending" class="human-review-notice" role="status">Saving assignments and refreshing activity…</p>
       <p v-if="error" class="human-review-error" role="alert">{{ error }} <AppButton compact variant="quiet" @click="error=''">Dismiss</AppButton></p>
@@ -604,8 +629,9 @@ async function saveSplit(group: HumanReviewGroup) {
       <div v-if="!store.summaryLoaded" class="human-review-empty" aria-hidden="true"><span v-for="index in 3" :key="index" class="skeleton" style="height:38px;margin:6px 0" /></div>
       <div v-else-if="!apps.length" class="human-review-empty">{{ filterText?'No activity matches this filter.':store.reviewSiteFilter?'No recorded activity for this site on this day.':viewMode==='all'?'No activity in this project on this day.':viewMode==='reviewed'?'No activity is assigned to a project yet.':'No activity needs a project. Choose All activity to see assigned time.' }}</div>
       <div v-else class="review-tree-list" aria-label="Activity hierarchy">
-        <ReviewTreeRow v-for="node in tree" :key="node.key" :node="node" :date="store.selectedDate" :expanded="expandedTree" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
+        <ReviewTreeRow v-for="node in visibleTree" :key="node.key" :node="node" :date="store.selectedDate" :expanded="renderExpanded" :show-assignment="reviewLayout!=='unified'||!grouping.byProject" :focused="focused" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @focus="focusNode" @activate="activateNode" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
       </div>
+      <AppButton v-if="reviewLayout==='chronological'&&visibleTree.length<tree.length" compact variant="quiet" @click="chronologicalLimit+=100">Show next {{Math.min(100,tree.length-visibleTree.length)}} visits · {{tree.length-visibleTree.length}} remaining</AppButton>
       <section v-if="detailGroup" class="review-inspector" aria-label="Activity details">
         <div class="review-inspector-title"><h3>{{reviewVisitTitle(detailGroup)}}</h3><AppButton compact variant="quiet" @click="inspectedId=''">Close details</AppButton></div>
         <template v-for="group in [detailGroup]" :key="id(group)">
@@ -1351,6 +1377,7 @@ async function saveSplit(group: HumanReviewGroup) {
 .review-state{white-space:normal;line-height:1.35;overflow-wrap:anywhere}
 .review-row.captured .review-state{color:var(--status-good)}
 .review-attribution-note{margin:0;color:var(--status-good);font-size:var(--text-sm)}
+.review-selection-summary{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:10px 0;color:var(--muted);font-size:var(--text-sm)}
 .review-tree-list{border-top:1px solid var(--border)}
 .review-inspector{margin:20px 0;padding:18px;border:1px solid var(--border);border-radius:var(--radius-card)}
 .review-inspector-title{display:flex;justify-content:space-between;align-items:center;gap:16px}.review-inspector-title h3{margin:0}

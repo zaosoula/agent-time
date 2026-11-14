@@ -111,3 +111,46 @@ test('project parents separate unassigned and assigned visits without changing s
  assert.equal(JSON.stringify(groups),before);
  assert.equal(buildProjectReviewTree([groups[0]!])[0]!.seconds,40);
 });
+
+test('all layouts and grouping choices preserve source visits, splits, durations, and meaningful URLs',async()=>{
+ const {buildReviewLayout,defaultReviewGrouping}=await import('../src/ui/review-tree.ts');
+ const groups=buildAppReviewGroups([
+  page('a',0,30,'https://example.com/docs?q=one',{hostId:'mac-a',workspaceId:'manual::/project',userAttribution:'assigned'}),
+  page('b',40,49,'https://example.com/docs?q=two',{hostId:'mac-a',foregroundBundleId:'com.apple.Safari',foregroundName:'Safari'}),
+  page('s',60,67,'https://example.com/docs?q=one',{hostId:'mac-b',reviewSegment:'before',workspaceId:'manual::/project',userAttribution:'assigned'}),
+  page('s',67,78,'https://example.com/docs?q=one',{hostId:'mac-b',reviewSegment:'after',userAttribution:'unassigned'}),
+  interval('native',100,125,{foregroundBundleId:'editor',foregroundName:'Editor',tabTitle:'Plan.md'}),
+ ]),before=JSON.stringify(groups),ids=groups.map(reviewGroupId).sort();
+ for(const byProject of [true,false])for(const byDevice of [true,false])for(const combineBrowsers of [true,false])for(const pageBy of ['path','title'] as const)for(const shortSeconds of [0,15,60]){
+  const options={...defaultReviewGrouping,byProject,byDevice,combineBrowsers,pageBy,shortSeconds};
+  for(const layout of ['unified','chronological','category'] as const){
+   const tree=buildReviewLayout(groups,layout,options),nodes=flatten(tree);
+   assert.equal(new Set(nodes.map(n=>n.key)).size,nodes.length,`${layout} IDs must be unique`);
+   for(const root of layout==='category'?tree: [{children:tree}]){
+    const leaves=flatten(root.children).filter(n=>n.kind==='visit');
+    const expected=layout==='category'?(root as ReviewNode).groups:groups;
+    assert.deepEqual(leaves.map(n=>reviewGroupId(n.groups[0]!)).sort(),expected.map(reviewGroupId).sort());
+   }
+   for(const n of nodes){
+    assert.equal(n.seconds,n.groups.reduce((sum,g)=>sum+g.seconds,0));
+    if(n.children.length)assert.deepEqual(n.children.flatMap(c=>c.groups.map(reviewGroupId)).sort(),n.groups.map(reviewGroupId).sort());
+   }
+   if(layout==='chronological')assert.deepEqual(tree.map(n=>n.groups[0]!.start),[0,40,60,67,100]);
+   if(layout!=='category')assert.deepEqual(nodes.filter(n=>n.kind==='visit').map(n=>reviewGroupId(n.groups[0]!)).sort(),ids);
+  }
+ }
+ assert.equal(JSON.stringify(groups),before);
+});
+
+test('browser combining, page-title grouping and the short threshold only affect the hierarchy',async()=>{
+ const {buildReviewLayout,defaultReviewGrouping}=await import('../src/ui/review-tree.ts');
+ const groups=buildAppReviewGroups([page('a',0,30,'https://example.com/a'),page('b',40,49,'https://example.com/b',{foregroundBundleId:'com.apple.Safari',foregroundName:'Safari'})]);
+ const options={...defaultReviewGrouping,byProject:false};
+ assert.equal(buildReviewLayout(groups,'unified',options).length,2);
+ const site=buildReviewLayout(groups,'unified',{...options,combineBrowsers:true})[0]!;
+ assert.equal(site.kind,'site');assert.equal(site.children.length,2);assert.equal(site.seconds,39);
+ const titles=buildReviewLayout(groups,'unified',{...options,combineBrowsers:true,pageBy:'title',shortSeconds:0})[0]!.children;
+ assert.equal(titles.length,1);assert.equal(titles[0]!.children.length,2);assert.ok(titles[0]!.description?.includes('2 page URLs'));
+ const withoutShort=buildReviewLayout(groups,'unified',{...options,shortSeconds:0});
+ assert.ok(!flatten(withoutShort).some(n=>n.kind==='short'));
+});

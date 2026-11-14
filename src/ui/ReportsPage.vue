@@ -18,7 +18,7 @@ watch(()=>store.reportsSection,(next,previous)=>{
 </script>
 <template>
  <section ref="root" class="reports-workspace app-page">
-  <SectionHeading class="workspace-heading" title="Reports" description="Review your time, usage and supporting evidence." :level="1" size="page">
+  <SectionHeading class="workspace-heading" title="Reports" description="Time shows measured activity; Billing applies saved project policies. Usage and Evidence explain the work behind those totals." :level="1" size="page">
    <nav class="workspace-tabs" aria-label="Report views"><button v-for="section in sections" :key="section.id" :class="['workspace-tab',{active:store.reportsSection===section.id}]" :aria-current="store.reportsSection===section.id?'page':undefined" @click="store.reportsSection=section.id">{{ section.label }}</button></nav>
   </SectionHeading>
   <KeepAlive :max="4">

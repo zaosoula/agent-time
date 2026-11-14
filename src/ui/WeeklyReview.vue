@@ -137,7 +137,7 @@ function exportReviewed() {
     <div class="weekly-body">
       <p>
         Your time, agent time and elapsed time are measured separately. When agents work in parallel, agent
-        time can be more than the time that passed.
+        time can be more than the time that passed. These are measured activity totals; use the Billing tab for billable time, rounding and amounts.
       </p>
       <p v-if="loading && !review" role="status">Loading week…</p>
       <p v-if="error" class="weekly-error" role="alert">{{ error }}</p>
@@ -182,9 +182,9 @@ function exportReviewed() {
           <thead>
             <tr>
               <th>Project</th>
-              <th>You</th>
-              <th title="Every session and subagent counted in full">Agent</th>
-              <th title="Clock time with any agent working">Agent wall</th>
+              <th>Human active</th>
+              <th title="Every session and subagent counted in full">Agent cumulative</th>
+              <th title="Clock time with any agent working">Agent wall clock</th>
               <th>Elapsed</th>
               <th>Reviewed</th>
               <th>Reviewed goal</th>
@@ -242,6 +242,7 @@ function exportReviewed() {
           Reviewed time is below a weekly goal. Decide unresolved activity and mark the day reviewed to accept
           captured project matches.
         </p>
+        <p class="report-export-scope">The CSV below contains reviewed project time. It does not apply billing policies or commercial rounding.</p>
         <button class="weekly-export" :disabled="!review.reviewedEntries.length" @click="exportReviewed">
           Export {{ review.reviewedEntries.length }} reviewed entries</button
         ><small

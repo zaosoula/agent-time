@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import AppButton from './AppButton.vue';
+import BillingReportExplanation from './BillingReportExplanation.vue';
 import SectionHeading from './SectionHeading.vue';
 import {computed,onMounted,onUnmounted,onActivated,ref} from 'vue';
 import type {BillingProject,BillingReport,BillingReportSummary,BillingHistoryReply} from '../capture/billing-types.ts';
@@ -150,13 +151,12 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
           <p v-if="reporting" class="hint">Your new report is still running. You can open saved reports when it finishes.</p>
           <LoadingStatus v-if="historyReporting" label="Opening saved report" />
         </div>
-        <p class="hint">Reports use the saved project settings. Each saved report keeps its original rules and results.</p>
-        <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><AppButton variant="primary" :disabled="reportBusy" type="submit">{{ reporting ? 'Working…' : 'Generate report' }}</AppButton></form>
+        <p class="hint">The project, inclusive dates and its configured time zone define the report scope. Generating saves a snapshot of its rules and results; exports reuse that snapshot.</p>
+        <form v-show="view==='generate'" class="period" @submit.prevent="loadReport()"><label>From<input v-model="fromDate" type="date" required :disabled="reportBusy" /></label><label>Through<input v-model="toDate" type="date" required :min="fromDate" :disabled="reportBusy" /></label><AppButton variant="primary" :disabled="reportBusy" type="submit">{{ reporting ? 'Working…' : 'Generate and save report' }}</AppButton></form>
         <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
-          <details class="metrics"><summary>Why this total?</summary><dl><dt>Human active</dt><dd>{{ duration(report.totals.humanActiveSeconds) }}</dd><dt>Agent wall time</dt><dd>{{ duration(report.totals.agentWallSeconds) }}</dd><dt>Agent only</dt><dd>{{ duration(report.totals.agentOnlyWallSeconds) }}</dd><dt>Cumulative agents</dt><dd>{{ duration(report.totals.agentRunningSeconds) }}</dd><dt>Shared clock</dt><dd>{{ duration(report.totals.overlapMergedWallSeconds) }}</dd><dt>Raw eligible time</dt><dd>{{ duration(report.totals.rawEligibleSeconds ?? report.totals.eligibleSeconds) }}</dd><dt>Activity counting adjustment</dt><dd>{{ duration(report.totals.countingAdjustmentSeconds ?? 0) }}</dd><dt>Eligible before commercial rounding</dt><dd>{{ duration(report.totals.eligibleSeconds) }}</dd><dt>Commercial rounding adjustment</dt><dd>{{ duration(report.totals.roundingSeconds) }}</dd><dt>Exclusion windows (whole period)</dt><dd>{{ duration(report.totals.excludedSeconds) }}</dd><dt>Unknown coverage (whole period)</dt><dd>{{ duration(report.totals.unknownSeconds) }}</dd><dt>Cross-project overlap</dt><dd>{{ duration(report.totals.crossProjectOverlapSeconds) }}</dd><dt>Known AI cost</dt><dd>{{ amount(report.totals.aiKnownAmount) }}</dd></dl><p class="explanation">{{ report.explanation }}</p></details>
-          <p class="hint">Activity counting: {{ (report.countingModes ?? ['seconds']).map(countingLabel).join(' · ') }}. Commercial rounding follows the saved policy for each day.</p>
+          <BillingReportExplanation :report="report" />
 
           <div v-if="!report.quality.complete || report.quality.warnings.length" class="quality"><strong>{{ report.quality.complete ? 'Review notes' : 'Incomplete evidence — review before invoicing' }}</strong><ul v-if="report.quality.warnings.length"><li v-for="warning in report.quality.warnings" :key="warning">{{ warning }}</li></ul></div>
 

@@ -8,8 +8,8 @@ import type {ReviewNode} from './review-tree.ts';
 import {reviewDrag,canAcceptReviewDrop,dropReviewActivity} from './review-workspace.ts';
 import ReviewProjectActions from './ReviewProjectActions.vue';
 
-const props=withDefaults(defineProps<{node:ReviewNode;date:string;depth?:number;expanded:Record<string,boolean>;selected:Record<string,boolean>;projects:string[];busy:boolean;selectionSummary?:{seconds:number;visits:number}}>(),{depth:0});
-const emit=defineEmits<{toggle:[key:string];select:[node:ReviewNode,checked:boolean];assign:[node:ReviewNode,project:string|null];inspect:[group:AppReviewGroup];drag:[node:ReviewNode,event:DragEvent]}>();
+const props=withDefaults(defineProps<{node:ReviewNode;date:string;depth?:number;expanded:Record<string,boolean>;selected:Record<string,boolean>;projects:string[];busy:boolean;focused?:string;showAssignment?:boolean;selectionSummary?:{seconds:number;visits:number}}>(),{depth:0});
+const emit=defineEmits<{toggle:[key:string];select:[node:ReviewNode,checked:boolean];assign:[node:ReviewNode,project:string|null];inspect:[group:AppReviewGroup];focus:[node:ReviewNode];activate:[node:ReviewNode,event:MouseEvent];drag:[node:ReviewNode,event:DragEvent]}>();
 const contextOpen=ref(false);
 const open=computed(()=>Boolean(props.expanded[props.node.key]));
 const checkedCount=computed(()=>props.node.groups.filter(group=>props.selected[reviewGroupId(group)]).length);
@@ -46,6 +46,7 @@ const description=computed(()=>{
   }
   return text;
 });
+function activate(event:MouseEvent){if(event.target instanceof Element&&event.target.closest('button,input,[role="menuitem"]'))return;emit('activate',props.node,event);}
 function inspect(){if(canInspect.value)emit('inspect',props.node.groups[0]!);}
 let dragFromControl=false;
 function pointerdown(event:PointerEvent){dragFromControl=event.target instanceof Element&&Boolean(event.target.closest('button,input,[role="menuitem"]'));}
@@ -85,12 +86,12 @@ function keydown(event:KeyboardEvent){
   <div class="review-tree-branch">
     <ContextMenuRoot v-model:open="contextOpen">
       <ContextMenuTrigger as-child :disabled="busy">
-        <div :id="`review-tree-${node.key}`" class="review-tree-row" :class="{'is-selected':checked||partial,'is-aggregate':node.children.length,'is-drop-target':dropOver&&reviewDrag}" :style="{'--review-depth':depth}" tabindex="0" :draggable="!busy" :title="`${scopeLabel}; drag to a project`" :aria-label="`${node.label}, ${duration}, ${assignment}`" @contextmenu.stop @pointerdown.capture="pointerdown" @keydown="keydown" @dragstart.stop="drag" @dragover.stop="dragOver" @dragleave.stop="dragLeave" @drop.stop="drop">
+        <div :id="`review-tree-${node.key}`" class="review-tree-row" :class="{'is-selected':checked||partial,'is-focused':focused===node.key,'is-aggregate':node.children.length,'is-drop-target':dropOver&&reviewDrag}" :style="{'--review-depth':depth}" tabindex="0" :draggable="!busy" :title="`${scopeLabel}; drag to a project`" :aria-label="`${node.label}, ${duration}, ${assignment}`" @contextmenu.stop @focusin="emit('focus',node)" @click="activate" @dblclick="inspect" @pointerdown.capture="pointerdown" @keydown="keydown" @dragstart.stop="drag" @dragover.stop="dragOver" @dragleave.stop="dragLeave" @drop.stop="drop">
           <button v-if="node.children.length" type="button" class="review-tree-expand" :aria-expanded="open" :aria-label="`${open?'Collapse':'Expand'} ${node.label}`" draggable="false" @dragstart.prevent.stop @click.stop="emit('toggle',node.key)"><ChevronRight :size="14" :class="{'is-open':open}" /></button>
           <span v-else class="review-tree-expand-spacer" />
           <input type="checkbox" class="review-tree-check" :checked="checked" :indeterminate="partial" :aria-checked="partial?'mixed':checked" :aria-label="`Select ${node.label} and its visits`" :disabled="busy||!node.groups.length" draggable="false" @dragstart.prevent.stop @click.stop @change="emit('select',node,($event.target as HTMLInputElement).checked)" />
           <Folder v-if="node.kind==='project'" :size="15" :style="{color:projectColor(currentProject||'Unassigned')}" aria-hidden="true" /><span class="review-tree-name"><span class="review-tree-label" :title="node.label">{{ node.label }}</span><span v-if="description" class="review-tree-description" :title="description">{{ description }}</span></span>
-          <span class="review-tree-duration">{{ duration }}</span>
+          <span v-if="showAssignment" class="review-tree-assignment" :title="assignment">{{assignment}}</span><span class="review-tree-duration">{{ duration }}</span>
           <DropdownMenuRoot>
             <DropdownMenuTrigger as-child><button type="button" class="review-tree-actions" :aria-label="`Assign ${node.label} to a project`" :disabled="busy" draggable="false" @dragstart.prevent.stop @click.stop><Ellipsis :size="16" /></button></DropdownMenuTrigger>
             <DropdownMenuPortal><DropdownMenuContent class="review-tree-menu" @open-auto-focus="focusSearch" align="end" :side-offset="5"><ReviewProjectActions :scope-label="scopeLabel" :projects="projects" :busy="busy" :current-project="currentProject" :can-inspect="canInspect" @assign="emit('assign',node,$event)" @inspect="inspect" /></DropdownMenuContent></DropdownMenuPortal>
@@ -100,7 +101,7 @@ function keydown(event:KeyboardEvent){
       <ContextMenuPortal><ContextMenuContent class="review-tree-menu" @open-auto-focus="focusSearch"><ReviewProjectActions context :scope-label="scopeLabel" :projects="projects" :busy="busy" :current-project="currentProject" :can-inspect="canInspect" @assign="emit('assign',node,$event)" @inspect="inspect" /></ContextMenuContent></ContextMenuPortal>
     </ContextMenuRoot>
     <template v-if="open">
-      <ReviewTreeRow v-for="child in node.children" :key="child.key" :node="child" :date="date" :depth="depth+1" :selection-summary="selectionSummary" :expanded="expanded" :selected="selected" :projects="projects" :busy="busy" @toggle="emit('toggle',$event)" @select="(node,checked)=>emit('select',node,checked)" @assign="(node,project)=>emit('assign',node,project)" @inspect="emit('inspect',$event)" @drag="(node,event)=>emit('drag',node,event)" />
+      <ReviewTreeRow v-for="child in node.children" :key="child.key" :node="child" :date="date" :focused="focused" :show-assignment="showAssignment" :depth="depth+1" :selection-summary="selectionSummary" :expanded="expanded" :selected="selected" :projects="projects" :busy="busy" @focus="emit('focus',$event)" @activate="(node,event)=>emit('activate',node,event)" @toggle="emit('toggle',$event)" @select="(node,checked)=>emit('select',node,checked)" @assign="(node,project)=>emit('assign',node,project)" @inspect="emit('inspect',$event)" @drag="(node,event)=>emit('drag',node,event)" />
     </template>
   </div>
 </template>
@@ -110,6 +111,7 @@ function keydown(event:KeyboardEvent){
 .review-tree-row:hover{background:var(--surface)}
 .review-tree-row.is-drop-target{background:var(--accent-soft);outline:2px solid var(--accent);outline-offset:-2px}
 .review-tree-row.is-selected{background:var(--accent-soft)}
+.review-tree-row.is-focused{box-shadow:inset 3px 0 var(--accent)}
 .review-tree-row:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
 .review-tree-row:active{cursor:grabbing}
 .review-tree-expand,.review-tree-actions{display:inline-flex;align-items:center;justify-content:center;flex:none;width:25px;height:26px;padding:0;border:0;background:transparent;color:var(--muted);border-radius:5px;cursor:pointer}

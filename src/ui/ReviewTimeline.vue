@@ -8,8 +8,8 @@ import {zoomTimeRange,panTimeRange,timelineTicks,gridBackground} from './timelin
 import {projectColor} from './project-identity.ts';
 import {clock,preciseClock,duration} from './format.ts';
 
-const props=defineProps<{date:string;intervals:Interval[];groups:AppReviewGroup[];selected:Record<string,boolean>;focused?:string}>();
-const emit=defineEmits<{select:[id:string]}>();
+const props=defineProps<{date:string;intervals:Interval[];groups:AppReviewGroup[];selected:Record<string,boolean>;focusedIds?:Record<string,boolean>}>();
+const emit=defineEmits<{select:[id:string,additive:boolean]}>();
 const fit=()=>reviewTimelineRange(props.date,props.intervals,Date.now()/1000);
 const range=ref(fit()),adjusted=ref(false),axis=ref<HTMLElement|null>(null),width=ref(720);
 const bounds=computed(()=>{const day=new Date(`${props.date}T00:00:00`),start=day.getTime()/1000;day.setDate(day.getDate()+1);return {start,end:day.getTime()/1000};});
@@ -21,11 +21,12 @@ const percent=(time:number)=>(time-range.value.start)/(range.value.end-range.val
 type Lane='app'|'project';
 const inspected=ref<Record<Lane,number>>({app:0,project:0}),hovered=ref<Record<Lane,number>>({app:-1,project:-1});
 const spanPath=(start:number,end:number)=>{const left=percent(start)*10,right=percent(end)*10;return `M${left},3H${right}V26H${left}Z`;};
-const paths=computed(()=>{
+function lanePaths(selectedOnly=false){
   const lanes:{app:Array<{key:string;color:string;d:string}>;project:Array<{key:string;color:string;d:string}>}={app:[],project:[]};
   for(const lane of ['app','project'] as const){
     const categories=new Map<string,{key:string;color:string;d:string}>();
     for(const bar of bars.value){
+      if(selectedOnly&&!props.selected[bar.groupId])continue;
       const category=lane==='app'?'app:'+bar.appKey:bar.projectPath||'unassigned';
       let path=categories.get(category);
       if(!path){path={key:category,color:lane==='project'&&!bar.projectPath?'var(--border-strong)':projectColor(category),d:''};categories.set(category,path);}
@@ -34,14 +35,17 @@ const paths=computed(()=>{
     lanes[lane]=[...categories.values()];
   }
   return lanes;
-});
+}
+const paths=computed(()=>lanePaths());
+const selectedPaths=computed(()=>lanePaths(true));
+
 const selectedPath=computed(()=>bars.value.filter(bar=>props.selected[bar.groupId]).map(bar=>spanPath(bar.start,bar.end)).join(''));
-const focusedPath=computed(()=>bars.value.filter(bar=>props.focused===bar.groupId).map(bar=>spanPath(bar.start,bar.end)).join(''));
+const focusedPath=computed(()=>bars.value.filter(bar=>props.focusedIds?.[bar.groupId]).map(bar=>spanPath(bar.start,bar.end)).join(''));
 watch(bars,()=>{
-  const index=bars.value.findIndex(bar=>bar.groupId===props.focused);
+  const index=bars.value.findIndex(bar=>props.focusedIds?.[bar.groupId]);
   for(const lane of ['app','project'] as const){inspected.value[lane]=index>=0?index:Math.min(inspected.value[lane],Math.max(0,bars.value.length-1));hovered.value[lane]=-1;}
 });
-watch(()=>props.focused,id=>{const index=bars.value.findIndex(bar=>bar.groupId===id);if(index>=0)inspected.value={app:index,project:index};});
+watch(()=>props.focusedIds,ids=>{const index=bars.value.findIndex(bar=>ids?.[bar.groupId]);if(index>=0)inspected.value={app:index,project:index};});
 function description(index:number,lane:Lane){
   const bar=bars.value[index];
   return bar?`${bar.appName} · ${preciseClock(bar.start)}–${preciseClock(bar.end)} · ${duration(bar.end-bar.start)}${lane==='project'?' · '+(bar.projectPath||'Unassigned'):''}`:'';
@@ -57,7 +61,7 @@ function pointerIndex(event:MouseEvent){
 }
 function choose(event:MouseEvent,lane:Lane){
   const index=event.detail===0?inspected.value[lane]:pointerIndex(event),bar=bars.value[index];
-  if(bar){inspected.value[lane]=index;emit('select',bar.groupId);}
+  if(bar){inspected.value[lane]=index;emit('select',bar.groupId,event.metaKey||event.ctrlKey||event.shiftKey);}
 }
 function inspect(event:KeyboardEvent,lane:Lane){
   if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
@@ -93,7 +97,8 @@ onUnmounted(()=>observer?.disconnect());
         @click="choose($event,lane)" @keydown="inspect($event,lane)"
         @mousemove="hovered[lane]=pointerIndex($event)" @mouseleave="hovered[lane]=-1">
         <svg viewBox="0 0 1000 29" preserveAspectRatio="none" aria-hidden="true">
-          <path v-for="path in paths[lane]" :key="path.key" :d="path.d" :fill="path.color" />
+          <path v-for="path in paths[lane]" :key="path.key" :d="path.d" :fill="path.color" :opacity="selectedPath.length ? 0.22 : 1" />
+          <path v-for="path in selectedPaths[lane]" :key="'selected-'+path.key" :d="path.d" :fill="path.color" />
           <path v-if="focusedPath" :d="focusedPath" class="ribbon-focused" />
           <path v-if="selectedPath" :d="selectedPath" class="ribbon-selected" />
           <path v-if="bars[inspected[lane]]" :d="spanPath(bars[inspected[lane]]!.start,bars[inspected[lane]]!.end)" class="ribbon-inspected" />
@@ -101,7 +106,7 @@ onUnmounted(()=>observer?.disconnect());
         <span class="ribbon-inspection" aria-hidden="true">{{ description(inspected[lane],lane) }}</span>
       </button>
     </div>
-    <p>Foreground observations · select an app or activity below for the same periods. Gaps stay separate.</p>
+    <p>Foreground observations · click an activity or select rows below to highlight the same periods. ⌘/Ctrl-click adds to the selection. Gaps stay separate.</p>
   </div>
 </template>
 

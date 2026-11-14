@@ -32,8 +32,8 @@ function editor(input: Interval[]) {
     sessionStorage: { getItem: () => JSON.stringify({ version: 2, viewMode: 'all' }), setItem() {} },
     transport: { setHumanDecision: async (...args: unknown[]) => { writes.push(args); return {}; } },
     reviewTransport: { history: async () => [] }, minuteCreditSeconds: () => 0,
-    humanizeError: String, duration: String };
-  const state = scopes.run(() => new Function(...Object.keys(bindings), js + ';return {assignNode,selectNode,tree,expandedTree,focused,keyboard,root,bulkAssign,bulkProject,selectedGroups,bulkGroups,pending,splitDraft,toggleOpen,isOpen};')(...Object.values(bindings)));
+    humanizeError: String, duration: String, clock: String, preciseClock: String };
+  const state = scopes.run(() => new Function(...Object.keys(bindings), js + ';return {assignNode,selectNode,activateNode,focusNode,focusedIds,reviewLayout,grouping,selectTimeline,tree,visibleTree,expandedTree,focused,keyboard,root,bulkAssign,bulkProject,selectedGroups,bulkGroups,pending,splitDraft,toggleOpen,isOpen};')(...Object.values(bindings)));
   return { state, writes, groups, stop: () => scopes.stop() };
 }
 
@@ -126,4 +126,27 @@ test('closing secondary visit controls preserves an open split draft', () => {
     assert.deepEqual(p.state.splitDraft.value, draft); assert.equal(p.state.isOpen(group), true);
     assert.equal(p.writes.length, 0);
   } finally { p.stop(); }
+});
+
+test('row selection highlights its exact visit IDs and survives layout and grouping changes',async()=>{
+ const p=editor([interval('one',0),interval('two',30),interval('other',80,{browserUrl:'https://other.example',browserTitle:'Other'})]);
+ try{
+  const context=descendants(p.state.tree.value).find(n=>n.kind==='context'&&n.groups.length===2)!;
+  p.state.activateNode(context,{metaKey:false,ctrlKey:false,shiftKey:false});
+  const ids=context.groups.map(review.reviewGroupId).sort();
+  assert.deepEqual(Object.keys(p.state.focusedIds.value).sort(),ids);
+  assert.deepEqual(p.state.bulkGroups.value.map(review.reviewGroupId).sort(),ids);
+  p.state.reviewLayout.value='category';await nextTick();
+  p.state.grouping.value={...p.state.grouping.value,byProject:false,combineBrowsers:true,shortSeconds:0};await nextTick();
+  assert.deepEqual(p.state.bulkGroups.value.map(review.reviewGroupId).sort(),ids);
+  assert.equal(p.writes.length,0);
+  p.state.reviewLayout.value='chronological';await nextTick();
+  const other=p.groups.find(g=>g.browserUrl==='https://other.example')!;
+  await p.state.selectTimeline(review.reviewGroupId(other),true);
+  assert.equal(p.state.bulkGroups.value.length,3);
+  assert.deepEqual(Object.keys(p.state.focusedIds.value),[review.reviewGroupId(other)]);
+  await p.state.selectTimeline(review.reviewGroupId(other),false);
+  assert.equal(p.state.bulkGroups.value.length,1);
+  assert.equal(p.writes.length,0,'presentation and selection must not write attribution');
+ }finally{p.stop();}
 });

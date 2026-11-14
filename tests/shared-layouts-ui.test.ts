@@ -66,3 +66,15 @@ test('SectionHeading custom heading slot preserves the native limits target ref 
   assert.equal(all(root).filter((item) => /^h[1-6]$/.test(item.type)).length, 1);
   assert.equal(target.value!.text, 'Account limits'); assert.equal(target.value!.props.tabindex, -1); app.unmount();
 });
+
+test('billing explanation displays saved totals without recomputing or modifying the report', () => {
+  const Explanation=component('BillingReportExplanation'),root=node('root');
+  const totals={humanActiveSeconds:3600,agentWallSeconds:7200,agentRunningSeconds:18000,overlapMergedWallSeconds:9000,rawEligibleSeconds:8000,countingAdjustmentSeconds:120,eligibleSeconds:8120,roundingSeconds:40,billableSeconds:8160,excludedSeconds:600,unknownSeconds:300,crossProjectOverlapSeconds:90,agentOnlyWallSeconds:5400,aiKnownAmount:7.25};
+  const report={totals,countingModes:['minutes'],currency:'EUR',explanation:'Saved evidence explanation',calculationVersion:'fixture-version'};
+  const before=structuredClone(report);const app=renderer.createApp({render:()=>h(Explanation,{report})});app.mount(root);
+  const items=all(root),steps=items.filter(item=>item.type==='li');
+  assert.equal(steps.length,5);
+  assert.deepEqual(steps.map(step=>all(step).find(item=>item.type==='strong')!.props.title),[8000,120,8120,40,8160].map(n=>`${n.toLocaleString(undefined,{maximumFractionDigits:3})} seconds`));
+  const text=items.map(item=>item.text).join(' ');assert.match(text,/One started minute/);assert.match(text,/not additional deductions/);assert.match(text,/7.25 EUR/);assert.match(text,/Saved evidence explanation/);assert.match(text,/fixture-version/);
+  assert.deepEqual(report,before);app.unmount();
+});
