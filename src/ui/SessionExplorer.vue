@@ -3,7 +3,9 @@ import {useRetainedOpen} from './page-presentation.ts';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowLeft, Bot, ChevronRight, Flag, Timer, X } from '@lucide/vue';
 import { DialogClose, DialogContent, DialogDescription, DialogOverlay, DialogPortal, DialogRoot, DialogTitle } from 'reka-ui';
-import AgentExecutionDetails from './AgentExecutionDetails.vue';
+import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
+import {useStore} from './store.ts';
+const store=useStore();
 import InfoPopover from './InfoPopover.vue';
 import type { ExplorerSession, AgentExecution } from './project-explorer.ts';
 import { clock, duration } from './format.ts';
@@ -217,7 +219,7 @@ const presentedOpen = useRetainedOpen(sheetOpen);
             <b>{{ duration(item.seconds) }}</b>
             <ChevronRight :size="14" :class="{ open: execution?.key === item.key }" />
           </button>
-          <AgentExecutionDetails v-if="!narrow && execution?.key === item.key" :execution="item" />
+          <ActivityDetailsPanel v-if="!narrow && execution?.key === item.key" :target="{kind:'agent',date:store.selectedDate.value,execution:item}" @close="executionKey=''" />
         </li>
       </ul>
       <button v-if="narrow && selected.executions.length > 5" class="view-executions" @click="openExecutions">
@@ -258,7 +260,7 @@ const presentedOpen = useRetainedOpen(sheetOpen);
           <div class="sheet-content">
             <template v-if="sheetExecution">
               <h3>{{ executionLabel(sheetExecution) }}</h3>
-              <AgentExecutionDetails :execution="sheetExecution" />
+              <ActivityDetailsPanel :focus-on-open="false" :target="{kind:'agent',date:store.selectedDate.value,execution:sheetExecution}" @close="backToExecutions" />
             </template>
             <ul v-else class="executions sheet-executions">
               <li v-for="item in selected?.executions || []" :key="item.key">

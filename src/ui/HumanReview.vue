@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {matchesActivity} from '../capture/activity-filter.ts';
+import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
 import AppButton from './AppButton.vue';
 import { computed, ref, watch, onMounted, onUnmounted, onActivated, onDeactivated, nextTick, reactive } from 'vue';
 import { Check, ChevronRight, RotateCcw, AppWindow } from '@lucide/vue';
@@ -634,8 +635,7 @@ async function saveSplit(group: HumanReviewGroup) {
         <ReviewTreeRow v-for="node in visibleTree" :key="node.key" :node="node" :date="store.selectedDate" :expanded="renderExpanded" :show-assignment="reviewLayout!=='unified'||!grouping.byProject" :focused="focused" :selected="selectedGroups" :projects="projectPaths" :busy="Boolean(pending)" :selection-summary="selectionSummary" @focus="focusNode" @activate="activateNode" @toggle="toggleNode" @select="selectNode" @assign="assignNode" @inspect="inspectGroup" @drag="dragNode" />
       </div>
       <AppButton v-if="reviewLayout==='chronological'&&visibleTree.length<tree.length" compact variant="quiet" @click="chronologicalLimit+=100">Show next {{Math.min(100,tree.length-visibleTree.length)}} visits · {{tree.length-visibleTree.length}} remaining</AppButton>
-      <section v-if="detailGroup" class="review-inspector" aria-label="Activity details">
-        <div class="review-inspector-title"><h3>{{reviewVisitTitle(detailGroup)}}</h3><AppButton compact variant="quiet" @click="inspectedId=''">Close details</AppButton></div>
+      <ActivityDetailsPanel v-if="detailGroup" :key="id(detailGroup)" :target="{kind:'human',date:store.selectedDate,groups:[detailGroup]}" @close="inspectedId=''">
         <template v-for="group in [detailGroup]" :key="id(group)">
 <div class="review-detail">
 <p v-if="reviewIsAssigned(group)" class="review-attribution-note">Already counted in {{ name(group.projectPath!) }}. No confirmation is needed.</p>
@@ -780,7 +780,7 @@ async function saveSplit(group: HumanReviewGroup) {
         </div>
 
         </template>
-      </section>
+      </ActivityDetailsPanel>
       <div v-if="bulkGroups.length" class="app-review-assignment review-selection-toolbar" aria-label="Assign selected activity">
         <div class="app-review-selection" aria-live="polite"><strong>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} · {{ duration(selectedSeconds) }}</strong><small>{{ bulkGroups.length }} {{ bulkGroups.length===1?'visit':'visits' }} selected</small></div>
         <p class="review-confirmation-scope">Selected visits only<template v-if="selectedContextCount===1"> · {{ allContexts.find(context=>contextMeta.get(context.key)?.checked||contextMeta.get(context.key)?.partial)?.label }}</template>. Choose a project, then confirm below.</p>

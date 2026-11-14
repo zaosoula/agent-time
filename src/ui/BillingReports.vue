@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import ActivityDetailsPanel from './ActivityDetailsPanel.vue';
 import AppButton from './AppButton.vue';
 import BillingReportExplanation from './BillingReportExplanation.vue';
 import SectionHeading from './SectionHeading.vue';
@@ -16,6 +17,7 @@ const store=useStore();
 const projects=ref<BillingProject[]>([]),projectId=ref('');
 const loading=ref(true),reporting=ref(false),error=ref('');
 type DisplayReport=Omit<BillingReport,'projectSnapshot'>;
+const detailsOpen=ref(false);
 const generatedReport=ref<DisplayReport|null>(null),generatedCursor=ref<string|null>(null),generatedExportPath=ref('');
 const view=ref<'generate'|'saved'>('generate');
 const savedReport=ref<DisplayReport|null>(null),savedCursor=ref<string|null>(null),savedExportPath=ref('');
@@ -157,7 +159,8 @@ onActivated(()=>{if(!loading.value&&projectRevision!==store.billingProjectRevisi
         <LoadingStatus v-if="reporting" :label="progressLabel" :detail="progressDetail" :completed="progress?.completedDays" :total="progress?.phase === 'reading' || progress?.phase === 'calculating' ? progress.totalDays : undefined" />
         <template v-if="report"><div class="report-title"><strong>{{ report.projectName }} · {{ report.fromDate }} – {{ report.toDate }}</strong><span class="muted">{{ report.timezone }} · saved {{ new Date(report.createdAt).toLocaleString() }}</span></div>
           <div class="totals"><div><span>Billable time</span><strong>{{ duration(report.totals.billableSeconds) }}</strong></div><div><span>Time amount</span><strong>{{ amount(report.totals.timeAmount) }}</strong></div><div><span>AI fees</span><strong>{{ amount(report.totals.aiAmount) }}</strong></div><div><span>Total</span><strong>{{ amount(report.totals.totalAmount) }}</strong></div></div>
-          <BillingReportExplanation :report="report" />
+          <AppButton compact @click="detailsOpen=!detailsOpen">{{detailsOpen?'Hide calculation details':'Explain this saved report'}}</AppButton>
+          <ActivityDetailsPanel v-if="detailsOpen" :key="report.reportId" :target="{kind:'billing',report}" @close="detailsOpen=false" />
 
           <div v-if="!report.quality.complete || report.quality.warnings.length" class="quality"><strong>{{ report.quality.complete ? 'Review notes' : 'Incomplete evidence — review before invoicing' }}</strong><ul v-if="report.quality.warnings.length"><li v-for="warning in report.quality.warnings" :key="warning">{{ warning }}</li></ul></div>
 
