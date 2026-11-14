@@ -2581,3 +2581,6 @@ tbody tr:last-child td { border-bottom: 0; }
   .sidebar { overflow-y: visible; }
   .sidebar .project-list { overflow-x: auto; overflow-y: hidden; }
 }
+
+/* Date scope replaces the breadcrumb without squeezing capture actions. */
+.toolbar.has-period-picker{height:auto;min-height:64px;gap:12px;flex-wrap:wrap;padding-block:10px}.toolbar.has-period-picker .toolbar-actions{margin-left:auto;flex-shrink:0}

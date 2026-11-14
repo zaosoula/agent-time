@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import {capturePageScroll, restorePageScroll} from './page-scroll.ts';
+import WorkspacePeriodPicker from './WorkspacePeriodPicker.vue';
 import WorkspaceFilterBar from './WorkspaceFilterBar.vue';
 import LoadingStatus from './LoadingStatus.vue';
 import {backgroundActivities,dismissBackgroundActivity} from './background-activity.ts';
@@ -301,8 +302,9 @@ onUnmounted(() => {
       </aside>
 
       <main class="main-pane">
-        <header class="toolbar" data-tauri-drag-region="deep">
-          <div class="breadcrumbs">
+        <header class="toolbar" :class="{'has-period-picker':scopedPage}" data-tauri-drag-region="deep">
+          <WorkspacePeriodPicker v-if="scopedPage" />
+          <div v-else class="breadcrumbs">
             <template v-if="showsProject && store.project !== 'all'">
               <span>{{ pageTitle }}</span>
               <span aria-hidden="true">/</span>

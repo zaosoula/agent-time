@@ -1,14 +1,11 @@
 <script setup lang="ts">
-import {computed,reactive,ref,watch} from 'vue';
+import {computed,reactive} from 'vue';
 import {ChevronLeft,ChevronRight,X} from '@lucide/vue';
 import {useStore} from './store.ts';
-import {dateString,shiftDate} from './format.ts';
+import {shiftDate} from './format.ts';
 import {projectDisplay} from './project-identity.ts';
 import {emptyActivityFilters,type ActivityFilters} from '../capture/activity-filter.ts';
-import type {PeriodMode} from './workspace-scope.ts';
 const store=reactive(useStore());
-const from=ref(store.period.from),to=ref(store.period.to),custom=ref(false),error=ref('');
-watch(()=>store.period,p=>{from.value=p.from;to.value=p.to;error.value='';});
 const daily=computed(()=>store.page==='today'||store.page==='review'||store.page==='reports'&&store.reportsSection==='evidence');
 const detailed=computed(()=>store.page!=='reports'||store.reportsSection==='time'||store.reportsSection==='evidence');
 const facets=computed(()=>store.page!=='reports'||store.reportsSection==='time');
@@ -19,25 +16,16 @@ const values=(key:'app'|'site'|'device')=>{
  return [...new Set([...(store.page==='reports'&&store.reportsSection==='time'?store.reportFilterOptions[key]:all),current].filter(Boolean))].sort();
 };
 function update(key:keyof ActivityFilters,value:string){store.setActivityFilters({...store.activityFilters,[key]:value});}
-function mode(event:Event){const value=(event.target as HTMLSelectElement).value as PeriodMode;custom.value=value==='custom';if(!custom.value)store.setPeriodMode(value as Exclude<PeriodMode,'custom'>);}
-function apply(){if(store.setPeriod(from.value,to.value)) {custom.value=false;error.value='';}else error.value='Choose valid dates, in order, spanning at most 367 days.';}
 const chips=computed(()=>Object.entries(store.activityFilters).filter(([key,value])=>value&&value!=='all'&&(facets.value||key==='search')));
 function clear(){store.setActivityFilters(emptyActivityFilters());if(store.page==='review')store.reviewSiteFilter='';}
 </script>
 <template>
  <section class="workspace-scope" aria-label="Period and activity filters">
   <div class="scope-row">
-   <button class="icon-button" aria-label="Previous period" @click="store.shiftPeriod(-1)"><ChevronLeft :size="16"/></button>
-   <select aria-label="Period" :value="custom?'custom':store.period.mode" @change="mode"><option value="day">Day</option><option value="week">Week</option><option value="month">Month</option><option value="custom">Custom range</option></select>
-   <strong class="period-label">{{store.periodLabel}}</strong><button v-if="store.period.mode==='custom'&&!custom" class="btn btn-sm" @click="custom=true">Edit period</button>
-   <button class="icon-button" aria-label="Next period" @click="store.shiftPeriod(1)"><ChevronRight :size="16"/></button>
-   <button class="btn btn-sm" @click="store.setDate(dateString(new Date()));store.setPeriodMode('day')">Today</button>
    <select aria-label="Filter activity by project" :value="store.project" @change="store.navigate(store.page,($event.target as HTMLSelectElement).value)"><option value="all">All activity</option><option value="unassigned">Unassigned</option><option v-for="path in paths" :key="path" :value="path">{{projectDisplay(path,paths)}}</option></select>
   </div>
-  <form v-if="custom" class="scope-row custom-period" @submit.prevent="apply"><label>From<input v-model="from" type="date" required/></label><label>Through<input v-model="to" type="date" :min="from" required/></label><button class="btn btn-primary btn-sm" type="submit">Apply period</button></form>
-  <p v-if="error" role="alert">{{error}}</p>
   <div v-if="daily&&store.period.from!==store.period.to" class="scope-row day-focus"><span>Day detail within this period</span><button class="icon-button" aria-label="Previous day" :disabled="store.selectedDate<=store.period.from" @click="store.setDate(shiftDate(store.selectedDate,-1))"><ChevronLeft :size="14"/></button><input type="date" aria-label="Choose day" :min="store.period.from" :max="store.period.to" :value="store.selectedDate" @change="store.setDate(($event.target as HTMLInputElement).value)"/><button class="icon-button" aria-label="Next day" :disabled="store.selectedDate>=store.period.to" @click="store.setDate(shiftDate(store.selectedDate,1))"><ChevronRight :size="14"/></button><small>Daily charts, evidence and review actions use this day. Time and billing reports use the full period.</small></div>
-  <div v-else-if="daily" class="scope-row day-focus"><label>Day<input type="date" aria-label="Choose day" :value="store.selectedDate" @change="store.setDate(($event.target as HTMLInputElement).value)"/></label></div>
+
   <div v-if="detailed" class="scope-row detail-filters">
    <input type="search" aria-label="Search this page's activity" placeholder="Search activity…" :value="store.activityFilters.search" @input="update('search',($event.target as HTMLInputElement).value)"/>
    <details v-if="facets" class="facet-controls"><summary>Filters</summary><div class="facet-fields"><select v-for="key in ['app','site','device'] as const" :key="key" :aria-label="`Filter by ${key}`" :value="store.activityFilters[key]" @change="update(key,($event.target as HTMLSelectElement).value)"><option value="">{{key==='app'?'All apps':key==='site'?'All websites':'All devices'}}</option><option v-for="value in values(key)" :key="value" :value="value">{{value==='local'?'This Mac':value}}</option></select><select aria-label="Filter by assignment" :value="store.activityFilters.assignment" @change="update('assignment',($event.target as HTMLSelectElement).value)"><option value="all">Any assignment</option><option value="assigned">Assigned human activity</option><option value="unassigned">Unassigned human activity</option></select></div></details>
