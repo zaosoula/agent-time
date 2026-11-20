@@ -11,11 +11,13 @@ import {MAX_DECISION_PAIRS,validateManualNote,type ManualNote} from './store.ts'
 interface Controller {periodReviewProgress?(id:string):unknown;periodReview?(from:string,to:string,project:string,filters:ActivityFilters,progressId?:string):unknown;}
 interface Controller {storageUsage?():unknown;reclaimWal?():unknown;prepareStorageCompaction?():unknown;prepareStorageRestore?(id:string):unknown;cancelStorageReplacement?():unknown;storageReplacementStatus?():unknown;storageReplacementResult?():unknown;listArchives?():unknown;previewArchive?(id:string):unknown;importArchive?(id:string):unknown;deleteArchive?(id:string):unknown;captureChecks?():unknown;reviewHistory?():unknown;undoReviewAction?(id:string,date?:string):unknown;setHumanGroupSplit?(pairs:Array<[string,string]>,splitAt:number,beforeProject?:string,afterProject?:string,date?:string):unknown;previewWebsiteRule?(pattern:string,projectPath:string):unknown;dayReviewStatusAsync?(date:string,includeBacklog?:boolean):Promise<unknown>;dayReviewStatus?(date:string,includeBacklog?:boolean):unknown;markDayReview?(date:string):unknown;}
 interface Controller {billingReportHistory?(request:ReturnType<typeof validateBillingHistoryRequest>):unknown;billingReportProgress?(id:string):unknown;billingProjects?():unknown;saveBillingProject?(project:unknown,expectedRevision?:number):unknown;billingReport?(request:unknown):unknown;}
+interface Controller {agentTimeExclusions?(date:string):unknown;excludeAgentTime?(executionKey:string,date:string,start:number,end:number):unknown;undoAgentTimeExclusion?(id:string,date:string):unknown;}
 interface Controller {reportedWork?(date:string):unknown;stopReportedTimer?(taskCounterId:string,discard?:boolean):unknown;}
 interface Controller {claudeStatusLineStatus?():unknown;installClaudeStatusLine?(targetId:string):unknown;removeClaudeStatusLine?(targetId:string):unknown;}
 interface Controller { cleanupPreview?():unknown;cleanupTracking?():unknown;exportArchive?():Promise<unknown>; status():unknown; summary(maxAgeMs?:number):unknown; summaryForDate?(date:string,maxAgeMs?:number):unknown;versionedHomeResponse?(date:string,maxAgeMs?:number,since?:string):unknown;versionedSummary?(date:string,maxAgeMs?:number,since?:string):unknown;weeklyReview?(startDate:string):unknown;workOutcomes?(date:string):Promise<unknown>;manualNotes?(date:string):unknown;addManualNote?(input:Omit<ManualNote,'id'|'createdAt'>):unknown;removeManualNote?(id:string):unknown; captureHealth?():unknown; diagnostics?():unknown; privacyExclusions?():unknown;setPrivacyExclusions?(entries:PrivacyExclusion[]):unknown; start(duration?:number):Promise<unknown>; stop():Promise<unknown>; updateSettings?(settings:Partial<CaptureSettings>):unknown; trayStatus?():unknown;usage?():unknown; hooksStatus?():unknown;verifyHooks?():unknown;installHooks?(provider:string,targetIds?:string[]):Promise<unknown>;dismissHookSetup?():unknown;mcpStatus?():unknown;installMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;removeMcp?(provider:'claude'|'codex',targetIds?:string[]):unknown;websiteProjects?():unknown;setWebsiteRule?(pattern:string,projectPath:string):unknown;removeWebsiteRule?(pattern:string):unknown;setHumanDecision?(pairs:Array<[string,string]>,mode:'assigned'|'unassigned'|'clear',projectPath?:string,date?:string,segments?:HumanDecisionSegment[]):unknown;linearStatus?():Promise<unknown>;linearConnect?(clientId:string):Promise<unknown>;linearSync?(workspaceId?:string):Promise<unknown>;linearDisconnect?(workspaceId?:string):Promise<unknown>; }
 // Review edits may name the local day (YYYY-MM-DD) whose summary they return.
-const optionalDate=(value:unknown)=>value===undefined||typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value);
+const validDate=(value:unknown):value is string=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value);
+const optionalDate=(value:unknown)=>value===undefined||validDate(value);
 export async function dispatchRequest(payload:unknown,controller:Controller):Promise<Record<string,unknown>> {
   const request=object(payload),id=request.id;
   try{
@@ -153,6 +155,19 @@ export async function dispatchRequest(payload:unknown,controller:Controller):Pro
     if(request.method==='work_outcomes'){
       if(!controller.workOutcomes||Object.keys(params).length!==1||typeof params.date!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(params.date))throw new Error('Invalid work outcome date');
       return {id,result:await controller.workOutcomes(params.date)};
+    }
+    if(request.method==='agent_time_exclusions'){
+      if(!controller.agentTimeExclusions||Object.keys(params).length!==1||!validDate(params.date))throw new Error('Invalid correction date');
+      return {id,result:controller.agentTimeExclusions(params.date as string)};
+    }
+    if(request.method==='agent_time_exclude'){
+      const{executionKey,date,start,end}=params;
+      if(!controller.excludeAgentTime||Object.keys(params).length!==4||typeof executionKey!=='string'||!executionKey||executionKey.length>1024||!validDate(date)||typeof start!=='number'||typeof end!=='number'||!Number.isFinite(start)||!Number.isFinite(end)||end<=start||end-start>86400)throw new Error('Invalid agent time correction');
+      return {id,result:controller.excludeAgentTime(executionKey,date as string,start,end)};
+    }
+    if(request.method==='agent_time_exclusion_undo'){
+      if(!controller.undoAgentTimeExclusion||Object.keys(params).length!==2||typeof params.id!=='string'||!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.id)||!validDate(params.date))throw new Error('Invalid agent time correction');
+      return {id,result:controller.undoAgentTimeExclusion(params.id,params.date as string)};
     }
     if(request.method==='manual_notes'){
       if(!controller.manualNotes||Object.keys(params).length!==1||typeof params.date!=='string')throw new Error('Invalid manual note date');

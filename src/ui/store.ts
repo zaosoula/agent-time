@@ -12,6 +12,7 @@ import type { CaptureHealth } from '../capture/health.ts';
 import type { HookInstallationStatus } from '../capture/hook-installation.ts';
 import type { ReportedWorkItem } from '../capture/reported-work.ts';
 import type { ManualNote } from '../capture/store.ts';
+import type { AgentTimeExclusion } from '../capture/agent-exclusions.ts';
 import type { UsageSummary } from '../usage/reader.ts';
 import { minuteCreditSeconds, unionSeconds } from '../capture/correlate.ts';
 import { dailyCaptureIssues } from '../capture/daily.ts';
@@ -22,6 +23,7 @@ import { groupHumanReview, humanReviewState, type HumanReviewGroup } from '../ca
 import {buildAppReviewGroups,reviewContextGroups,type AppReviewGroup} from './review-apps.ts';
 import { humanIntervalsBySession } from '../capture/orca-focus.ts';
 import {
+  agentTimeCorrectionTransport,
   dayReviewTransport,
   manualNoteTransport,
   native,
@@ -447,6 +449,7 @@ function createStore() {
     selectedSessionKey.value = '';
     dayReview.value = null;
     notes.value = [];
+    agentCorrections.value = [];
     reportedWork.value = [];
     void loadNotes();
     void pollers.summary.refresh();
@@ -473,6 +476,28 @@ function createStore() {
       storeSummary(next, date);
     }
     void loadDayReview();
+  }
+
+  const agentCorrections = ref<AgentTimeExclusion[]>([]);
+  async function loadAgentCorrections() {
+    const date = selectedDate.value;
+    try {
+      const result = await agentTimeCorrectionTransport.list(date);
+      if (date === selectedDate.value) agentCorrections.value = result;
+    } catch {
+      /* Corrections stay as they were; changing one reports its own error. */
+    }
+  }
+  /** Remove recorded agent time from one execution on the selected day. */
+  async function excludeAgentTime(executionKey: string, start: number, end: number) {
+    const date = selectedDate.value;
+    applyReviewedSummary(await agentTimeCorrectionTransport.exclude(executionKey, date, start, end), date);
+    await loadAgentCorrections();
+  }
+  async function undoAgentTimeCorrection(id: string) {
+    const date = selectedDate.value;
+    applyReviewedSummary(await agentTimeCorrectionTransport.undo(id, date), date);
+    await loadAgentCorrections();
   }
 
   async function markDayReviewed() {
@@ -890,6 +915,7 @@ function createStore() {
     project,
     search,
     selectedDate,
+    agentCorrections,loadAgentCorrections,excludeAgentTime,undoAgentTimeCorrection,
     ...workspaceScope,
     pageFilters,filterKey,activityFilters,setActivityFilters,knownProjects,reportFilterOptions,
     selectedSessionKey,

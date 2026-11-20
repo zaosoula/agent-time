@@ -292,6 +292,7 @@ fn website_pattern(value:&Value)->bool{
 fn project_path(value:&Value)->bool{
  value.as_str().map(|text|text.len()<=4096&&!text.contains('\0')).unwrap_or(false)
 }
+fn valid_date(date:&str)->bool{let b=date.as_bytes();b.len()==10&&b.iter().enumerate().all(|(i,c)|if i==4||i==7{*c==b'-'}else{c.is_ascii_digit()})}
 fn billing_progress_id(id:&str)->bool{
  id.len()==36&&id.bytes().enumerate().all(|(i,b)|if [8,13,18,23].contains(&i){b==b'-'}else{b.is_ascii_hexdigit()})
 }
@@ -333,6 +334,9 @@ fn validate_method(method:&str,params:&Value)->Result<(),String>{
   "weekly_review" if p.len()==1 && p.get("startDate").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_notes" if p.len()==1 && p.get("date").and_then(Value::as_str).map(|date|{let bytes=date.as_bytes();bytes.len()==10&&bytes.iter().enumerate().all(|(i,b)|if i==4||i==7{*b==b'-'}else{b.is_ascii_digit()})}).unwrap_or(false)=>Ok(()),
   "manual_note_add" if p.len()==4 && p.get("start").and_then(Value::as_f64).zip(p.get("end").and_then(Value::as_f64)).map(|(start,end)|start.is_finite()&&end.is_finite()&&end>start&&end-start<=86400.0).unwrap_or(false) && p.get("project").and_then(Value::as_str).map(|value|value.len()<=256).unwrap_or(false) && p.get("note").and_then(Value::as_str).map(|value|!value.trim().is_empty()&&value.len()<=500).unwrap_or(false)=>Ok(()),
+  "agent_time_exclusions" if p.len()==1 && p.get("date").and_then(Value::as_str).map(valid_date).unwrap_or(false)=>Ok(()),
+  "agent_time_exclude" if p.len()==4 && p.get("executionKey").and_then(Value::as_str).map(|k|!k.is_empty()&&k.chars().map(char::len_utf16).sum::<usize>()<=1024).unwrap_or(false) && p.get("date").and_then(Value::as_str).map(valid_date).unwrap_or(false) && p.get("start").and_then(Value::as_f64).zip(p.get("end").and_then(Value::as_f64)).map(|(start,end)|start.is_finite()&&end.is_finite()&&end>start&&end-start<=86400.0).unwrap_or(false)=>Ok(()),
+  "agent_time_exclusion_undo" if p.len()==2 && p.get("date").and_then(Value::as_str).map(valid_date).unwrap_or(false) && p.get("id").and_then(Value::as_str).map(billing_progress_id).unwrap_or(false)=>Ok(()),
   "manual_note_remove" if p.len()==1 && p.get("id").and_then(Value::as_str).map(|id|id.len()==36&&id.bytes().all(|byte|byte.is_ascii_hexdigit()||byte==b'-')).unwrap_or(false)=>Ok(()),
   "linear_connect" if p.len()==1 && p.get("clientId").and_then(Value::as_str).map(|v|v.len()>=8&&v.len()<=128&&v.bytes().all(|b|b.is_ascii_alphanumeric()||b==b'_'||b==b'-')).unwrap_or(false)=>Ok(()),
   "website_rule_set"|"website_rule_preview" if p.len()==2 && p.get("pattern").map(website_pattern).unwrap_or(false) && p.get("projectPath").map(project_path).unwrap_or(false)=>Ok(()),
@@ -872,3 +876,21 @@ mod audit_protocol_tests {
   for extra in [json!({"filters":true}),json!({"filters":{"assignment":"bad"}}),json!({"filters":{"sql":"delete"}}),json!({"path":"/tmp"})]{let mut invalid=scope.clone();for(k,v)in extra.as_object().unwrap(){invalid[k]=v.clone();}assert!(validate_method("period_review",&invalid).is_err());}
  }
 }
+#[cfg(test)]mod agent_time_correction_tests{use super::*;#[test]fn agent_time_correction_protocol(){
+ let id="123e4567-e89b-42d3-a456-426614174000";
+ let ok=json!({"executionKey":"k","date":"2026-10-14","start":100.0,"end":200.0});
+ assert!(validate_method("agent_time_exclude",&ok).is_ok());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"k","date":"2026-10-14","start":100.0,"end":200.0,"x":1})).is_err());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"k","date":"today","start":100.0,"end":200.0})).is_err());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"k","date":"2026-10-14","start":200.0,"end":200.0})).is_err());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"k","date":"2026-10-14","start":0.0,"end":86401.0})).is_err());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"","date":"2026-10-14","start":0.0,"end":5.0})).is_err());
+ assert!(validate_method("agent_time_exclude",&json!({"executionKey":"x".repeat(1025),"date":"2026-10-14","start":0.0,"end":5.0})).is_err());
+ assert!(validate_method("agent_time_exclusion_undo",&json!({"id":id,"date":"2026-10-14"})).is_ok());
+ assert!(validate_method("agent_time_exclusion_undo",&json!({"id":"nope","date":"2026-10-14"})).is_err());
+ assert!(validate_method("agent_time_exclusion_undo",&json!({"id":id})).is_err());
+ assert!(validate_method("agent_time_exclusion_undo",&json!({"id":id,"date":"2026-10-14","x":1})).is_err());
+ assert!(validate_method("agent_time_exclusions",&json!({"date":"2026-10-14"})).is_ok());
+ assert!(validate_method("agent_time_exclusions",&json!({"date":"x"})).is_err());
+ assert!(validate_method("agent_time_exclusions",&json!({"date":"2026-10-14","x":1})).is_err());
+}}

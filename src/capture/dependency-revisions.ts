@@ -17,7 +17,7 @@ export function ensureDependencyRevisions(db:DatabaseSync,packed:boolean){
  CREATE TRIGGER IF NOT EXISTS at_dependency_replace BEFORE INSERT ON events WHEN EXISTS(SELECT 1 FROM events WHERE event_id=NEW.event_id OR rowid=NEW.rowid) BEGIN UPDATE at_dependency_revision SET mutations=mutations+1 WHERE id=1; END;
  CREATE TRIGGER IF NOT EXISTS at_dependency_update AFTER UPDATE ON events BEGIN UPDATE at_dependency_revision SET mutations=mutations+1 WHERE id=1; END;
  CREATE TRIGGER IF NOT EXISTS at_dependency_delete AFTER DELETE ON events BEGIN UPDATE at_dependency_revision SET mutations=mutations+1 WHERE id=1; END;`);
- for(const table of ['human_decisions','human_splits'])for(const action of ['INSERT','UPDATE','DELETE'])db.exec(`CREATE TRIGGER IF NOT EXISTS at_dependency_${table}_${action.toLowerCase()} AFTER ${action} ON ${table} BEGIN UPDATE at_dependency_revision SET review=review+1 WHERE id=1; END;`);
+ for(const table of ['human_decisions','human_splits','agent_time_exclusions'])for(const action of ['INSERT','UPDATE','DELETE'])db.exec(`CREATE TRIGGER IF NOT EXISTS at_dependency_${table}_${action.toLowerCase()} AFTER ${action} ON ${table} BEGIN UPDATE at_dependency_revision SET review=review+1 WHERE id=1; END;`);
  if(packed)for(const action of ['INSERT','UPDATE','DELETE'])db.exec(`CREATE TRIGGER IF NOT EXISTS at_dependency_blocks_${action.toLowerCase()} AFTER ${action} ON at_event_blocks BEGIN UPDATE at_dependency_revision SET mutations=mutations+1 WHERE id=1; END;`);
 }
 export function dependencyRevision(db:DatabaseSync,scope:'resources'|'reports'|'review'|'mutations'):string{

@@ -74,7 +74,8 @@ export class IngestionModel{
    const changes=readIngestionChanges(source,state.sequence,limit),read=source.prepare('SELECT rowid,observed_at,payload FROM events WHERE event_id=?');
    for(const change of changes){
     if(change.kind==='blocks'){db.exec('UPDATE credited_slices SET dirty=1');this.tools.reset();state.rowid=0;state.initial=true;}
-    else if(change.kind==='review')for(const pair of change.pairs||[]){const times=pair.flatMap(id=>{const row=source.prepare('SELECT observed_at FROM events WHERE event_id=?').get(id);return row?[Number(row.observed_at)]:[];});if(times.length)db.prepare('UPDATE credited_slices SET dirty=1 WHERE activity_from<=? AND activity_to>?').run(Math.max(...times),Math.min(...times));else db.exec('UPDATE credited_slices SET dirty=1');}
+    else if(change.kind==='range')for(const [start,end] of (change.pairs||[]) as [number,number][])db.prepare('UPDATE credited_slices SET dirty=1 WHERE activity_from<=? AND activity_to>?').run(end,start);
+    else if(change.kind==='review')for(const pair of (change.pairs||[]) as [string,string][]){const times=pair.flatMap(id=>{const row=source.prepare('SELECT observed_at FROM events WHERE event_id=?').get(id);return row?[Number(row.observed_at)]:[];});if(times.length)db.prepare('UPDATE credited_slices SET dirty=1 WHERE activity_from<=? AND activity_to>?').run(Math.max(...times),Math.min(...times));else db.exec('UPDATE credited_slices SET dirty=1');}
     else{
      const ids=new Set<string>();for(const meta of [change.old,change.next])if(meta){this.mark(meta);this.tools.remove(meta.eventId);ids.add(meta.eventId);}
      for(const id of ids){const row=read.get(id);if(row){const event=JSON.parse(String(row.payload)) as CaptureEvent;this.tools.ingest([{rowid:Number(row.rowid),event}]);this.mark(ingestionMeta(event));discover(event.observedAt,Number(row.observed_at));}}

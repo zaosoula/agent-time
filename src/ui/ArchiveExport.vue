@@ -25,6 +25,7 @@ const conflictCount = () =>
       preview.value.noteConflicts +
       preview.value.decisionConflicts +
       preview.value.splitConflicts +
+      preview.value.correctionConflicts +
       preview.value.reviewActionConflicts +
       preview.value.dayReviewConflicts +
       preview.value.usageConflicts +
@@ -217,7 +218,7 @@ onMounted(() => {
       <AppButton class="btn" :disabled="busy || !selected" @click="inspect">Preview restore</AppButton>
       <p v-if="preview">
         Archive: {{ preview.archiveEvents }} events. Adds {{ preview.newEvents }} events,
-        {{ preview.newNotes }} notes, {{ preview.newDecisions }} decisions, {{ preview.newSplits }} splits,
+        {{ preview.newNotes }} notes, {{ preview.newDecisions }} decisions, {{ preview.newSplits }} splits, {{ preview.newCorrections }} agent time corrections,
         {{ preview.newReviewActions }} history actions, {{ preview.newDayReviews }} day reviews and
         {{ preview.newUsageEvents }} usage records, {{ preview.newBillingProjects }} billing projects and
         {{ preview.newBillingReports }} saved reports. Conflicts: {{ conflictCount() }}.

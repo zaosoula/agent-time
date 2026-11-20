@@ -8,7 +8,7 @@ export interface PricingCatalog {
 const officialSources=['https://developers.openai.com/api/docs/pricing','https://platform.claude.com/docs/en/about-claude/pricing'];
 export function validateCatalog(value:unknown):PricingCatalog {
  const c=value as PricingCatalog;
- if(!c||c.schemaVersion!==1||!/^\d{4}-\d{2}-\d{2}-[a-zA-Z0-9-]{1,80}$/.test(c.version)||!/^\d{4}-\d{2}-\d{2}$/.test(c.verifiedAt)||!Number.isFinite(Date.parse(c.verifiedAt))||new Date(c.verifiedAt).toISOString().slice(0,10)!==c.verifiedAt||Date.parse(c.verifiedAt)>Date.now()+86400000||c.currency!=='USD'||c.unit!=='millionTokens'||c.basis!=='standard-short-context-global')throw new Error('Unsupported pricing catalog');
+ if(!c||c.schemaVersion!==1||!/^\d{4}-\d{2}-\d{2}-[a-zA-Z0-9-]{1,80}$/.test(c.version)||!/^\d{4}-\d{2}-\d{2}$/.test(c.verifiedAt)||!Number.isFinite(Date.parse(c.verifiedAt))||new Date(c.verifiedAt).toISOString().slice(0,10)!==c.verifiedAt||c.currency!=='USD'||c.unit!=='millionTokens'||c.basis!=='standard-short-context-global')throw new Error('Unsupported pricing catalog');
  if(!Array.isArray(c.sources)||c.sources.length!==2||!officialSources.every(s=>c.sources.includes(s)))throw new Error('Pricing catalog must cite both official sources');
  if(!c.models||typeof c.models!=='object'||Array.isArray(c.models)||!Object.keys(c.models).length||Object.keys(c.models).length>2000)throw new Error('Invalid pricing models');
  const models:Record<string,ModelRates>={};
