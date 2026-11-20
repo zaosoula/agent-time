@@ -1,8 +1,10 @@
 # Agent Time public beta release record
 
-## 0.2.0-beta.60 — prepared — 2026-11-20
+## 0.2.0-beta.60 — published — 2026-11-20
 
-Owner requested publication after merging the open pull requests. Includes manual agent time corrections from #38 (Tristan Schwenk) with the maintainer follow-up in `00e76f4`, the closed-day summary token fix (#41), saved pricing catalogs loading regardless of the clock (#42), and the reviewed official pricing catalog (#40, 25 added models, existing rates unchanged) produced by the repaired column-name pricing parser (#39). Existing proof events and timing/billing formulas are unchanged; corrections are stored separately and can be undone. Local validation passed 883 JavaScript tests, 39 native tests and the production typecheck. See [candidate notes](0.2.0-beta.60-notes.md).
+Owner requested publication after merging the open pull requests. Includes manual agent time corrections from #38 (Tristan Schwenk) with the maintainer follow-up in `00e76f4`, the closed-day summary token fix (#41), saved pricing catalogs loading regardless of the clock (#42), and the reviewed official pricing catalog (#40, 25 added models, existing rates unchanged) produced by the repaired column-name pricing parser (#39). Existing proof events and timing/billing formulas are unchanged; corrections are stored separately and can be undone. Local validation passed 883 JavaScript tests, 39 native tests and the production typecheck. See [release notes](0.2.0-beta.60-notes.md).
+
+GitHub Actions [run 44818543198](https://github.com/zaosoula/agent-time/actions/runs/44818543198) built, checked, signed, notarized and published source `655a74e`. The live updater manifest reports beta.60 for `darwin-aarch64` with a signature, and the updater archive and [DMG](https://agent-time.ezyostudio.com/install/0.2.0-beta.60/Agent%20Time_0.2.0-beta.60_aarch64.dmg) both respond. Independent signature, Gatekeeper and download-hash checks were not repeated for this release. Installation or OTA completion on the owner's Mac is not claimed.
 
 ## 0.2.0-beta.59 — published and verified — 2026-11-16
 
