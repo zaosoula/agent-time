@@ -146,3 +146,19 @@ test('review status awaits the cooperative handler with its controller context',
  const reply=await dispatchRequest({id:'cooperative',method:'day_review_status',params:{date:'2026-11-12',includeBacklog:false}},controller as any);
  assert.deepEqual(reply,{id:'cooperative',result:{date:'2026-11-12',includeBacklog:false,token:'ready'}});
 });
+test('agent time correction requests validate exact keys, date, range and id',async()=>{
+ const calls:unknown[][]=[];
+ const c={status:()=>({}),summary:()=>({}),start:async()=>({}),stop:async()=>({}),
+  excludeAgentTime:(...a:unknown[])=>{calls.push(a);return {ok:1};},undoAgentTimeExclusion:(...a:unknown[])=>{calls.push(a);return {ok:2};},agentTimeExclusions:(d:string)=>[d]};
+ const ok={executionKey:'k',date:'2026-10-14',start:100,end:200},uuid='123e4567-e89b-42d3-a456-426614174000';
+ assert.deepEqual(await dispatchRequest({id:'a',method:'agent_time_exclude',params:ok},c),{id:'a',result:{ok:1}});
+ assert.deepEqual(calls[0],['k','2026-10-14',100,200]);
+ assert.deepEqual(await dispatchRequest({id:'b',method:'agent_time_exclusion_undo',params:{id:uuid,date:'2026-10-14'}},c),{id:'b',result:{ok:2}});
+ assert.deepEqual(await dispatchRequest({id:'c',method:'agent_time_exclusions',params:{date:'2026-10-14'}},c),{id:'c',result:['2026-10-14']});
+ for(const bad of [{...ok,extra:1},{...ok,date:'today'},{...ok,end:100},{...ok,end:100+86401},{...ok,start:NaN},{...ok,executionKey:''},{...ok,executionKey:'x'.repeat(1025)},{...ok,executionKey:3}])
+  assert.ok('error' in await dispatchRequest({id:'d',method:'agent_time_exclude',params:bad},c),JSON.stringify(bad));
+ for(const bad of [{id:'nope',date:'2026-10-14'},{id:uuid},{id:uuid,date:'x'},{id:uuid,date:'2026-10-14',a:1}])
+  assert.ok('error' in await dispatchRequest({id:'e',method:'agent_time_exclusion_undo',params:bad},c));
+ for(const bad of [{},{date:'x'},{date:'2026-10-14',a:1}])assert.ok('error' in await dispatchRequest({id:'f',method:'agent_time_exclusions',params:bad},c));
+ assert.equal(calls.length,2);
+});

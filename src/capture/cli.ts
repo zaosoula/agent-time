@@ -7,6 +7,7 @@ import { Collector } from './collector.ts';
 import { EventStore } from './store.ts';
 import { summarize } from './correlate.ts';
 import {applyHumanDecisions} from './human-review.ts';
+import {applyAgentExclusions} from './agent-exclusions.ts';
 import { renderReport } from './report.ts';
 import { dispatchRequest } from './protocol.ts';
 import { defaultSettings, storedSettings } from './settings.ts';
@@ -29,7 +30,7 @@ if(command==='hook') {
       const database=resolve(values.database||join(output,'events.sqlite')),store=new EventStore(database);
       const settingsPath=join(dirname(database),'settings.json'),settings=existsSync(settingsPath)?storedSettings(JSON.parse(readFileSync(settingsPath,'utf8'))):defaultSettings;
       const target=resolve(values.output||'.capture/report.html');mkdirSync(resolve(target,'..'),{recursive:true});
-      writeFileSync(target,renderReport(applyHumanDecisions(summarize(store.events(),{idleThreshold:settings.humanIdleMinutes*60,agentIdleThreshold:settings.agentIdleMinutes*60}),store.humanDecisions()),[]),{mode:0o600});store.close();console.log(target);
+      writeFileSync(target,renderReport(applyAgentExclusions(applyHumanDecisions(summarize(store.events(),{idleThreshold:settings.humanIdleMinutes*60,agentIdleThreshold:settings.agentIdleMinutes*60}),store.humanDecisions()),store.agentTimeExclusions()),[]),{mode:0o600});store.close();console.log(target);
     }else if(command==='hook-config'){
       if(!values.manifest)throw new Error('--manifest is required');
       if(positionals[0]==='prepare'){

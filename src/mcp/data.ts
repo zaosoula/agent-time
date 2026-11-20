@@ -23,6 +23,7 @@ import {unobservedGaps} from '../capture/gaps.ts';
 import {projectPathFromWorktree} from '../capture/website-resolver.ts';
 import {creditTaskCounters,reportedWorkForDay,hydrateTaskStarts} from '../capture/reported-work.ts';
 import {applyReportedResources,reportedResources} from '../capture/reported-resources.ts';
+import {applyAgentExclusions,type AgentTimeExclusion} from '../capture/agent-exclusions.ts';
 import {issuePattern,ticketPattern,uuidPattern,validAgentReport} from './report.ts';
 
 export const defaultDataDirectory=()=>process.env.ADE_CAPTURE_OUTPUT||join(homedir(),'Library','Application Support','studio.ezyo.agenttime');
@@ -118,6 +119,8 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
   pathCapture=collectProjectPaths();
   const decisions=db.prepare('SELECT start_event_id,end_event_id,mode,project_path FROM human_decisions').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),mode:row.mode,projectPath:row.project_path===null?null:String(row.project_path)})) as HumanDecision[];
   const splits=db.prepare('SELECT start_event_id,end_event_id,split_at,before_path,after_path FROM human_splits').all().map(row=>({startEventId:String(row.start_event_id),endEventId:String(row.end_event_id),splitAt:Number(row.split_at),beforePath:row.before_path===null?null:String(row.before_path),afterPath:row.after_path===null?null:String(row.after_path)})) as HumanSplit[];
+  // Legacy read-only archives predate corrections.
+  const exclusions:AgentTimeExclusion[]=db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_time_exclusions'").get()?db.prepare('SELECT id,execution_key,date,start,end,created_at FROM agent_time_exclusions WHERE undone_at IS NULL').all().map(row=>({id:String(row.id),executionKey:String(row.execution_key),date:String(row.date),start:Number(row.start),end:Number(row.end),createdAt:Number(row.created_at)})):[];
   const resourceFrom=readOptions.billingEvidence?from-31*86400:now()-31*86400,resourceTo=readOptions.billingEvidence?to+31*86400:Infinity;
   const resourceRows=db.prepare(`SELECT payload FROM events ${isPackedEventDatabase(db)?'INDEXED BY events_resources_at':''} WHERE observed_at>? AND observed_at<? AND json_extract(payload,'$.source')='agent_report' AND json_extract(payload,'$.kind')='resource' LIMIT 20001`).all(resourceFrom,resourceTo);
   if(resourceRows.length>20000)throw new Error('Too many resource mappings for a bounded summary; use explicit project attribution');
@@ -172,7 +175,8 @@ export function snapshot(output:string,from:number,to:number,readOptions:{countT
    const rawEvents=[...window.events,...pending.filter(e=>e.observedAt>=window.bounds.readFrom&&e.observedAt<window.bounds.readTo)];
    const events=options.countTaskCounters?hydrateReports(db,rawEvents):rawEvents;
    const decided=applyReportedResources(applyHumanDecisions(summarize(events,options),decisions,splits),resources);
-   const summary=options.countTaskCounters?creditTaskCounters(decided,reportedWorkForDay(events,start,end,now())):decided;
+   // Exclusions apply after counters, which would otherwise re-credit a removed range.
+   const summary=applyAgentExclusions(options.countTaskCounters?creditTaskCounters(decided,reportedWorkForDay(events,start,end,now())):decided,exclusions);
    const underlying=new Map<string,Interval[]>(),sessionPaths=new Map<string,string>();
    for(const source of summary.intervals)if(source.state!=='grouped'&&source.state!=='human'&&source.sessionId){const key=`${source.provider}:${source.sessionId}`;const group=underlying.get(key)||[];group.push(source);underlying.set(key,group);}
    for(const session of summary.sessions)if(session.cwd&&session.sessionId)sessionPaths.set(`${session.provider}:${session.sessionId}`,session.cwd);

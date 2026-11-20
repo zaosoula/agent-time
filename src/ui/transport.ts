@@ -22,6 +22,7 @@ import type { WeeklyReview } from '../capture/weekly.ts';
 import type { WorkOutcomes } from '../capture/work-outcomes.ts';
 import type { ReportedWorkItem } from '../capture/reported-work.ts';
 import type { ArchivePreview, ManualNote } from '../capture/store.ts';
+import type { AgentTimeExclusion } from '../capture/agent-exclusions.ts';
 import type { StorageUsage } from '../capture/storage-usage.ts';
 import type { CaptureCheck } from '../capture/capture-checks.ts';
 export interface LinearConnectionStatus extends LinearStatus {
@@ -116,6 +117,12 @@ export const manualNoteTransport = {
   list: (date: string) => request<ManualNote[]>('manual_notes', { date }),
   add: (note: Omit<ManualNote, 'id' | 'createdAt'>) => request<ManualNote>('manual_note_add', note),
   remove: (id: string) => request<boolean>('manual_note_remove', { id }),
+};
+export const agentTimeCorrectionTransport = {
+  list: (date: string) => request<AgentTimeExclusion[]>('agent_time_exclusions', { date }),
+  exclude: (executionKey: string, date: string, start: number, end: number) =>
+    request<Summary>('agent_time_exclude', { executionKey, date, start, end }),
+  undo: (id: string, date: string) => request<Summary>('agent_time_exclusion_undo', { id, date }),
 };
 export const archiveTransport = {
   export: () => request<{ path: string; bytes: number; events: number }>('export_archive'),

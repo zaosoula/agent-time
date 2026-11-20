@@ -17,6 +17,15 @@ test('persisted canonical paths retain prompt presence after a linked worktree i
   assert.ok(billingProjects(output).knownSources.includes('/fixture/caex'));
  }finally{store.close();rmSync(output,{recursive:true,force:true});}
 });
+test('billing revision changes when an exclusion is added',()=>{const {output,store}=fixture();try{
+ const at=billingDayStart('2026-11-10','Europe/Paris')+36000;
+ store.put(makeEvent('hook','tool_start',{provider:'claude',hostId:'local',sessionId:'one',cwd:'/fixture/caex',observedAt:at,data:{toolId:'t'}}));store.put(makeEvent('hook','tool_end',{provider:'claude',hostId:'local',sessionId:'one',cwd:'/fixture/caex',observedAt:at+600,data:{toolId:'t'}}));
+ const request={project:'caex',fromDate:'2026-11-10',toDate:'2026-11-10'},first=billingForProject(output,request).report.inputRevision;
+ // Saved reports are content-addressed; drop them so the second run reports its own input revision.
+ store.database.exec('DELETE FROM billing_reports');assert.equal(billingForProject(output,request).report.inputRevision,first);
+ store.database.exec('DELETE FROM billing_reports');store.addAgentTimeExclusion({executionKey:'local::claude::one',date:'2026-11-10',start:at,end:at+60});
+ assert.notEqual(billingForProject(output,request).report.inputRevision,first);
+}finally{store.close();rmSync(output,{recursive:true,force:true});}});
 test('billing calendar follows the project timezone and daylight saving',()=>{assert.equal(billingDayStart('2026-03-30','Europe/Paris')-billingDayStart('2026-03-29','Europe/Paris'),23*3600);assert.equal(billingDayStart('2026-10-26','Europe/Paris')-billingDayStart('2026-10-25','Europe/Paris'),25*3600);assert.throws(()=>billingDayStart('2026-02-30','Europe/Paris'));});
 test('database project grouping bills raw seconds once and saves a reproducible export',()=>{const {output,store}=fixture();try{
  const at=billingDayStart('2026-11-10','Europe/Paris')+36000;

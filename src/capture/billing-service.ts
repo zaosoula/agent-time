@@ -200,6 +200,7 @@ export function billingForProject(output:string,value:BillingRequest,onProgress?
    const input={eventRowid:db.prepare('SELECT coalesce(max(rowid),0) n FROM events').get()?.n,settings,projectRevision:frozenProject.revision};
    const revisionHash=createHash('sha256').update(JSON.stringify(input));
    for(const table of ['human_decisions','human_splits'])for(const row of db.prepare(`SELECT * FROM ${table} ORDER BY start_event_id,end_event_id`).iterate())revisionHash.update(JSON.stringify(row));
+   if(db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_time_exclusions'").get())for(const row of db.prepare('SELECT * FROM agent_time_exclusions ORDER BY id').iterate())revisionHash.update(JSON.stringify(row));
    report.inputRevision=revisionHash.digest('hex');db.exec('COMMIT');
    onProgress?.({phase:'saving',completedDays,totalDays});
   }catch(error){if(db.isTransaction)db.exec('ROLLBACK');throw error;}
