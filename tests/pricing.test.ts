@@ -65,3 +65,30 @@ test('official page proposals select standard prices and leave unsupported conte
  assert.throws(()=>proposeCatalog(openai.replace('| gpt-6.1-sol | $2.00','| gpt-6.1-sol | ask us'),claude,small,'2026-10-12'));
  assert.throws(()=>proposeCatalog(openai,claude,{...small,models:{...small.models,'gpt-5.6-sol':bundledCatalog.models['gpt-5.6-sol']}},'2026-10-12'));
 });
+test('official page proposals read prices by column name when the layout changes',()=>{
+ const reordered=`### Standard pricing data
+
+| Model | Short context input | Short context output | Short context cached input | Short context 30m write | Short context 12h write | Long context input |
+| --- | --- | --- | --- | --- | --- | --- |
+| gpt-6.1-sol | $2.00 | $10.00 | $0.10 | $2.50 | $5.00 | $4.00 |
+| gpt-5.5 (<272K context length) | $5.00 | $30.00 | $0.50 | - | - | $10.00 |
+| gpt-5.5-pro (<272K context length) | $30.00 | $180.00 | - | - | - | $60.00 |
+
+| Model | Input | Output | Cached input |
+| --- | --- | --- | --- |
+| gpt-5-mini | $0.25 | $2.00 | $0.025 |
+
+### Grouped Pricing Table data
+
+| Category | Model | Input | Output | Cached input | 30m write | 12h write |
+| --- | --- | --- | --- | --- | --- | --- |
+| Codex | gpt-5.3-codex | $1.75 | $14.00 | $0.175 | - | - |
+`;
+ const {catalog,notes}=proposeCatalog(reordered,claude,small,'2026-11-20');
+ assert.deepEqual(catalog.models['gpt-6.1-sol'],small.models['gpt-6.1-sol']);
+ assert.deepEqual(catalog.models['gpt-5.5'],{input:5,cacheRead:0.5,cacheWrite:0,cacheWrite1h:0,output:30});
+ assert.deepEqual(catalog.models['gpt-5-mini'],{input:0.25,cacheRead:0.025,cacheWrite:0,cacheWrite1h:0,output:2});
+ assert.deepEqual(catalog.models['gpt-5.3-codex'],{input:1.75,cacheRead:0.175,cacheWrite:0,cacheWrite1h:0,output:14});
+ assert.ok(notes.includes('gpt-5.5-pro: no cached-input rate; review manually'));
+ assert.throws(()=>proposeCatalog(reordered.replaceAll('Short context output','Short context completion'),claude,small,'2026-11-20'),/Pricing column missing/);
+});
