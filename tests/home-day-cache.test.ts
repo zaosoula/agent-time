@@ -87,3 +87,11 @@ test('today remains live and outside the closed-day snapshot cache',()=>fixture(
  c.store.put(makeEvent('macos','activity',{observedAt:at('2026-10-20T10:00:20'),monotonicAt:20,data:{idleSeconds:0}}));assert(!('unchanged'in c.versionedSummary('2026-10-20',0,first.token)));assert.equal((c as any).viewSnapshots.retainedBytes,0);
  }finally{Date.now=original;}
 }));
+
+test('closed-day tokens fit the 64-character since limit on every path',()=>fixture(c=>{
+ samples(c,'2026-10-20');
+ const summary=c.versionedSummary('2026-10-20'),again=c.versionedSummary('2026-10-20'),home=c.versionedHomeResponse('2026-10-20'),inner=c.versionedHomeSummary('2026-10-20');
+ for(const token of [summary.token,again.token,home.token,inner.token])assert.ok(token.length<=64,`${token.length}: ${token}`);
+ assert.match(summary.token,/^r-/);
+ assert.deepEqual(c.versionedSummary('2026-10-20',0,summary.token),{unchanged:true,token:summary.token});
+}));
