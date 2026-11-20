@@ -5,33 +5,47 @@ import {pathToFileURL} from 'node:url';
 import {bundledCatalog,validateCatalog,type ModelRates,type PricingCatalog} from '../src/usage/pricing.ts';
 
 const hash=(text:string)=>createHash('sha256').update(text).digest('hex');
-function table(text:string,header:string):string[][] {
- const lines=text.split('\n'),start=lines.findIndex(line=>line.startsWith('|')&&line.includes(header));
- if(start<0)throw new Error(`Pricing table changed: ${header}`);
- const rows:string[][]=[];
- for(const line of lines.slice(start+2)){if(!line.startsWith('|'))break;rows.push(line.split('|').slice(1,-1).map(v=>v.trim()));}
- if(!rows.length)throw new Error('Empty pricing table');return rows;
+type Row=Record<string,string>;
+/** Every Markdown table in `text`, each row keyed by its lower-cased header so column order can change. */
+function tables(text:string):Row[][] {
+ const lines=text.split('\n'),found:Row[][]=[];
+ const cells=(line:string)=>line.split('|').slice(1,-1).map(v=>v.trim());
+ for(let i=0;i<lines.length-1;i++){
+  if(!lines[i]!.startsWith('|')||!/^\|[\s:|-]+\|$/.test(lines[i+1]!.trim()))continue;
+  const header=cells(lines[i]!).map(name=>name.toLowerCase()),rows:Row[]=[];
+  for(i+=2;i<lines.length&&lines[i]!.startsWith('|');i++)rows.push(Object.fromEntries(cells(lines[i]!).map((value,column)=>[header[column]??'',value])));
+  found.push(rows);
+ }
+ return found;
 }
+/** The first header present in `row` among `names`; a renamed or missing price column fails loudly. */
+function column(row:Row,...names:string[]):string {for(const name of names)if(name in row)return row[name]!;throw new Error(`Pricing column missing: ${names[0]}`);}
 function money(cell:string):number {const match=cell.match(/^\$([0-9]+(?:\.[0-9]+)?)(?:\s*\/\s*MTok)?(?:<sup>\d+<\/sup>)?$/);if(!match)throw new Error(`Unrecognized price: ${cell}`);return Number(match[1]);}
 export function proposeCatalog(openai:string,claude:string,current:PricingCatalog,date:string){
  const models:Record<string,ModelRates>={...current.models},notes:string[]=[],found=new Set<string>();
- // Only the first, explicitly standard table. Never parse Batch/Flex/Fast tables.
+ // Only the explicitly standard section. Never parse Batch/Flex/Fast tables.
  const standard=openai.split('### Standard pricing data')[1]?.split('###')[0];if(!standard)throw new Error('OpenAI standard section missing');
- for(const row of table(standard,'Short context input')){
-  const model=row[0].split(' ')[0];if(!/^(gpt|o[1-9])[a-z0-9.-]*$/.test(model))continue;
-  if(row[2]==='-'){notes.push(`${model}: no cached-input rate; review manually`);continue;}
-  models[model]={input:money(row[1]),cacheRead:money(row[2]),cacheWrite:row[3]==='-'?0:money(row[3]),cacheWrite1h:row[3]==='-'?0:money(row[3]),output:money(row[4])};found.add(model);
+ const standardRows=tables(standard).flat();if(!standardRows.length)throw new Error('Empty pricing table');
+ // Some tables list no write rate. OpenAI usage never reports long-retention
+ // writes, so both write rates use the short one.
+ const writes=['short context 30m write','30m write','short context cache writes','cache writes'];
+ const openaiRates=(row:Row,cached:string):ModelRates=>{const write=writes.some(name=>name in row)?column(row,...writes):'-',cacheWrite=write==='-'?0:money(write);return {input:money(column(row,'short context input','input')),cacheRead:money(cached),cacheWrite,cacheWrite1h:cacheWrite,output:money(column(row,'short context output','output'))};};
+ for(const row of standardRows){
+  const model=column(row,'model').split(' ')[0]!;if(!/^(gpt|o[1-9])[a-z0-9.-]*$/.test(model))continue;
+  const cached=column(row,'short context cached input','cached input');
+  if(cached==='-'){notes.push(`${model}: no cached-input rate; review manually`);continue;}
+  models[model]=openaiRates(row,cached);found.add(model);
  }
- // Older Codex prices live in a separate standard table. Stop before Fast.
- const codex=openai.match(/\| Codex \| (gpt-[a-z0-9.-]+) \| (\$[0-9.]+) \| (\$[0-9.]+) \| (\$[0-9.]+) \|/);
- if(codex){models[codex[1]]={input:money(codex[2]),cacheRead:money(codex[3]),output:money(codex[4]),cacheWrite:0,cacheWrite1h:0};found.add(codex[1]);}
- const claudeRows=table(claude,'Base input tokens');
+ // Older Codex prices live in a grouped standard table; the first Codex row is the standard tier.
+ const codex=tables(openai).flat().find(row=>row.category==='Codex'&&/^gpt-[a-z0-9.-]+$/.test(row.model||''));
+ if(codex){models[codex.model!]=openaiRates(codex,column(codex,'cached input'));found.add(codex.model!);}
+ const claudeRows=tables(claude).find(rows=>rows[0]&&'base input tokens' in rows[0]);if(!claudeRows?.length)throw new Error('Pricing table changed: Base input tokens');
  for(const row of claudeRows){
-  const match=row[0].match(/^Claude (\w+) ([0-9.]+)/);if(!match)throw new Error('Claude model naming changed');
-  const model=`claude-${match[1].toLowerCase()}-${match[2].replaceAll('.','-')}`;
+  const name=column(row,'model'),match=name.match(/^Claude (\w+) ([0-9.]+)/);if(!match)throw new Error('Claude model naming changed');
+  const model=`claude-${match[1]!.toLowerCase()}-${match[2]!.replaceAll('.','-')}`;
   // Per-request context tiers need a richer usage policy; keep them unpriced.
-  if(row[0].includes('for prompts')){notes.push(`${model}: prompt-length tiers; review manually`);continue;}
-  models[model]={input:money(row[1]),cacheWrite:money(row[2]),cacheWrite1h:money(row[3]),cacheRead:money(row[4]),output:money(row[5])};found.add(model);
+  if(name.includes('for prompts')){notes.push(`${model}: prompt-length tiers; review manually`);continue;}
+  models[model]={input:money(column(row,'base input tokens')),cacheWrite:money(column(row,'5m cache writes')),cacheWrite1h:money(column(row,'1h cache writes')),cacheRead:money(column(row,'cache hits and refreshes')),output:money(column(row,'output tokens'))};found.add(model);
  }
  for(const model of Object.keys(current.models))if(!found.has(model))throw new Error(`Previously supported model missing from parsed tables: ${model}`);
  const digest=hash(openai+'\n'+claude);
