@@ -87,6 +87,12 @@ const FINGERPRINT_VERSION='v2:';
 const DAY_REVIEW_CACHE_VERSION='r7';
 const LEGACY_STALE_FINGERPRINT=`${FINGERPRINT_VERSION}legacy-stale`;
 
+/**
+ * Version token for a persisted closed-day view. Clients send it back as
+ * `since`, which the desktop bridge and protocol cap at 64 characters; Home
+ * prefixes it with `h-`, so keep 60 hex digits of the sha256 key.
+ */
+const reviewToken=(key:string)=>`r-${key.slice(0,60)}`;
 export class Collector {
   readonly output:string; readonly store:EventStore;
   private ingestion?:IngestionCoordinator;private ingestionUnsubscribe?:()=>void;
@@ -818,13 +824,13 @@ export class Collector {
     const bounds=localDayBounds(date),closed=Date.now()/1000>=bounds.to;
     if(!closed){const value=this.daySummary(date,maxAgeMs);return {value,token:this.tokenForSummary(value)};}
     const persistedKey=this.persistedHomeKey(date),persisted=persistedKey?this.projection.getView<Summary>('review',date,persistedKey):undefined;
-    if(persisted)return {value:persisted,token:`r-${persistedKey}`};
+    if(persisted&&persistedKey)return {value:persisted,token:reviewToken(persistedKey)};
     const window=windowBounds(bounds.from,bounds.to,this.summaryOptions().agentIdleThreshold);
     const prefix=()=>JSON.stringify([bounds,this.summaryOptions(),this.revision,this.store.windowSignature(window)]);
     const before=prefix(),resources=this.resources(),reports=this.surfaces.countTaskCounters?this.reportedWork(date):[];
     const key=(resources:Map<string,ReportedResource>,counters:string)=>before+':'+createHash('sha256').update(JSON.stringify([...resources])).update(counters).digest('hex');
     const hit=this.viewSnapshots.get(date,key(resources,JSON.stringify(reports)));
-    if(hit)return {...hit,token:persistedKey?`r-${persistedKey}`:hit.token};
+    if(hit)return {...hit,token:persistedKey?reviewToken(persistedKey):hit.token};
     // A changed dependency must not reuse a 15-second raw memo with old evidence.
     this.releaseViewRaw(date);
     const value=this.daySummary(date,0,persistedKey),token=this.tokenForSummary(value),memo=this.derivedMemo;
@@ -832,7 +838,7 @@ export class Collector {
     if(memo?.value===value&&before===prefix()&&this.viewSnapshots.put(date,key(memo.resources,memo.counters),value,token)){
       this.releaseViewRaw(date);
     }
-    return {value,token:persistedKey?`r-${persistedKey}`:token};
+    return {value,token:persistedKey?reviewToken(persistedKey):token};
   }
   private billingReports?:BillingReports;
   billingReportProgress(id:string){return this.billingReports?.progress(id)||null;}
