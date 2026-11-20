@@ -1,5 +1,9 @@
 # Agent Time public beta release record
 
+## 0.2.0-beta.60 — prepared — 2026-11-20
+
+Owner requested publication after merging the open pull requests. Includes manual agent time corrections from #38 (Tristan Schwenk) with the maintainer follow-up in `00e76f4`, the closed-day summary token fix (#41), saved pricing catalogs loading regardless of the clock (#42), and the reviewed official pricing catalog (#40, 25 added models, existing rates unchanged) produced by the repaired column-name pricing parser (#39). Existing proof events and timing/billing formulas are unchanged; corrections are stored separately and can be undone. Local validation passed 883 JavaScript tests, 39 native tests and the production typecheck. See [candidate notes](0.2.0-beta.60-notes.md).
+
 ## 0.2.0-beta.59 — published and verified — 2026-11-16
 
 Owner authorized publication after the eleven storage/data corrections and independent reviews. GitHub Actions [run 43777288797](https://github.com/zaosoula/agent-time/actions/runs/43777288797) built and published source `31b5efc2137fea3bf1df3f52e84426c77d560043`. Includes visible history-preparation progress, guarded archive import/restore/compression, recoverable owned temporary files, correct storage accounting/pause intent, ingestion date/rowid coverage, Review expiry and bounded background registration/indexed usage polling. Existing proof events and timing/billing formulas remain unchanged; [audit validation](../validation/2026-11-16-storage-audit-fixes.md) records the operation-specific performance gains and the observed RSS increase.
