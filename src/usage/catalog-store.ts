@@ -49,6 +49,9 @@ export class CatalogStore {
    const chunks:Uint8Array[]=[];let size=0;
    try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>1024*1024)throw new Error('Catalog exceeds 1 MiB');chunks.push(part.value);}}finally{await reader.cancel();}
    const c=validateCatalog(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+   // Only a download is checked against the clock. Saved and bundled catalogs
+   // must still load when the clock is behind, or the collector cannot start.
+   if(Date.parse(c.verifiedAt)>now+daily)throw new Error('Catalog is dated in the future');
    if(c.verifiedAt<this.catalog.verifiedAt)throw new Error('Catalog is older than cached rates');
    this.save(c);this.set('active',c.version);this.catalog=c;this.set('error','');
   }catch(e){this.set('error',e instanceof Error?e.message:'Pricing update failed');}

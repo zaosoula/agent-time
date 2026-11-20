@@ -27,7 +27,7 @@ test('daily catalog downloads retain old usage rates and survive restart offline
  }finally{db.close();}
 });
 test('bad catalogs, rollback and reused version IDs never replace cached rates',async()=>{
- for(const candidate of [{...next(),currency:'EUR'},{...next(),verifiedAt:'2020-01-01'}, {...next(),version:bundledCatalog.version},{...next(),models:{'gpt-6.1-sol':{input:-1}}}]){
+ for(const candidate of [{...next(),currency:'EUR'},{...next(),verifiedAt:'2020-01-01'},{...next(),verifiedAt:'2999-01-01'}, {...next(),version:bundledCatalog.version},{...next(),models:{'gpt-6.1-sol':{input:-1}}}]){
   const db=setup();try{const store=new CatalogStore(db,'https://example.com/pricing',async()=>response(candidate));await store.refresh();assert.equal(store.status().version,bundledCatalog.version);assert.ok(store.status().error);}finally{db.close();}
  }
  assert.throws(()=>validateCatalog({...bundledCatalog,verifiedAt:'2026-02-30'}));
@@ -91,4 +91,12 @@ test('official page proposals read prices by column name when the layout changes
  assert.deepEqual(catalog.models['gpt-5.3-codex'],{input:1.75,cacheRead:0.175,cacheWrite:0,cacheWrite1h:0,output:14});
  assert.ok(notes.includes('gpt-5.5-pro: no cached-input rate; review manually'));
  assert.throws(()=>proposeCatalog(reordered.replaceAll('Short context output','Short context completion'),claude,small,'2026-11-20'),/Pricing column missing/);
+});
+test('saved catalogs dated after the clock still load on restart',()=>{
+ const db=setup(),real=Date.now;
+ try{
+  new CatalogStore(db,undefined);
+  Date.now=()=>Date.parse(bundledCatalog.verifiedAt)-30*86400000;
+  const restarted=new CatalogStore(db,undefined);assert.equal(restarted.status().version,bundledCatalog.version);
+ }finally{Date.now=real;db.close();}
 });
